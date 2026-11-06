@@ -1,0 +1,43 @@
+import Foundation
+
+/// Writes `Documents/Highlights/<title> – Highlights.md` — only the text of your
+/// highlights, grouped by the page number printed in the book. Rewritten on every
+/// change; it shows up in the Files app under "On My iPad › Noter".
+enum HighlightExporter {
+    @MainActor
+    static func export(_ session: DocumentSession) {
+        let items = session.sortedHighlights()
+        let url = Storage.exportURL(for: session.info)
+        if items.isEmpty {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+
+        var md = "# \(session.info.title) — Highlights\n\n"
+        md += "_\(items.count) highlight\(items.count == 1 ? "" : "s") · updated \(formatter.string(from: Date()))_\n"
+        var lastLabel: String?
+        for h in items {
+            let label = session.pageLabel(for: h)
+            if label != lastLabel {
+                md += "\n## \(label)\n\n"
+                lastLabel = label
+            }
+            let quoted = h.text
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .map { "> \($0)" }
+                .joined(separator: "\n>\n")
+            md += quoted + "\n\n"
+        }
+        try? Data(md.utf8).write(to: url, options: [.atomic])
+    }
+
+    @MainActor
+    static func plainText(_ session: DocumentSession) -> String {
+        session.sortedHighlights()
+            .map { "\($0.text)\n— \(session.pageLabel(for: $0))" }
+            .joined(separator: "\n\n")
+    }
+}
