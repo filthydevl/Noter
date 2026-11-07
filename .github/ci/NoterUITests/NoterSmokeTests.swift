@@ -36,7 +36,14 @@ final class NoterSmokeTests: XCTestCase {
             .firstMatch.exists
         print("NOTER-SMOKE: transcript shows recognized text: \(recognized)")
         // Only the Text view's pages (the PDF view exposes the PDF's own text layer).
-        let pages = app.textViews
+        let pages = app.collectionViews.descendants(matching: .textView)
+        print("NOTER-SMOKE: text view pages on screen: \(pages.count)")
+        for i in 0..<min(pages.count, 2) {
+            let v = (pages.element(boundBy: i).value as? String) ?? ""
+            if let r = v.range(of: "London") {
+                print("NOTER-SMOKE: page \(i) around 'London': \(v[r.lowerBound...].prefix(40))")
+            }
+        }
         let marker = pages.matching(NSPredicate(format: "value CONTAINS 'London. 7' OR value CONTAINS 'London.7'"))
             .firstMatch.exists
         let london = pages.matching(NSPredicate(format: "value CONTAINS 'spoke in London.'")).firstMatch.exists
