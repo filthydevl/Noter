@@ -4,7 +4,8 @@ import Vision
 
 /// Renders one PDF page and runs Apple's on-device text recognition (Vision) on it, in
 /// two passes:
-///  1. the whole page at high resolution;
+///  1. the whole page at high resolution (on its own, this is the quick first reading a
+///     page gets so the text shows up fast — `refine: false`);
 ///  2. every line Vision wasn't sure about (low confidence, garbled-looking, or with a
 ///     doubtful symbol such as a "?" ending a sentence that isn't a question) is
 ///     rendered again on its own at more than twice the resolution and re-read, with
@@ -23,7 +24,9 @@ enum OCREngine {
         var raw: String
     }
 
-    static func recognize(pdf: CGPDFDocument, index: Int) -> OCRPage {
+    /// Pages read without the second pass are saved one version back, so they're
+    /// refined in the background once every page has text.
+    static func recognize(pdf: CGPDFDocument, index: Int, refine: Bool) -> OCRPage {
         guard let page = pdf.page(at: index + 1) else {
             return OCRPage(page: index, aspect: 1, lines: [], v: version)
         }
@@ -43,6 +46,9 @@ enum OCREngine {
             return OCRPage(page: index, aspect: aspect, lines: [], v: version)
         }
         var lines = recognizeLines(in: image, crop: whole, customWords: [])
+        guard refine else {
+            return OCRPage(page: index, aspect: aspect, lines: lines.map(\.line), v: version - 1)
+        }
         lines = secondPass(lines, page: page, size: size, firstScale: scale)
         return OCRPage(page: index, aspect: aspect, lines: lines.map(\.line), v: version)
     }
@@ -58,7 +64,10 @@ enum OCREngine {
     }
 
     private static func secondPass(_ lines: [Line], page: CGPDFPage, size: CGSize, firstScale: CGFloat) -> [Line] {
-        let weak = lines.indices.filter { needsSecondLook(lines[$0]) }.prefix(40)
+        // The weakest lines first; a page that's mostly doubtful (a bad scan) gets its
+        // worst lines re-read rather than taking ages.
+        let weak = lines.indices.filter { needsSecondLook(lines[$0]) }
+            .sorted { lines[$0].confidence < lines[$1].confidence }.prefix(16)
         guard !weak.isEmpty else { return lines }
         let vocabulary = pageVocabulary(lines)
         // 2.2× the first pass, capped so a crop never gets enormous.

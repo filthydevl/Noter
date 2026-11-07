@@ -17,7 +17,7 @@ final class DocumentSession: ObservableObject {
                 info.viewMode = viewMode
                 saveInfo()
             }
-            syncPositionForCurrentMode()
+            syncPosition(from: oldValue)
         }
     }
     @Published var tool: PencilTool = .pen {
@@ -67,6 +67,8 @@ final class DocumentSession: ObservableObject {
     let ocr: OCRStore
     let speech: SpeechController
     let questions: QuestionIndex
+    /// Find in book (the search panel).
+    private(set) lazy var search = BookSearch(session: self)
     weak var pdfController: PDFReaderController?
     weak var transcriptController: TranscriptController?
 
@@ -77,6 +79,8 @@ final class DocumentSession: ObservableObject {
     private var undoStack: [[Highlight]] = []
     private var lastUserActivity = Date.distantPast
     private var toastTask: Task<Void, Never>?
+    /// Bookkeeping after OCR pages finish is batched (see `pageReady`).
+    private var readyFlush: Task<Void, Never>?
 
     var pageCount: Int { pdf.pageCount }
     var secondsSinceUserActivity: TimeInterval { Date().timeIntervalSince(lastUserActivity) }
@@ -116,6 +120,10 @@ final class DocumentSession: ObservableObject {
     }
 
     func close() {
+        if readyFlush != nil {
+            readyFlush?.cancel()
+            flushPageReady()
+        }
         pdfController?.saveAllInk()
         speech.stop()
         questions.stop()
@@ -168,23 +176,37 @@ final class DocumentSession: ObservableObject {
         info.layoutMode = mode
         saveInfo()
         layoutCache.removeAll()
+        search.invalidate()
         questions.reset(mode: mode)
         recomputeLabels()
         transcriptController?.reloadAll()
         HighlightExporter.export(self)
     }
 
+    /// A page was (re-)recognized. What the page itself needs happens now; the
+    /// whole-book bookkeeping (page numbers, saving, the highlights file) is batched, so
+    /// a burst of pages doesn't keep the main thread busy.
     private func pageReady(_ index: Int) {
         layoutCache[index] = nil
         ocrDone = ocr.doneCount
         ocrUpgradeLeft = ocr.staleCount
+        reanchorHighlights(onPage: index)
+        transcriptController?.pageBecameReady(index)
+        questions.pageReady(index)
+        search.invalidate(index)
+        guard readyFlush == nil else { return }
+        readyFlush = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            self?.flushPageReady()
+        }
+    }
+
+    private func flushPageReady() {
+        readyFlush = nil
         info.ocrPagesDone = ocrDone
         saveInfo()
-        reanchorHighlights(onPage: index)
         recomputeLabels()
-        transcriptController?.pageBecameReady(index)
         pdfController?.refreshMarks()
-        questions.pageReady(index)
         if ocr.isComplete { HighlightExporter.export(self) }
     }
 
@@ -223,11 +245,57 @@ final class DocumentSession: ObservableObject {
         return SlotKey(pdfIndex: currentPage, half: 0)
     }
 
-    private func syncPositionForCurrentMode() {
+    /// You switched between PDF and Text: open the other view on the same line — the
+    /// one being read aloud, or else the one at the top of the screen you came from.
+    private func syncPosition(from old: ViewMode) {
+        var anchor: TextAnchor?
+        if speech.isActive, let p = speechPosition, secondsSinceUserActivity > 4 {
+            anchor = TextAnchor(slot: p.slot, token: p.token)
+        } else {
+            switch old {
+            case .pdf: anchor = pdfController?.topAnchor()
+            case .transcript: anchor = transcriptController?.topAnchor()
+            case .highlights: anchor = nil
+            }
+        }
+        let a = anchor ?? TextAnchor(slot: SlotKey(pdfIndex: currentPage, half: 0), token: 0)
+        setCurrentPage(a.slot.pdfIndex)
         switch viewMode {
-        case .pdf: pdfController?.goTo(page: currentPage, rect: nil)
-        case .transcript: transcriptController?.scroll(toPage: currentPage)
+        case .pdf: pdfController?.scroll(to: a)
+        case .transcript: transcriptController?.scroll(to: a)
         case .highlights: break
+        }
+    }
+
+    /// The page slider: jump the view you're in to a PDF page.
+    func goToPage(_ index: Int) {
+        let i = max(0, min(index, pageCount - 1))
+        noteUserActivity()
+        setCurrentPage(i)
+        switch viewMode {
+        case .pdf: pdfController?.goTo(page: i, rect: nil)
+        case .transcript: transcriptController?.scroll(toPage: i)
+        case .highlights: break
+        }
+    }
+
+    /// The bookmark button on the player: back to the sentence being read, in the view
+    /// you're in, and keep following it.
+    func showReadingPosition() {
+        guard let p = speechPosition, let lp = logicalPage(p.slot), p.token < lp.tokens.count else {
+            showToast(speech.isActive ? "Finding the reading position…" : "Not reading right now")
+            return
+        }
+        lastUserActivity = .distantPast // resume follow-along
+        setCurrentPage(p.pdfIndex)
+        let range = lp.phraseRange(containing: p.token) ?? (p.token...p.token)
+        if viewMode == .transcript {
+            transcriptController?.scroll(to: TextAnchor(slot: p.slot, token: range.lowerBound))
+            transcriptController?.flash(slot: p.slot, range: lp.textRange(for: range))
+        } else {
+            let rects = lp.lineRects(for: range)
+            pdfController?.goTo(page: p.pdfIndex, rect: rects.first)
+            pdfController?.flash(pageIndex: p.pdfIndex, rects: rects)
         }
     }
 

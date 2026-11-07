@@ -267,6 +267,22 @@ final class TranscriptCell: UICollectionViewCell {
         CATransaction.commit()
     }
 
+    /// The first word on the wrapped line at `y` (text view coordinates), for keeping the
+    /// PDF and Text views on the same spot.
+    func token(atLineY y: CGFloat) -> Int? {
+        guard let page, !page.tokenRanges.isEmpty else { return nil }
+        let lm = textView.layoutManager
+        guard lm.numberOfGlyphs > 0 else { return nil }
+        let glyph = lm.glyphIndex(for: CGPoint(x: 1, y: max(y, 0)), in: textView.textContainer)
+        var line = NSRange()
+        _ = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &line)
+        let char = lm.characterIndexForGlyph(at: line.location)
+        guard var token = page.tokenIndex(atUTF16: char) else { return nil }
+        // tokenIndex gives the word at or before the line start; step onto this line.
+        if page.tokenRanges[token].location < char, token + 1 < page.tokenRanges.count { token += 1 }
+        return token
+    }
+
     // MARK: Pen → words
 
     var textWidth: CGFloat { max(textView.textContainer.size.width, textView.bounds.width, 1) }

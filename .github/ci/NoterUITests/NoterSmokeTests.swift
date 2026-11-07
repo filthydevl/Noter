@@ -64,6 +64,9 @@ final class NoterSmokeTests: XCTestCase {
             print("NOTER-SMOKE: t=\(Double(tick) * 0.5)s pause=\(pause.exists) stop=\(stop.exists)")
             Thread.sleep(forTimeInterval: 0.5)
         }
+        let bookmark = app.buttons["Go to reading position"]
+        print("NOTER-SMOKE: bookmark button shown: \(bookmark.exists)")
+        if bookmark.exists { bookmark.tap() }
         snapshot(app, "4-speaking")
         assertRunning(app, "while reading aloud")
         if stop.exists { stop.tap() }
@@ -121,6 +124,31 @@ final class NoterSmokeTests: XCTestCase {
         sleep(2)
         if found { question.tap() }
         sleep(3)
+        assertRunning(app, "after jumping to a question in the text view")
+
+        // Page slider, and switching views keeps the place.
+        print("NOTER-SMOKE: page slider shown: \(app.sliders["Page"].exists)")
+        app.buttons["PDF"].tap()
+        sleep(2)
+        app.buttons["Text"].tap()
+        sleep(2)
+        assertRunning(app, "after switching views")
+
+        // Search: whole words, any case.
+        app.buttons["Search"].tap()
+        let field = app.textFields["Search text"]
+        if field.waitForExistence(timeout: 5) {
+            field.tap()
+            field.typeText("BROWN fox")
+            let hit = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'brown fox'")).firstMatch
+            let searchFound = hit.waitForExistence(timeout: 20)
+            print("NOTER-SMOKE: search found 'BROWN fox': \(searchFound)")
+            snapshot(app, "9-search")
+            if searchFound { hit.tap() }
+            sleep(3)
+        } else {
+            print("NOTER-SMOKE: search field missing")
+        }
         assertRunning(app, "at the end of the smoke test")
     }
 

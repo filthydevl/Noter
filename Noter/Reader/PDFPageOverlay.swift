@@ -1,10 +1,11 @@
 import UIKit
 import PDFKit
 
-/// Drawn above one PDF page (PDFKit moves and zooms it with the page): question marks,
-/// the read-along sentence / word, the pen preview, and the blinking "here it is" box.
-/// Using plain layers instead of PDF annotations keeps PDFKit from re-rendering the
-/// page on every spoken word.
+/// Drawn above one PDF page (PDFKit moves and zooms it with the page): your highlights,
+/// question marks, the read-along sentence / word, the pen preview, and the blinking
+/// "here it is" box. Using plain layers instead of PDF annotations keeps PDFKit from
+/// re-rendering the page on every change (and from tracking every highlight for the
+/// pointer, which was slow and flooded the log).
 ///
 /// All rects are normalized to the displayed page (0...1, origin top-left).
 final class PDFPageOverlay: UIView {
@@ -12,6 +13,7 @@ final class PDFPageOverlay: UIView {
     private let page: PDFPage
     private let geometry: PageGeometry
 
+    private var highlightItems: [(rect: CGRect, color: UIColor)] = []
     private var markRects: [CGRect] = []
     private var phraseRects: [CGRect] = []
     private var wordRect: CGRect?
@@ -19,6 +21,10 @@ final class PDFPageOverlay: UIView {
     private var previewColor: UIColor?
     private var flashRects: [CGRect] = []
 
+    /// One shape layer per highlight color, multiplied onto the page like a real
+    /// highlighter so the print stays crisp and black.
+    private let highlightContainer = CALayer()
+    private var highlightLayers: [String: CAShapeLayer] = [:]
     private let markLayer = CAShapeLayer()
     private let markUnderlineLayer = CAShapeLayer()
     private let phraseLayer = CAShapeLayer()
@@ -50,6 +56,8 @@ final class PDFPageOverlay: UIView {
         flashLayer.fillColor = Self.accent.withAlphaComponent(0.10).cgColor
         flashLayer.strokeColor = Self.accent.cgColor
         flashLayer.opacity = 0
+        highlightContainer.compositingFilter = "multiplyBlendMode"
+        layer.addSublayer(highlightContainer)
         for l in [markLayer, markUnderlineLayer, phraseLayer, wordLayer, underlineLayer, previewLayer, flashLayer] {
             layer.addSublayer(l)
         }
@@ -64,6 +72,11 @@ final class PDFPageOverlay: UIView {
         ink = view
         addSubview(view)
         setNeedsLayout()
+    }
+
+    func setHighlights(_ items: [(rect: CGRect, color: UIColor)]) {
+        highlightItems = items
+        redraw()
     }
 
     func setMarks(_ rects: [CGRect]) {
@@ -137,10 +150,37 @@ final class PDFPageOverlay: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        for l in [markLayer, markUnderlineLayer, phraseLayer, wordLayer, underlineLayer, previewLayer, flashLayer] {
+        for l in [highlightContainer, markLayer, markUnderlineLayer, phraseLayer, wordLayer, underlineLayer,
+                  previewLayer, flashLayer] {
             l.frame = bounds
         }
         guard window != nil else { return }
+
+        // Highlights: hug the words — a touch wider than the text, slightly shorter than
+        // the OCR box, so highlights on neighbouring lines never touch.
+        var byColor: [String: (color: UIColor, rects: [CGRect])] = [:]
+        for item in highlightItems {
+            guard let r = viewRect(item.rect.insetBy(dx: -0.002, dy: item.rect.height * 0.04)) else { continue }
+            let key = item.color.hexString
+            byColor[key, default: (color: item.color, rects: [])].rects.append(r)
+        }
+        for (key, l) in highlightLayers where byColor[key] == nil {
+            l.removeFromSuperlayer()
+            highlightLayers[key] = nil
+        }
+        for (key, entry) in byColor {
+            let l: CAShapeLayer
+            if let existing = highlightLayers[key] {
+                l = existing
+            } else {
+                l = CAShapeLayer()
+                highlightContainer.addSublayer(l)
+                highlightLayers[key] = l
+            }
+            l.frame = bounds
+            l.fillColor = entry.color.withAlphaComponent(0.5).cgColor
+            l.path = path(entry.rects, radius: 1.5)
+        }
 
         let marks = markRects.compactMap { viewRect($0.insetBy(dx: -0.001, dy: $0.height * 0.04)) }
         markLayer.path = path(marks, radius: 2)

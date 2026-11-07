@@ -10,8 +10,16 @@ import CoreGraphics
 /// Pure functions — used both on the main thread and by the OCR worker.
 enum PageLayout {
     struct Row {
+        /// Straightened (tilt removed) — used to work out lines and reading order.
         var rect: CGRect
         var tokens: [LayoutToken]
+        /// Where the row really is on the page (for highlighting and hit testing).
+        var pageRect: CGRect
+        /// The page's tilt (see `estimateShear`).
+        var shear: CGFloat = 0
+
+        /// The row's middle line at `x`, in page coordinates (follows the tilt).
+        func midY(atX x: CGFloat) -> CGFloat { rect.midY + shear * (x - 0.5) }
     }
 
     struct Gutter {
@@ -96,6 +104,7 @@ enum PageLayout {
 
     static func build(_ page: OCRPage, pdfIndex: Int, mode: LayoutMode) -> [LogicalPage] {
         let g = gutter(for: page, mode: mode)
+        let shear = estimateShear(page)
         let halves = g == nil ? 1 : 2
         return (0..<halves).map { half in
             let region: CGRect
@@ -116,8 +125,9 @@ enum PageLayout {
                     toks.append(LayoutToken(key: TokenKey(line: li, token: ti), rect: t.r, text: t.t))
                 }
                 guard let first = toks.first else { continue }
-                let rect = toks.dropFirst().reduce(first.rect) { $0.union($1.rect) }
-                rows.append(Row(rect: rect, tokens: toks))
+                let pageRect = toks.dropFirst().reduce(first.rect) { $0.union($1.rect) }
+                let straight = toks.dropFirst().reduce(straighten(first.rect, shear)) { $0.union(straighten($1.rect, shear)) }
+                rows.append(Row(rect: straight, tokens: toks, pageRect: pageRect, shear: shear))
             }
             sortReadingOrder(&rows)
             let found = detectFolio(rows)
@@ -178,7 +188,12 @@ enum PageLayout {
         for row in byY {
             if let anchor = group.first {
                 let overlap = min(anchor.rect.maxY, row.rect.maxY) - max(anchor.rect.minY, row.rect.minY)
-                if overlap > 0.5 * min(anchor.rect.height, row.rect.height) {
+                // Pieces of one visual line sit side by side; rows that overlap
+                // sideways are different lines, however close vertically.
+                let sideBySide = group.allSatisfy { g in
+                    g.rect.maxX <= row.rect.minX + g.rect.height || row.rect.maxX <= g.rect.minX + g.rect.height
+                }
+                if sideBySide, overlap > 0.5 * min(anchor.rect.height, row.rect.height) {
                     group.append(row)
                     continue
                 }
@@ -189,6 +204,36 @@ enum PageLayout {
         }
         out += group.sorted { $0.rect.minX < $1.rect.minX }
         return out
+    }
+
+    // MARK: Tilted scans
+
+    /// How much the text slopes on a tilted scan, as Δy per Δx in normalized page
+    /// coordinates — the median slope of word positions along each line (Vision's word
+    /// boxes follow the tilt). 0 for straight pages.
+    static func estimateShear(_ page: OCRPage) -> CGFloat {
+        var slopes: [CGFloat] = []
+        for line in page.lines where line.k.count >= 4 {
+            let xs = line.k.map(\.r.midX), ys = line.k.map(\.r.midY)
+            let n = CGFloat(xs.count)
+            let mx = xs.reduce(0, +) / n, my = ys.reduce(0, +) / n
+            var num: CGFloat = 0, den: CGFloat = 0
+            for i in xs.indices {
+                num += (xs[i] - mx) * (ys[i] - my)
+                den += (xs[i] - mx) * (xs[i] - mx)
+            }
+            guard den > 0.002 else { continue } // too short to tell
+            slopes.append(num / den)
+        }
+        guard slopes.count >= 3 else { return 0 }
+        slopes.sort()
+        let s = slopes[slopes.count / 2]
+        return abs(s) < 0.002 ? 0 : min(max(s, -0.15), 0.15)
+    }
+
+    /// Removes the tilt (a shear about the page's middle) so a line's pieces line up.
+    static func straighten(_ r: CGRect, _ shear: CGFloat) -> CGRect {
+        shear == 0 ? r : r.offsetBy(dx: 0, dy: -shear * (r.midX - 0.5))
     }
 
     /// The x of a clean gap between two text columns, if the page has them.
@@ -540,7 +585,7 @@ enum PageLayout {
             var needsSpace = false
             for (ti, tok) in row.tokens.enumerated() {
                 var display = SymbolCheck.clean(
-                    noteMarkerStripped(tok, rowMedianHeight: rowMedianH, rowMidY: row.rect.midY))
+                    noteMarkerStripped(tok, rowMedianHeight: rowMedianH, rowMidY: row.midY(atX: tok.rect.midX)))
                 if needsSpace && !display.isEmpty { text.append(" ") }
                 // "contin-" + "uing" → "continuing"
                 if ti == row.tokens.count - 1, ri + 1 < rows.count, display.count > 2, !headings.contains(ri),
@@ -556,7 +601,7 @@ enum PageLayout {
                 tokens.append(tok)
                 if !display.isEmpty { needsSpace = true }
             }
-            lines.append(LayoutLine(rect: row.rect, tokens: lineStart..<tokens.count))
+            lines.append(LayoutLine(rect: row.pageRect, tokens: lineStart..<tokens.count))
             if headings.contains(ri), text.length > rowStart {
                 headingRanges.append(NSRange(location: rowStart, length: text.length - rowStart))
             }

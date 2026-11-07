@@ -26,6 +26,7 @@ final class OCRStore {
     private var focus = 0
     private var waiters: [Int: [CheckedContinuation<OCRPage?, Never>]] = [:]
     private var worker: Task<Void, Never>?
+    private var saveTask: Task<Void, Never>?
 
     var doneCount: Int { meta.count }
     var isComplete: Bool { meta.count >= pageCount }
@@ -89,11 +90,16 @@ final class OCRStore {
                 return
             }
             while !Task.isCancelled {
-                guard let next = await self?.claimNext() else { break }
-                let result: OCRPage = autoreleasepool { OCREngine.recognize(pdf: pdf, index: next) }
+                guard let job = await self?.claimNext() else { break }
+                let result: OCRPage = autoreleasepool {
+                    OCREngine.recognize(pdf: pdf, index: job.index, refine: job.refine)
+                }
                 let pageMeta = PageLayout.meta(for: result)
-                Storage.save(result, to: Storage.ocrPageURL(id, next))
-                await self?.finish(next, page: result, meta: pageMeta)
+                Storage.save(result, to: Storage.ocrPageURL(id, job.index))
+                await self?.finish(job.index, page: result, meta: pageMeta)
+                // Refining is background work: leave the CPU to scrolling, drawing and
+                // speech between pages.
+                if job.refine { try? await Task.sleep(nanoseconds: 350_000_000) }
             }
             await self?.workerEnded()
         }
@@ -102,19 +108,24 @@ final class OCRStore {
     func stop() {
         worker?.cancel()
         worker = nil
+        if saveTask != nil {
+            saveTask?.cancel()
+            saveIndex()
+        }
     }
 
-    private func claimNext() -> Int? {
-        if let urgent = waiters.keys.sorted().first(where: { meta[$0] == nil }) { return urgent }
+    /// Pages without text get a quick first reading; once every page has text, pages
+    /// read by an older (or the quick) recognizer are refined.
+    private func claimNext() -> (index: Int, refine: Bool)? {
+        if let urgent = waiters.keys.sorted().first(where: { meta[$0] == nil }) { return (urgent, false) }
         guard pageCount > 0 else { return nil }
         for offset in 0..<pageCount {
             let i = (focus + offset) % pageCount
-            if meta[i] == nil { return i }
+            if meta[i] == nil { return (i, false) }
         }
-        // Everything has text: re-read older pages with the improved recognizer.
         for offset in 0..<pageCount {
             let i = (focus + offset) % pageCount
-            if isStale(i) { return i }
+            if isStale(i) { return (i, true) }
         }
         return nil
     }
@@ -123,16 +134,36 @@ final class OCRStore {
         meta[index] = pageMeta
         versions[index] = page.v ?? 1
         insert(index, page)
-        Storage.save(meta, to: Storage.ocrIndexURL(docID))
-        Storage.save(versions, to: Storage.ocrVersionsURL(docID))
+        scheduleIndexSave()
         if let conts = waiters.removeValue(forKey: index) {
             conts.forEach { $0.resume(returning: page) }
         }
         onPageReady?(index)
     }
 
+    /// The page files are written as each page finishes; the small index of them is
+    /// saved a moment later (and is rebuilt from the page files if the app dies first).
+    private func scheduleIndexSave() {
+        guard saveTask == nil else { return }
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.saveIndex()
+        }
+    }
+
+    private func saveIndex() {
+        saveTask = nil
+        Storage.save(meta, to: Storage.ocrIndexURL(docID))
+        Storage.save(versions, to: Storage.ocrVersionsURL(docID))
+    }
+
     private func workerEnded() {
         worker = nil
+        if saveTask != nil {
+            saveTask?.cancel()
+            saveIndex()
+        }
         // Anyone still waiting (e.g. the PDF failed to open) gets nil rather than hanging.
         let pending = waiters
         waiters.removeAll()

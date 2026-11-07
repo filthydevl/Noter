@@ -129,6 +129,13 @@ struct SpeechPosition: Equatable {
     var slot: SlotKey { SlotKey(pdfIndex: pdfIndex, half: half) }
 }
 
+/// A spot in the book: a word on a book page. Used to keep the PDF and Text views on the
+/// same place when you switch between them.
+struct TextAnchor: Equatable {
+    var slot: SlotKey
+    var token: Int
+}
+
 /// Identifies a single OCR word: raw OCR line index + token index within that line.
 struct TokenKey: Codable, Hashable {
     var line: Int

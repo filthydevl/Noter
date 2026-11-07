@@ -4,6 +4,8 @@ import AVFoundation
 /// The small read-aloud control in the top-right corner of the page.
 struct SpeechControlView: View {
     @ObservedObject var speech: SpeechController
+    /// The bookmark button: show where the voice is reading.
+    var locate: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 12) {
@@ -28,6 +30,11 @@ struct SpeechControlView: View {
                     Image(systemName: "stop.fill").frame(width: 18, height: 20)
                 }
                 .accessibilityLabel("Stop reading")
+
+                Button(action: locate) {
+                    Image(systemName: "bookmark.fill").frame(width: 18, height: 20)
+                }
+                .accessibilityLabel("Go to reading position")
             }
 
             Menu {
@@ -42,8 +49,8 @@ struct SpeechControlView: View {
                     }
                     if speech.followVoiceOver {
                         Text(speech.voiceOverRunning
-                             ? "VoiceOver is on: reading with its voice and speed."
-                             : "Turn on VoiceOver to read with its voice (set it to a Siri voice in VoiceOver › Speech).")
+                             ? "VoiceOver is on: reading with its voice and speed (set the speed with the rotor). Turn this off to use the speeds above."
+                             : "Only while VoiceOver is on. Until then Noter reads with the voice below.")
                     }
                 }
                 Menu {

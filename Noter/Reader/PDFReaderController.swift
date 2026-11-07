@@ -13,9 +13,9 @@ extension PageGeometry {
 /// * Finger: scroll, zoom, tap links — PDFKit's normal behaviour.
 /// * Pencil: highlight. The stroke is snapped to whole words on the OCR'd text lines
 ///   live while you draw, and saved the moment you lift the pencil.
-/// * Read-along, question marks, the pen preview and the "here it is" blink are drawn on a
-///   per-page overlay view (not PDF annotations), so PDFKit never re-renders the page
-///   for them.
+/// * Highlights, read-along, question marks, the pen preview and the "here it is" blink
+///   are drawn on a per-page overlay view (not PDF annotations), so PDFKit never
+///   re-renders the page for them.
 final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOverlayViewProvider {
     let pdfView = PDFView()
     private let inkOverlay = UIView()
@@ -27,7 +27,6 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     private lazy var hintTap = UITapGestureRecognizer(target: self, action: #selector(handleHintTap(_:)))
     private weak var session: DocumentSession?
 
-    private var rendered: [UUID: (highlight: Highlight, annotations: [PDFAnnotation])] = [:]
     /// Overlays of the pages PDFKit is currently displaying, by page index.
     private var overlays: [Int: PDFPageOverlay] = [:]
     private var speechPhrase: SpeechPhrase?
@@ -185,35 +184,59 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         ready = true
     }
 
-    // MARK: - Highlights
-
-    func syncHighlights() {
-        guard let s = session else { return }
-        var current: [UUID: Highlight] = [:]
-        for h in s.highlights { current[h.id] = h }
-
-        for (id, entry) in rendered where current[id] != entry.highlight {
-            entry.annotations.forEach { $0.page?.removeAnnotation($0) }
-            rendered[id] = nil
+    /// The word at the top of the screen (left page first on a two-page spread).
+    func topAnchor() -> TextAnchor? {
+        guard let s = session else { return nil }
+        let top = CGPoint(x: pdfView.bounds.midX, y: pdfView.bounds.minY + pdfView.safeAreaInsets.top + 16)
+        guard let page = pdfView.page(for: top, nearest: true) else { return nil }
+        let index = s.pdf.index(for: page)
+        let n = PageGeometry(page: page).normalized(fromPage: pdfView.convert(top, to: page))
+        guard let pages = s.logicalPages(index), !pages.isEmpty else {
+            return TextAnchor(slot: SlotKey(pdfIndex: index, half: 0), token: 0)
         }
-        for h in s.highlights where rendered[h.id] == nil {
-            guard let page = s.pdf.page(at: h.page) else { continue }
-            let geo = PageGeometry(page: page)
-            let annotations = h.rects.map {
-                Self.highlightAnnotation(rect: $0, geometry: geo, color: h.color.uiColor.withAlphaComponent(0.5))
+        // The page's top edge is on screen: start of the page.
+        guard n.y > 0.02 else { return TextAnchor(slot: pages[0].slot, token: 0) }
+        for lp in pages {
+            if let line = lp.lines.first(where: { $0.rect.maxY >= n.y }), !line.tokens.isEmpty {
+                return TextAnchor(slot: lp.slot, token: line.tokens.lowerBound)
             }
-            annotations.forEach { page.addAnnotation($0) }
-            rendered[h.id] = (h, annotations)
         }
+        // Below all the text: the last line.
+        let last = pages[pages.count - 1]
+        return TextAnchor(slot: last.slot, token: max(last.tokens.count - 1, 0))
     }
 
-    private static func highlightAnnotation(rect: CGRect, geometry: PageGeometry, color: UIColor) -> PDFAnnotation {
-        // Hug the words: a touch wider than the text, slightly shorter than the OCR box,
-        // so highlights on neighbouring lines never touch.
-        let padded = rect.insetBy(dx: -0.002, dy: rect.height * 0.04)
-        let a = PDFAnnotation(bounds: geometry.pageRect(fromNormalized: padded), forType: .highlight, withProperties: nil)
-        a.color = color
-        return a
+    /// Scrolls so the line with this word is near the top of the screen.
+    func scroll(to anchor: TextAnchor) {
+        guard let s = session, let page = s.pdf.page(at: anchor.slot.pdfIndex) else { return }
+        guard anchor.token > 0, let lp = s.logicalPage(anchor.slot), anchor.token < lp.tokens.count,
+              let rect = lp.lineRects(for: anchor.token...anchor.token).first else {
+            goTo(page: anchor.slot.pdfIndex, rect: nil, force: true)
+            return
+        }
+        let pr = PageGeometry(page: page).pageRect(fromNormalized: rect)
+        if page.rotation % 360 == 0 {
+            // A destination puts its point at the top-left of the view.
+            let context = 24 / max(pdfView.scaleFactor, 0.01)
+            pdfView.go(to: PDFDestination(page: page, at: CGPoint(x: kPDFDestinationUnspecifiedValue,
+                                                                  y: pr.maxY + context)))
+        } else {
+            pdfView.go(to: pr.insetBy(dx: 0, dy: -pr.height * 2), on: page)
+        }
+        ready = true
+    }
+
+    // MARK: - Highlights
+
+    /// Highlights changed: redraw them on the pages on screen (the others draw theirs
+    /// when they appear).
+    func syncHighlights() {
+        for (index, overlay) in overlays { overlay.setHighlights(highlightItems(onPage: index)) }
+    }
+
+    private func highlightItems(onPage index: Int) -> [(rect: CGRect, color: UIColor)] {
+        guard let s = session else { return [] }
+        return s.highlights(onPage: index).flatMap { h in h.rects.map { (rect: $0, color: h.color.uiColor) } }
     }
 
     private func showPreview(_ lp: LogicalPage, _ r: ClosedRange<Int>, onPage index: Int, color: HighlightColor) {
@@ -244,6 +267,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
             overlay.attachInk(ink)
         }
         applyScribble(to: overlay)
+        overlay.setHighlights(highlightItems(onPage: index))
         overlay.setMarks(markRects(onPage: index))
         if let speech, speech.page == index {
             overlay.setSpeech(phrase: speech.phrase, word: speech.word)

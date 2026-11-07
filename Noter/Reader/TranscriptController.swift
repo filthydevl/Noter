@@ -214,6 +214,44 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         }
     }
 
+    /// The word at the top of the screen.
+    func topAnchor() -> TextAnchor? {
+        let inset = collectionView.adjustedContentInset
+        let y = collectionView.contentOffset.y + inset.top + 12
+        let probe = CGPoint(x: collectionView.bounds.midX, y: y)
+        guard let ip = collectionView.indexPathForItem(at: probe) ?? collectionView.indexPathsForVisibleItems.min()
+        else { return nil }
+        let slot = SlotKey(pdfIndex: ip.section, half: ip.item)
+        guard let cell = collectionView.cellForItem(at: ip) as? TranscriptCell, cell.page != nil else {
+            return TextAnchor(slot: slot, token: 0)
+        }
+        let local = cell.textView.convert(CGPoint(x: 0, y: y), from: collectionView)
+        return TextAnchor(slot: slot, token: cell.token(atLineY: local.y) ?? 0)
+    }
+
+    /// Scrolls so the line with this word is near the top of the screen.
+    func scroll(to anchor: TextAnchor) {
+        scroll(toPage: anchor.slot.pdfIndex, half: anchor.slot.half)
+        guard anchor.token > 0 else { return }
+        // Cells size themselves as they appear: place the line once they've settled.
+        DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.async { self?.placeLine(anchor) }
+        }
+    }
+
+    private func placeLine(_ anchor: TextAnchor) {
+        let ip = IndexPath(item: anchor.slot.half, section: anchor.slot.pdfIndex)
+        guard let s = session, let lp = s.logicalPage(anchor.slot), anchor.token < lp.tokens.count,
+              let cell = collectionView.cellForItem(at: ip) as? TranscriptCell else { return }
+        cell.layoutIfNeeded()
+        guard let r = cell.rect(for: lp.textRange(for: anchor.token...anchor.token)) else { return }
+        let target = cell.textView.convert(r, to: collectionView)
+        let inset = collectionView.adjustedContentInset
+        let maxY = max(-inset.top, collectionView.contentSize.height - collectionView.bounds.height + inset.bottom)
+        let y = target.minY - inset.top - 24
+        collectionView.setContentOffset(CGPoint(x: 0, y: min(max(y, -inset.top), maxY)), animated: false)
+    }
+
     func topVisibleSlot() -> SlotKey? {
         let probe = CGPoint(x: collectionView.bounds.midX,
                             y: collectionView.contentOffset.y + collectionView.adjustedContentInset.top + 40)

@@ -49,7 +49,7 @@ final class SessionHolder: ObservableObject {
 
 /// The slide-in panel on the right.
 enum SidePanel {
-    case highlights, keywords, questions
+    case highlights, keywords, questions, search
 }
 
 struct ReaderView: View {
@@ -70,7 +70,7 @@ struct ReaderView: View {
                 .allowsHitTesting(session.viewMode == .transcript)
         }
         .overlay(alignment: .topTrailing) {
-            SpeechControlView(speech: session.speech)
+            SpeechControlView(speech: session.speech) { session.showReadingPosition() }
                 .padding(.top, 10)
                 .padding(.trailing, 14)
         }
@@ -83,6 +83,15 @@ struct ReaderView: View {
                 ScribbleToolbar(session: session, settings: session.scribble)
                     .padding(.bottom, 18)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if showScrubber {
+                PageScrubber(session: session)
+                    .padding(.horizontal, 80)
+                    .padding(.trailing, panel == nil ? 0 : 372)
+                    .padding(.bottom, 16)
+                    .transition(.opacity)
             }
         }
         .animation(.snappy(duration: 0.25), value: session.penMode)
@@ -105,7 +114,7 @@ struct ReaderView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, session.penMode == .scribble ? 96 : 28)
+                    .padding(.bottom, 84)
                     .transition(.opacity)
                     .allowsHitTesting(false)
             }
@@ -125,7 +134,14 @@ struct ReaderView: View {
             KeywordsListView(session: session) { self.panel = nil }
         case .questions:
             QuestionsListView(session: session, index: session.questions) { self.panel = nil }
+        case .search:
+            SearchListView(session: session, search: session.search) { self.panel = nil }
         }
+    }
+
+    /// The page slider, except while the scribble toolbar is there.
+    private var showScrubber: Bool {
+        !(session.penMode == .scribble && session.viewMode != .transcript) && session.pageCount > 1
     }
 
     private var layoutBinding: Binding<LayoutMode> {
@@ -161,6 +177,13 @@ struct ReaderView: View {
                 }
                 .accessibilityLabel("Improving recognized text, \(session.ocrUpgradeLeft) pages left")
             }
+
+            Button {
+                panel = panel == .search ? nil : .search
+            } label: {
+                Image(systemName: "magnifyingglass")
+            }
+            .accessibilityLabel("Search")
 
             if session.viewMode == .transcript {
                 Button {
