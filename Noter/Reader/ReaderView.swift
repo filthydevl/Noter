@@ -49,27 +49,40 @@ final class SessionHolder: ObservableObject {
 
 struct ReaderView: View {
     @ObservedObject var session: DocumentSession
+    @State private var showHighlights = false
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             PDFReaderRepresentable(session: session)
                 .ignoresSafeArea(edges: .bottom)
-                .opacity(session.viewMode == .pdf ? 1 : 0)
-                .allowsHitTesting(session.viewMode == .pdf)
+                .opacity(session.viewMode == .transcript ? 0 : 1)
+                .allowsHitTesting(session.viewMode != .transcript)
 
             TranscriptRepresentable(session: session)
                 .ignoresSafeArea(edges: .bottom)
                 .opacity(session.viewMode == .transcript ? 1 : 0)
                 .allowsHitTesting(session.viewMode == .transcript)
-
-            if session.viewMode == .highlights {
-                HighlightsListView(session: session)
-            } else {
-                SpeechControlView(speech: session.speech)
-                    .padding(.top, 10)
-                    .padding(.trailing, 14)
+        }
+        .overlay(alignment: .topTrailing) {
+            SpeechControlView(speech: session.speech)
+                .padding(.top, 10)
+                .padding(.trailing, 14)
+        }
+        .overlay(alignment: .leading) {
+            ToolRail(session: session, showHighlights: $showHighlights)
+                .padding(.leading, 14)
+        }
+        .overlay(alignment: .trailing) {
+            if showHighlights {
+                HighlightsListView(session: session) { showHighlights = false }
+                    .frame(width: 360)
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .shadow(color: .black.opacity(0.18), radius: 24, y: 8)
+                    .padding(12)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        .animation(.snappy(duration: 0.28), value: showHighlights)
         .background(PencilInteractionHost { session.toggleTool() })
         .overlay(alignment: .bottom) {
             if let toast = session.toast {
@@ -97,10 +110,11 @@ struct ReaderView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
             Picker("View", selection: $session.viewMode) {
-                ForEach(ViewMode.allCases) { Text($0.title).tag($0) }
+                Text(ViewMode.pdf.title).tag(ViewMode.pdf)
+                Text(ViewMode.transcript.title).tag(ViewMode.transcript)
             }
             .pickerStyle(.segmented)
-            .frame(width: 300)
+            .frame(width: 220)
         }
 
         ToolbarItemGroup(placement: .topBarTrailing) {
@@ -113,34 +127,6 @@ struct ReaderView: View {
                 }
                 .accessibilityLabel("Recognizing text, \(session.ocrDone) of \(session.pageCount) pages")
             }
-
-            Button {
-                session.undo()
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-            }
-            .disabled(!session.canUndo)
-            .accessibilityLabel("Undo")
-
-            Button {
-                session.toggleTool()
-            } label: {
-                Image(systemName: session.tool == .highlight ? "highlighter" : "eraser")
-                    .foregroundStyle(session.tool == .highlight ? session.color.color : Color.red)
-            }
-            .accessibilityLabel(session.tool == .highlight ? "Highlighter (tap for eraser)" : "Eraser (tap for highlighter)")
-
-            Menu {
-                Picker("Highlight color", selection: $session.color) {
-                    ForEach(HighlightColor.allCases) { c in
-                        Text(c.name).tag(c)
-                    }
-                }
-            } label: {
-                Image(systemName: "circle.fill")
-                    .foregroundStyle(session.color.color)
-            }
-            .accessibilityLabel("Highlight color")
 
             Menu {
                 Picker("Page layout", selection: layoutBinding) {
@@ -161,6 +147,95 @@ struct ReaderView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
+            .accessibilityLabel("More options")
         }
+    }
+}
+
+/// Floating vertical toolbar on the left: highlighter, eraser, color, undo, highlights.
+private struct ToolRail: View {
+    @ObservedObject var session: DocumentSession
+    @Binding var showHighlights: Bool
+    @State private var showColors = false
+
+    var body: some View {
+        VStack(spacing: 4) {
+            railButton("highlighter", label: "Highlighter",
+                       selected: session.tool == .highlight, tint: session.color.color) {
+                session.tool = .highlight
+            }
+            railButton("eraser", label: "Eraser", selected: session.tool == .erase) {
+                session.tool = .erase
+            }
+
+            Button {
+                showColors.toggle()
+            } label: {
+                Circle()
+                    .fill(session.color.color)
+                    .frame(width: 22, height: 22)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Highlight color")
+            .popover(isPresented: $showColors, arrowEdge: .leading) {
+                HStack(spacing: 14) {
+                    ForEach(HighlightColor.allCases) { c in
+                        Button {
+                            session.color = c
+                            session.tool = .highlight
+                            showColors = false
+                        } label: {
+                            Circle()
+                                .fill(c.color)
+                                .frame(width: 30, height: 30)
+                                .overlay(Circle().strokeBorder(Color.primary.opacity(c == session.color ? 0.7 : 0.12),
+                                                               lineWidth: c == session.color ? 2.5 : 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(c.name)
+                    }
+                }
+                .padding(16)
+                .presentationCompactAdaptation(.popover)
+            }
+
+            divider
+
+            railButton("arrow.uturn.backward", label: "Undo") { session.undo() }
+                .disabled(!session.canUndo)
+                .opacity(session.canUndo ? 1 : 0.35)
+
+            divider
+
+            railButton("text.quote", label: "Highlights", selected: showHighlights) {
+                showHighlights.toggle()
+            }
+        }
+        .padding(6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
+        .shadow(color: .black.opacity(0.1), radius: 12, y: 4)
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 26, height: 1).padding(.vertical, 2)
+    }
+
+    private func railButton(_ symbol: String, label: String, selected: Bool = false, tint: Color? = nil,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(selected ? (tint ?? Color.accentColor) : Color.primary)
+                .frame(width: 44, height: 44)
+                .background(selected ? Color.primary.opacity(0.08) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

@@ -6,7 +6,7 @@ import Foundation
 ///       document.pdf        the imported PDF (copied, never modified)
 ///       info.json           title, page count, last position, layout mode…
 ///       highlights.json     every highlight (written atomically on each change)
-///       thumb.jpg
+///       cover.jpg           library cover image
 ///       ocr/index.json      small per-page summary (page numbers, spread split)
 ///       ocr/p<N>.json       OCR words + boxes for PDF page N
 ///
@@ -34,7 +34,7 @@ enum Storage {
     static func pdfURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("document.pdf") }
     static func infoURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("info.json") }
     static func highlightsURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("highlights.json") }
-    static func thumbnailURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("thumb.jpg") }
+    static func thumbnailURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("cover.jpg") }
     static func ocrFolder(_ id: UUID) -> URL { folder(id).appendingPathComponent("ocr", isDirectory: true) }
     static func ocrIndexURL(_ id: UUID) -> URL { ocrFolder(id).appendingPathComponent("index.json") }
     static func ocrPageURL(_ id: UUID, _ page: Int) -> URL { ocrFolder(id).appendingPathComponent("p\(page).json") }

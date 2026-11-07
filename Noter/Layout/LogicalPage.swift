@@ -102,17 +102,58 @@ struct LogicalPage {
         (text as NSString).substring(with: textRange(for: r))
     }
 
-    /// One rect per text line covered by the token range (normalized page coords).
+    /// One rect per text line covered by the token range (normalized page coords),
+    /// hugging the words and never reaching into the line above or below.
     func lineRects(for r: ClosedRange<Int>) -> [CGRect] {
         var out: [CGRect] = []
-        for line in lines where line.tokens.lowerBound <= r.upperBound && line.tokens.upperBound - 1 >= r.lowerBound {
+        for (li, line) in lines.enumerated()
+        where line.tokens.lowerBound <= r.upperBound && line.tokens.upperBound - 1 >= r.lowerBound {
             let a = max(r.lowerBound, line.tokens.lowerBound)
             let b = min(r.upperBound, line.tokens.upperBound - 1)
             var u = tokens[a].rect
             for i in a...b { u = u.union(tokens[i].rect) }
-            out.append(CGRect(x: u.minX, y: line.rect.minY, width: u.width, height: line.rect.height))
+            out.append(clampToNeighbours(u, line: li))
         }
         return out
+    }
+
+    /// OCR boxes of tightly set lines overlap; split the overlap halfway so a
+    /// highlight stays within its own line.
+    private func clampToNeighbours(_ r: CGRect, line li: Int) -> CGRect {
+        let me = lines[li].rect
+        var top = r.minY, bottom = r.maxY
+        for j in [li - 1, li + 1] where j >= 0 && j < lines.count {
+            let o = lines[j].rect
+            guard o.maxX > me.minX, o.minX < me.maxX else { continue } // another column
+            if o.midY < me.midY, o.maxY > top { top = max(top, (o.maxY + me.minY) / 2) }
+            if o.midY > me.midY, o.minY < bottom { bottom = min(bottom, (o.minY + me.maxY) / 2) }
+        }
+        guard bottom - top > r.height * 0.4 else { return r }
+        return CGRect(x: r.minX, y: top, width: r.width, height: bottom - top)
+    }
+
+    /// The sentence containing `token` — or, when the sentence is long, just the
+    /// clause between commas / dashes — used to show what's being read aloud.
+    func phraseRange(containing token: Int) -> ClosedRange<Int>? {
+        guard token >= 0, token < tokens.count else { return nil }
+        let closers = CharacterSet(charactersIn: "\"'”’)]»")
+        func ends(_ i: Int, _ marks: Set<Character>) -> Bool {
+            guard let c = tokens[i].text.trimmingCharacters(in: closers).last else { return false }
+            return marks.contains(c)
+        }
+        let sentence: Set<Character> = [".", "!", "?", ";", ":", "…"]
+        var lo = token, hi = token
+        while lo > 0, !ends(lo - 1, sentence) { lo -= 1 }
+        while hi < tokens.count - 1, !ends(hi, sentence) { hi += 1 }
+        if hi - lo + 1 > 28 {
+            let clause = sentence.union([",", "—", "–"])
+            var a = token, b = token
+            while a > lo, !ends(a - 1, clause) { a -= 1 }
+            while b < hi, !ends(b, clause) { b += 1 }
+            lo = a
+            hi = b
+        }
+        return lo...hi
     }
 
     func spans(for r: ClosedRange<Int>) -> [TokenSpan] {

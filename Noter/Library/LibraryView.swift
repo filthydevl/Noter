@@ -9,44 +9,47 @@ struct LibraryView: View {
     @State private var path: [UUID] = []
     @State private var pendingDelete: DocumentInfo?
 
+    private let columns = [GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 28, alignment: .top)]
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
                 if library.documents.isEmpty {
                     ContentUnavailableView {
-                        Label("No PDFs yet", systemImage: "doc.text.magnifyingglass")
+                        Label("No books yet", systemImage: "books.vertical")
                     } description: {
                         Text("Import a PDF. Noter reads the text, then you can highlight with your Apple Pencil and listen to it.")
                     } actions: {
                         Button("Import PDF") { showImporter = true }
                             .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
                     }
                 } else {
-                    List {
-                        ForEach(library.documents) { doc in
-                            NavigationLink(value: doc.id) {
-                                LibraryRow(doc: doc)
-                            }
-                            .swipeActions {
-                                Button(role: .destructive) {
-                                    pendingDelete = doc
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 36) {
+                            ForEach(library.documents) { doc in
+                                NavigationLink(value: doc.id) {
+                                    BookCard(doc: doc)
                                 }
-                            }
-                            .contextMenu {
-                                Button(role: .destructive) {
-                                    pendingDelete = doc
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        pendingDelete = doc
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
                                 }
                             }
                         }
+                        .padding(.horizontal, 32)
+                        .padding(.top, 12)
+                        .padding(.bottom, 40)
                     }
-                    .listStyle(.insetGrouped)
                 }
             }
-            .navigationTitle("Noter")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Library")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -70,7 +73,7 @@ struct LibraryView: View {
                 if library.importing {
                     ProgressView("Importing…")
                         .padding(24)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
             }
             .alert("Import failed", isPresented: Binding(
@@ -96,41 +99,60 @@ struct LibraryView: View {
     }
 }
 
-private struct LibraryRow: View {
+private struct BookCard: View {
     let doc: DocumentInfo
-    @State private var thumbnail: UIImage?
+    @State private var cover: UIImage?
 
     var body: some View {
-        HStack(spacing: 14) {
-            Group {
-                if let thumbnail {
-                    Image(uiImage: thumbnail).resizable().scaledToFit()
-                } else {
-                    Rectangle().fill(Color(.tertiarySystemFill))
+        VStack(alignment: .leading, spacing: 10) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+                .aspectRatio(3 / 4, contentMode: .fit)
+                .overlay {
+                    if let cover {
+                        Image(uiImage: cover)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 30, weight: .light))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
-            }
-            .frame(width: 56, height: 72)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .shadow(color: .black.opacity(0.15), radius: 1.5, y: 1)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06)))
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(doc.title)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
                     .lineLimit(2)
-                Text("\(doc.pageCount) pages · \(doc.highlightCount) highlight\(doc.highlightCount == 1 ? "" : "s")")
-                    .font(.subheadline)
+                    .multilineTextAlignment(.leading)
+                Text(subtitle)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                 if doc.ocrPagesDone < doc.pageCount {
-                    Text("Text recognized on \(doc.ocrPagesDone) of \(doc.pageCount) pages")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    ProgressView(value: Double(doc.ocrPagesDone), total: Double(max(doc.pageCount, 1)))
+                        .tint(.secondary)
+                        .padding(.top, 4)
+                        .accessibilityLabel("Text recognized on \(doc.ocrPagesDone) of \(doc.pageCount) pages")
                 }
             }
         }
-        .padding(.vertical, 4)
+        .contentShape(Rectangle())
         .task(id: doc.id) {
-            thumbnail = await Thumbnailer.thumbnail(for: doc.id)
+            cover = await Thumbnailer.thumbnail(for: doc.id)
         }
+    }
+
+    private var subtitle: String {
+        var parts = ["\(doc.pageCount) pages"]
+        if doc.highlightCount > 0 {
+            parts.append("\(doc.highlightCount) highlight\(doc.highlightCount == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -140,8 +162,8 @@ enum Thumbnailer {
             let url = Storage.thumbnailURL(id)
             if let data = try? Data(contentsOf: url), let image = UIImage(data: data) { return image }
             guard let doc = PDFDocument(url: Storage.pdfURL(id)), let page = doc.page(at: 0) else { return nil }
-            let image = page.thumbnail(of: CGSize(width: 168, height: 216), for: .cropBox)
-            if let data = image.jpegData(compressionQuality: 0.8) { try? data.write(to: url, options: .atomic) }
+            let image = page.thumbnail(of: CGSize(width: 420, height: 560), for: .cropBox)
+            if let data = image.jpegData(compressionQuality: 0.82) { try? data.write(to: url, options: .atomic) }
             return image
         }.value
     }

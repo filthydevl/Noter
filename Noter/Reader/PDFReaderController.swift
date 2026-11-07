@@ -25,15 +25,16 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
 
     private var rendered: [UUID: (highlight: Highlight, annotations: [PDFAnnotation])] = [:]
     private var previewAnnotations: [PDFAnnotation] = []
-    private var speechAnnotation: PDFAnnotation?
-    private var speechLine: SpeechLine?
+    private var speechAnnotations: [PDFAnnotation] = []
+    private var speechPhrase: SpeechPhrase?
     private var hookedScrollViews = Set<ObjectIdentifier>()
     private var didInitialScroll = false
     private var ready = false
 
-    private struct SpeechLine: Equatable {
+    private struct SpeechPhrase: Equatable {
         let slot: SlotKey
-        let line: Int
+        let lower: Int
+        let upper: Int
     }
 
     private struct Stroke {
@@ -54,13 +55,13 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
     init(session: DocumentSession) {
         self.session = session
         super.init(frame: .zero)
-        backgroundColor = .secondarySystemBackground
+        backgroundColor = .systemGroupedBackground
 
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
         pdfView.displaysPageBreaks = true
         pdfView.autoScales = true
-        pdfView.backgroundColor = .secondarySystemBackground
+        pdfView.backgroundColor = .systemGroupedBackground
         pdfView.document = session.pdf
         addSubview(pdfView)
 
@@ -178,7 +179,9 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
     }
 
     private static func highlightAnnotation(rect: CGRect, geometry: PageGeometry, color: UIColor) -> PDFAnnotation {
-        let padded = rect.insetBy(dx: -0.003, dy: -rect.height * 0.12)
+        // Hug the words: a touch wider than the text, slightly shorter than the OCR box,
+        // so highlights on neighbouring lines never touch.
+        let padded = rect.insetBy(dx: -0.002, dy: rect.height * 0.04)
         let a = PDFAnnotation(bounds: geometry.pageRect(fromNormalized: padded), forType: .highlight, withProperties: nil)
         a.color = color
         return a
@@ -317,30 +320,42 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    /// Tints just the sentence / phrase being read (not the whole line).
     func showSpeech(_ position: SpeechPosition?) {
         guard let s = session, let position, let lp = s.logicalPage(position.slot),
-              let li = lp.lineIndex(forToken: position.token), let page = s.pdf.page(at: position.pdfIndex) else {
-            if let a = speechAnnotation { a.page?.removeAnnotation(a) }
-            speechAnnotation = nil
-            speechLine = nil
+              let phrase = lp.phraseRange(containing: position.token),
+              let page = s.pdf.page(at: position.pdfIndex) else {
+            clearSpeech()
             return
         }
-        let key = SpeechLine(slot: position.slot, line: li)
-        guard key != speechLine else { return }
-        speechLine = key
-        if let a = speechAnnotation { a.page?.removeAnnotation(a) }
+        let key = SpeechPhrase(slot: position.slot, lower: phrase.lowerBound, upper: phrase.upperBound)
+        guard key != speechPhrase else { return }
+        clearSpeech()
+        speechPhrase = key
 
-        let r = lp.lines[li].rect
-        let pr = PageGeometry(page: page).pageRect(fromNormalized: r.insetBy(dx: -0.008, dy: -r.height * 0.3))
-        let a = PDFAnnotation(bounds: pr, forType: .square, withProperties: nil)
-        a.color = UIColor.systemBlue.withAlphaComponent(0.85)
-        a.interiorColor = UIColor.systemBlue.withAlphaComponent(0.08)
-        let border = PDFBorder()
-        border.lineWidth = 1.5
-        a.border = border
-        page.addAnnotation(a)
-        speechAnnotation = a
-        follow(pr, on: page)
+        let geometry = PageGeometry(page: page)
+        var union: CGRect?
+        for r in lp.lineRects(for: phrase) {
+            let pr = geometry.pageRect(fromNormalized: r.insetBy(dx: -0.002, dy: r.height * 0.04))
+            let a = PDFAnnotation(bounds: pr, forType: .square, withProperties: nil)
+            a.color = .clear
+            a.interiorColor = Self.speechColor.withAlphaComponent(0.18)
+            let border = PDFBorder()
+            border.lineWidth = 0
+            a.border = border
+            page.addAnnotation(a)
+            speechAnnotations.append(a)
+            union = union.map { $0.union(pr) } ?? pr
+        }
+        if let union { follow(union, on: page) }
+    }
+
+    private static let speechColor = UIColor(named: "AccentColor") ?? .systemIndigo
+
+    private func clearSpeech() {
+        speechAnnotations.forEach { $0.page?.removeAnnotation($0) }
+        speechAnnotations.removeAll()
+        speechPhrase = nil
     }
 
     /// Keeps the line being read on screen — unless you're scrolling or writing.

@@ -37,14 +37,26 @@ struct SpeechControlView: View {
                     }
                 }
                 Menu("Voice") {
-                    Picker("Voice", selection: $speech.voiceID) {
-                        ForEach(speech.voices, id: \.identifier) { v in
-                            Text("\(v.name) · \(SpeechController.qualityLabel(v))").tag(v.identifier)
+                    ForEach(speech.voiceSections, id: \.title) { section in
+                        Section(section.title) {
+                            ForEach(section.voices, id: \.identifier) { v in
+                                Button {
+                                    speech.chooseVoice(v.identifier)
+                                } label: {
+                                    if v.identifier == speech.voiceID {
+                                        Label(SpeechController.voiceTitle(v), systemImage: "checkmark")
+                                    } else {
+                                        Text(SpeechController.voiceTitle(v))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                if !speech.hasNaturalVoice {
-                    Text("For a natural voice, download a Premium or Enhanced voice in Settings › Accessibility › Spoken Content › Voices.")
+                if speech.hasNaturalVoice {
+                    Text("More voices: Settings › Accessibility › Spoken Content › Voices › English.")
+                } else {
+                    Text("These voices sound robotic. Download a Premium voice in Settings › Accessibility › Spoken Content › Voices › English.")
                 }
             } label: {
                 Text(Self.speedLabel(speech.speed))

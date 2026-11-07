@@ -27,6 +27,8 @@ final class SpeechController: NSObject, ObservableObject {
     static let speeds: [Double] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
     private static let speedKey = "noter.speechSpeed"
     private static let voiceKey = "noter.voice"
+    /// Set once you pick a voice yourself; until then Noter always uses the best one installed.
+    private static let voiceChosenKey = "noter.voiceChosen"
 
     private let synth = AVSpeechSynthesizer()
     private struct Chunk {
@@ -48,14 +50,20 @@ final class SpeechController: NSObject, ObservableObject {
         super.init()
         synth.delegate = self
         refreshVoices()
-        if voiceID.isEmpty || AVSpeechSynthesisVoice(identifier: voiceID) == nil {
-            voiceID = voices.first?.identifier ?? ""
-        }
+        // Newly downloaded voices show up without restarting the app.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(availableVoicesChanged),
+            name: AVSpeechSynthesizer.availableVoicesDidChangeNotification, object: nil)
+    }
+
+    @objc nonisolated private func availableVoicesChanged() {
+        Task { @MainActor [weak self] in self?.refreshVoices() }
     }
 
     // MARK: Voices
 
-    /// Best voices first: Premium, then Enhanced, then the rest, preferring your language.
+    /// Natural-sounding voices only (Premium, then Enhanced) in your language; the basic
+    /// compact voices are listed only when no natural voice is installed.
     func refreshVoices() {
         let language = String((Locale.preferredLanguages.first ?? "en").prefix(2))
         let region = AVSpeechSynthesisVoice.currentLanguageCode()
@@ -72,14 +80,58 @@ final class SpeechController: NSObject, ObservableObject {
             }
             return quality + (v.language == region ? 1 : 0)
         }
-        voices = (matching.isEmpty ? usable : matching).sorted { a, b in
+        let ranked = (matching.isEmpty ? usable : matching).sorted { a, b in
             let ra = rank(a), rb = rank(b)
             return ra != rb ? ra > rb : a.name < b.name
+        }
+        let natural = ranked.filter { $0.quality == .premium || $0.quality == .enhanced }
+        voices = natural.isEmpty ? ranked : natural
+
+        let chosen = UserDefaults.standard.bool(forKey: Self.voiceChosenKey)
+        if !chosen || !voices.contains(where: { $0.identifier == voiceID }) {
+            let best = voices.first?.identifier ?? ""
+            if best != voiceID { voiceID = best }
         }
     }
 
     var hasNaturalVoice: Bool {
         voices.contains { $0.quality == .premium || $0.quality == .enhanced }
+    }
+
+    struct VoiceSection {
+        let title: String
+        let voices: [AVSpeechSynthesisVoice]
+    }
+
+    var voiceSections: [VoiceSection] {
+        let premium = voices.filter { $0.quality == .premium }
+        let enhanced = voices.filter { $0.quality == .enhanced }
+        let other = voices.filter { $0.quality != .premium && $0.quality != .enhanced }
+        return [
+            VoiceSection(title: "Premium", voices: premium),
+            VoiceSection(title: "Enhanced", voices: enhanced),
+            VoiceSection(title: "Standard", voices: other),
+        ].filter { !$0.voices.isEmpty }
+    }
+
+    /// "Ava · US"
+    static func voiceTitle(_ v: AVSpeechSynthesisVoice) -> String {
+        let region = v.language.split(separator: "-").last.map(String.init) ?? v.language
+        return "\(v.name) · \(region)"
+    }
+
+    /// Picks a voice from the menu. When nothing is being read, plays a short sample.
+    func chooseVoice(_ id: String) {
+        UserDefaults.standard.set(true, forKey: Self.voiceChosenKey)
+        voiceID = id
+        guard !isActive, let v = AVSpeechSynthesisVoice(identifier: id) else { return }
+        if synth.isSpeaking || synth.isPaused { synth.stopSpeaking(at: .immediate) }
+        activateAudio()
+        let sample = AVSpeechUtterance(string: "Hi, I'm \(v.name). This is how I'll read to you.")
+        sample.voice = v
+        sample.rate = rate
+        sample.prefersAssistiveTechnologySettings = false
+        synth.speak(sample) // not a page chunk, so the delegate ignores it
     }
 
     static func qualityLabel(_ v: AVSpeechSynthesisVoice) -> String {
