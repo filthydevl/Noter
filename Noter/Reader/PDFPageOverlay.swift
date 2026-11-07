@@ -27,6 +27,9 @@ final class PDFPageOverlay: UIView {
     private let previewLayer = CAShapeLayer()
     private let flashLayer = CAShapeLayer()
 
+    /// The page's scribble layer (above the tints, so ink is on top).
+    private(set) var ink: PageInkView?
+
     static let accent = UIColor(named: "AccentColor") ?? .systemIndigo
     /// The questions highlighter.
     static let markColor = UIColor.systemPurple
@@ -55,6 +58,13 @@ final class PDFPageOverlay: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     // MARK: State
+
+    func attachInk(_ view: PageInkView) {
+        ink?.removeFromSuperview()
+        ink = view
+        addSubview(view)
+        setNeedsLayout()
+    }
 
     func setMarks(_ rects: [CGRect]) {
         markRects = rects
@@ -90,6 +100,7 @@ final class PDFPageOverlay: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        ink?.frame = bounds
         redraw()
     }
 

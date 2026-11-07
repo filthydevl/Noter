@@ -36,8 +36,15 @@ enum ViewMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// What the pencil does: draw with the current pen (the highlighter or the scribble
+/// pen, see `PenMode`) or erase (highlights or ink, depending on the pen).
 enum PencilTool: String {
-    case highlight, erase
+    case pen, erase
+}
+
+/// The pen button toggles between highlighting text and scribbling freely.
+enum PenMode: String {
+    case highlight, scribble
 }
 
 struct DocumentInfo: Codable, Identifiable, Hashable {

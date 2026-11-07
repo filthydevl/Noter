@@ -237,6 +237,10 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
               let ip = collectionView.indexPathForItem(at: p),
               let cell = collectionView.cellForItem(at: ip) as? TranscriptCell,
               let lp = cell.page else { return }
+        guard s.penMode == .highlight else {
+            s.showToast("Scribble draws on the PDF view")
+            return
+        }
         s.noteUserActivity()
         stroke = Stroke(indexPath: ip, page: lp)
         inkPath.removeAllPoints()
@@ -264,7 +268,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         st.processed = pts.count
         inkLayer.path = inkPath.cgPath
 
-        if s.tool == .highlight {
+        if s.tool == .pen {
             if st.length > 6, let r = Snapper.range(for: st.hits, referenceWidth: cell.textWidth), r != st.range {
                 st.range = r
                 cell.showPreview(st.page.textRange(for: r), color: s.color.uiColor)
@@ -290,7 +294,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         }
         stroke = nil
         let cell = collectionView.cellForItem(at: st.indexPath) as? TranscriptCell
-        if s.tool == .highlight, st.length > 6,
+        if s.tool == .pen, st.length > 6,
            let r = st.range ?? Snapper.range(for: st.hits, referenceWidth: cell?.textWidth ?? 600) {
             s.addHighlight(on: st.page, range: r)
         }

@@ -60,6 +60,28 @@ final class NoterSmokeTests: XCTestCase {
         app.buttons["PDF"].tap()
         sleep(1)
 
+        // Scribble: the pen button switches to the scribble pen, its toolbar appears, a
+        // finger tap on the page shows "!" on the pen button, Tidy copes with no ink.
+        let pen = app.buttons["Highlighter (tap for scribble pen)"]
+        if pen.waitForExistence(timeout: 5) {
+            pen.tap()
+            let tidy = app.buttons["Tidy handwriting on this page"]
+            print("NOTER-SMOKE: scribble toolbar shown: \(tidy.waitForExistence(timeout: 5))")
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.5)).tap()
+            sleep(1)
+            let hint = app.descendants(matching: .any)["Scribble is on"].exists
+            print("NOTER-SMOKE: scribble hint shown: \(hint)")
+            snapshot(app, "5b-scribble")
+            if tidy.exists { tidy.tap() }
+            sleep(2)
+            assertRunning(app, "in scribble mode")
+            let back = app.buttons["Scribble pen (tap for highlighter)"]
+            if back.exists { back.tap() }
+            sleep(1)
+        } else {
+            print("NOTER-SMOKE: pen button not found")
+        }
+
         // Key words come from your own short highlights (none in this test).
         app.buttons["Key words"].tap()
         sleep(1)

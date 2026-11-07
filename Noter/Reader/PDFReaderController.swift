@@ -1,5 +1,6 @@
 import UIKit
 import PDFKit
+import PencilKit
 import SwiftUI
 
 extension PageGeometry {
@@ -22,6 +23,8 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     private let inkPath = UIBezierPath()
     private let pencil = PencilStrokeRecognizer(target: nil, action: nil)
     private lazy var readTap = UITapGestureRecognizer(target: self, action: #selector(handleReadTap(_:)))
+    /// While scribbling, a finger tap that can't jump the voice shows "!" on the pen button.
+    private lazy var hintTap = UITapGestureRecognizer(target: self, action: #selector(handleHintTap(_:)))
     private weak var session: DocumentSession?
 
     private var rendered: [UUID: (highlight: Highlight, annotations: [PDFAnnotation])] = [:]
@@ -89,6 +92,9 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         readTap.allowedTouchTypes = fingerTouchTypes
         readTap.delegate = self
         pdfView.addGestureRecognizer(readTap)
+        hintTap.allowedTouchTypes = fingerTouchTypes
+        hintTap.delegate = self
+        pdfView.addGestureRecognizer(hintTap)
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(pageChanged), name: .PDFViewPageChanged, object: pdfView)
@@ -121,7 +127,10 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     /// taps) finger-only, so a pencil touch can only ever highlight.
     private func restrictPencilToHighlighting() {
         func walk(_ v: UIView) {
-            for g in v.gestureRecognizers ?? [] where g !== pencil && g !== readTap && !(g is UIHoverGestureRecognizer) {
+            // The scribble canvas owns the pencil while scribbling: leave it alone.
+            if v is PKCanvasView { return }
+            for g in v.gestureRecognizers ?? []
+            where g !== pencil && g !== readTap && g !== hintTap && !(g is UIHoverGestureRecognizer) {
                 g.allowedTouchTypes = fingerTouchTypes
             }
             if let sv = v as? UIScrollView, hookedScrollViews.insert(ObjectIdentifier(sv)).inserted {
@@ -137,12 +146,21 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     }
 
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-        g === readTap ? (session?.speech.isActive ?? false) : true
+        if g === readTap { return session?.speech.isActive ?? false }
+        if g === hintTap {
+            guard let s = session else { return false }
+            return s.penMode == .scribble && !s.speech.isActive
+        }
+        return true
     }
 
     func gestureRecognizer(_ g: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        g === readTap
+        g === readTap || g === hintTap
+    }
+
+    @objc private func handleHintTap(_ g: UITapGestureRecognizer) {
+        session?.showScribbleHint()
     }
 
     // MARK: - Navigation
@@ -217,6 +235,15 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         let index = s.pdf.index(for: page)
         let overlay = overlays[index] ?? PDFPageOverlay(page: page, pdfView: view)
         overlays[index] = overlay
+        if overlay.ink == nil {
+            let ink = PageInkView(docID: s.info.id, pageIndex: index, pageSize: Self.displayedSize(page),
+                                  undo: s.inkUndo)
+            ink.settings = s.scribble
+            ink.onActivity = { [weak s] in s?.noteUserActivity() }
+            ink.onMessage = { [weak s] in s?.showToast($0) }
+            overlay.attachInk(ink)
+        }
+        applyScribble(to: overlay)
         overlay.setMarks(markRects(onPage: index))
         if let speech, speech.page == index {
             overlay.setSpeech(phrase: speech.phrase, word: speech.word)
@@ -235,7 +262,66 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     func pdfView(_ pdfView: PDFView, willEndDisplayingOverlayView overlayView: UIView, for page: PDFPage) {
         guard let s = session else { return }
         let index = s.pdf.index(for: page)
+        (overlayView as? PDFPageOverlay)?.ink?.saveNow()
         if overlays[index] === overlayView { overlays[index] = nil }
+    }
+
+    // MARK: - Scribble
+
+    /// The page's size as displayed (rotation applied), in points.
+    private static func displayedSize(_ page: PDFPage) -> CGSize {
+        let box = page.bounds(for: .cropBox)
+        let rotation = ((page.rotation % 360) + 360) % 360
+        return rotation == 90 || rotation == 270 ? CGSize(width: box.height, height: box.width) : box.size
+    }
+
+    /// Pen mode, tool or scribble settings changed.
+    func applyScribbleState() {
+        guard let s = session else { return }
+        let scribbling = s.penMode == .scribble
+        // The pencil either highlights (our recognizer) or draws (PencilKit), never both.
+        pencil.isEnabled = !scribbling
+        if scribbling { cancelStroke() }
+        pdfView.isInMarkupMode = scribbling
+        for overlay in overlays.values { applyScribble(to: overlay) }
+    }
+
+    private func applyScribble(to overlay: PDFPageOverlay) {
+        guard let s = session else { return }
+        let scribbling = s.penMode == .scribble
+        overlay.isUserInteractionEnabled = scribbling
+        let tool: PKTool
+        if s.tool == .erase {
+            tool = PKEraserTool(s.scribble.eraser.pk)
+        } else if s.scribble.lasso {
+            tool = PKLassoTool()
+        } else {
+            tool = s.scribble.inkTool
+        }
+        overlay.ink?.setActive(scribbling, tool: tool, ruler: s.scribble.ruler)
+    }
+
+    func saveAllInk() {
+        for overlay in overlays.values { overlay.ink?.saveNow() }
+    }
+
+    /// The page you're on (the most visible one).
+    private var visiblePageIndex: Int? {
+        guard let s = session, let page = pdfView.currentPage else { return nil }
+        return s.pdf.index(for: page)
+    }
+
+    func tidyCurrentPage() {
+        guard let index = visiblePageIndex, let ink = overlays[index]?.ink else {
+            session?.showToast("Scroll to a page with handwriting")
+            return
+        }
+        ink.tidy(all: true)
+    }
+
+    func clearCurrentPage() {
+        guard let index = visiblePageIndex else { return }
+        overlays[index]?.ink?.clear()
     }
 
     private func markRects(onPage index: Int) -> [CGRect] {
@@ -312,14 +398,14 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
             let n = st.geometry.normalized(fromPage: pdfView.convert(p, to: st.page))
             st.normPoints.append(n)
             newPoints.append(n)
-            if s.tool == .highlight, let pages, let hit = PageHitTester.hit(n, in: pages, half: &st.half) {
+            if s.tool == .pen, let pages, let hit = PageHitTester.hit(n, in: pages, half: &st.half) {
                 st.hits.append(hit)
             }
         }
         st.processed = pts.count
         inkLayer.path = inkPath.cgPath
 
-        if s.tool == .highlight {
+        if s.tool == .pen {
             if let pages, let h = st.half, st.length > 6,
                let r = Snapper.range(for: st.hits, referenceWidth: pages[h].region.width), r != st.range {
                 st.range = r
@@ -342,7 +428,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
             return
         }
         stroke = nil
-        guard s.tool == .highlight, st.length > 6 else {
+        guard s.tool == .pen, st.length > 6 else {
             clearPreview()
             return
         }

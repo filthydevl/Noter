@@ -20,7 +20,23 @@ final class DocumentSession: ObservableObject {
             syncPositionForCurrentMode()
         }
     }
-    @Published var tool: PencilTool = .highlight
+    @Published var tool: PencilTool = .pen {
+        didSet {
+            if tool == .erase { scribble.lasso = false }
+            pdfController?.applyScribbleState()
+        }
+    }
+    /// The pen button switches between highlighting and scribbling.
+    @Published var penMode: PenMode = .highlight {
+        didSet { pdfController?.applyScribbleState() }
+    }
+    /// Briefly true when you tap the page while scribbling (shows "!" on the pen button).
+    @Published private(set) var scribbleHint = false
+    /// Scribble tool settings (pen type, size, color…).
+    let scribble = ScribbleSettings()
+    /// One undo history for all scribbling, across pages.
+    let inkUndo = UndoManager()
+    private var hintTask: Task<Void, Never>?
     @Published var color: HighlightColor {
         didSet { UserDefaults.standard.set(color.rawValue, forKey: "noter.highlightColor") }
     }
@@ -81,6 +97,7 @@ final class DocumentSession: ObservableObject {
         speech.session = self
         ocr.onPageReady = { [weak self] index in self?.pageReady(index) }
         questions.onChange = { [weak self] in self?.marksChanged() }
+        scribble.onChange = { [weak self] in self?.pdfController?.applyScribbleState() }
         if questions.markOnPages { questions.start() }
         ocr.setFocus(currentPage)
         ocrDone = ocr.doneCount
@@ -91,6 +108,7 @@ final class DocumentSession: ObservableObject {
     }
 
     func close() {
+        pdfController?.saveAllInk()
         speech.stop()
         questions.stop()
         ocr.stop()
@@ -362,9 +380,34 @@ final class DocumentSession: ObservableObject {
         highlightsChanged()
     }
 
+    /// Pencil double-tap / squeeze: pen ↔ eraser.
     func toggleTool() {
-        tool = tool == .highlight ? .erase : .highlight
-        showToast(tool == .highlight ? "Highlighter" : "Eraser")
+        tool = tool == .pen ? .erase : .pen
+        showToast(tool == .erase ? "Eraser" : (penMode == .scribble ? "Scribble pen" : "Highlighter"))
+    }
+
+    /// The pen button: back to the pen from the eraser, otherwise highlighter ↔ scribble.
+    func togglePen() {
+        if tool == .erase {
+            tool = .pen
+        } else {
+            penMode = penMode == .highlight ? .scribble : .highlight
+            scribble.lasso = false
+        }
+        showToast(penMode == .scribble ? "Scribble" : "Highlighter")
+        if penMode == .scribble, viewMode != .pdf { showToast("Scribble draws on the PDF view") }
+    }
+
+    /// You tapped the page while scribbling and the tap had nothing to do: flash a "!"
+    /// on the pen button (tap it to switch back to the highlighter).
+    func showScribbleHint() {
+        scribbleHint = true
+        hintTask?.cancel()
+        hintTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.scribbleHint = false
+        }
     }
 
     /// Jumps to a highlight and blinks a box around it.

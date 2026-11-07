@@ -74,9 +74,17 @@ struct ReaderView: View {
                 .padding(.trailing, 14)
         }
         .overlay(alignment: .leading) {
-            ToolRail(session: session, panel: $panel)
+            ToolRail(session: session, scribble: session.scribble, panel: $panel)
                 .padding(.leading, 14)
         }
+        .overlay(alignment: .bottom) {
+            if session.penMode == .scribble && session.viewMode != .transcript {
+                ScribbleToolbar(session: session, settings: session.scribble)
+                    .padding(.bottom, 18)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: session.penMode)
         .overlay(alignment: .trailing) {
             if let panel {
                 sidePanel(panel)
@@ -96,7 +104,7 @@ struct ReaderView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, 28)
+                    .padding(.bottom, session.penMode == .scribble ? 96 : 28)
                     .transition(.opacity)
                     .allowsHitTesting(false)
             }
@@ -181,16 +189,36 @@ struct ReaderView: View {
 /// key words, questions.
 private struct ToolRail: View {
     @ObservedObject var session: DocumentSession
+    @ObservedObject var scribble: ScribbleSettings
     @Binding var panel: SidePanel?
     @State private var showColors = false
 
+    private var scribbling: Bool { session.penMode == .scribble }
+    private var penColor: Color { scribbling ? scribble.color.color : session.color.color }
+
     var body: some View {
         VStack(spacing: 4) {
-            railButton("highlighter", label: "Highlighter",
-                       selected: session.tool == .highlight, tint: session.color.color) {
-                session.tool = .highlight
+            // Pen: tap to switch highlighter ↔ scribble pen (or back from the eraser).
+            railButton(scribbling ? "pencil.tip" : "highlighter",
+                       label: scribbling ? "Scribble pen (tap for highlighter)" : "Highlighter (tap for scribble pen)",
+                       selected: session.tool == .pen, tint: penColor) {
+                session.togglePen()
             }
-            railButton("eraser", label: "Eraser", selected: session.tool == .erase) {
+            .overlay(alignment: .topTrailing) {
+                if session.scribbleHint {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .orange)
+                        .font(.system(size: 17, weight: .bold))
+                        .offset(x: 5, y: -5)
+                        .transition(.scale.combined(with: .opacity))
+                        .accessibilityLabel("Scribble is on")
+                }
+            }
+            .animation(.spring(duration: 0.3), value: session.scribbleHint)
+
+            railButton("eraser", label: scribbling ? "Ink eraser" : "Highlight eraser",
+                       selected: session.tool == .erase) {
                 session.tool = .erase
             }
 
@@ -198,29 +226,31 @@ private struct ToolRail: View {
                 showColors.toggle()
             } label: {
                 Circle()
-                    .fill(session.color.color)
+                    .fill(penColor)
                     .frame(width: 22, height: 22)
                     .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Highlight color")
+            .accessibilityLabel(scribbling ? "Ink color" : "Highlight color")
             .popover(isPresented: $showColors, arrowEdge: .leading) {
-                HStack(spacing: 14) {
-                    ForEach(HighlightColor.allCases) { c in
-                        Button {
-                            session.color = c
-                            session.tool = .highlight
-                            showColors = false
-                        } label: {
-                            Circle()
-                                .fill(c.color)
-                                .frame(width: 30, height: 30)
-                                .overlay(Circle().strokeBorder(Color.primary.opacity(c == session.color ? 0.7 : 0.12),
-                                                               lineWidth: c == session.color ? 2.5 : 1))
+                Group {
+                    if scribbling {
+                        HStack(spacing: 14) {
+                            ForEach(InkColor.allCases) { c in
+                                swatch(c.color, selected: c == scribble.color, name: c.name) {
+                                    scribble.color = c
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(c.name)
+                    } else {
+                        HStack(spacing: 14) {
+                            ForEach(HighlightColor.allCases) { c in
+                                swatch(c.color, selected: c == session.color, name: c.name) {
+                                    session.color = c
+                                }
+                            }
+                        }
                     }
                 }
                 .padding(16)
@@ -229,9 +259,13 @@ private struct ToolRail: View {
 
             divider
 
-            railButton("arrow.uturn.backward", label: "Undo") { session.undo() }
-                .disabled(!session.canUndo)
-                .opacity(session.canUndo ? 1 : 0.35)
+            if scribbling {
+                railButton("arrow.uturn.backward", label: "Undo") { session.inkUndo.undo() }
+            } else {
+                railButton("arrow.uturn.backward", label: "Undo") { session.undo() }
+                    .disabled(!session.canUndo)
+                    .opacity(session.canUndo ? 1 : 0.35)
+            }
 
             divider
 
@@ -249,6 +283,21 @@ private struct ToolRail: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
         .shadow(color: .black.opacity(0.1), radius: 12, y: 4)
+    }
+
+    private func swatch(_ color: Color, selected: Bool, name: String, pick: @escaping () -> Void) -> some View {
+        Button {
+            pick()
+            session.tool = .pen
+            showColors = false
+        } label: {
+            Circle()
+                .fill(color)
+                .frame(width: 30, height: 30)
+                .overlay(Circle().strokeBorder(Color.primary.opacity(selected ? 0.7 : 0.12), lineWidth: selected ? 2.5 : 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(name)
     }
 
     private var divider: some View {
