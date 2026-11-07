@@ -3,10 +3,17 @@ for the simulator smoke test. Standard library only."""
 import sys
 
 def page_stream(lines, x0, y0, size=12, lead=16):
+    """A line may end with "^N": N is set as a raised, smaller footnote marker."""
     out = ["BT", f"/F1 {size} Tf", f"{lead} TL", f"{x0} {y0} Td"]
+    def esc(t):
+        return t.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
     for ln in lines:
-        esc = ln.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-        out.append(f"({esc}) Tj T*")
+        if "^" in ln:
+            text, mark = ln.split("^", 1)
+            out.append(f"({esc(text)}) Tj /F1 {size * 0.6:.1f} Tf {size * 0.35:.1f} Ts ({esc(mark)}) Tj "
+                       f"/F1 {size} Tf 0 Ts T*")
+        else:
+            out.append(f"({esc(ln)}) Tj T*")
     out.append("ET")
     return "\n".join(out)
 
@@ -19,7 +26,9 @@ body = [
 
 pages = []
 # Portrait page with a folio at the bottom.
-pages.append(((612, 792), page_stream(body, 72, 720) + "\n" + page_stream(["12"], 300, 40)))
+# Portrait page: footnote markers after a sentence ("London.^7") must not end up in the text.
+portrait = [l.replace("in London.", "in London.^7") for l in body]
+pages.append(((612, 792), page_stream(portrait, 72, 720) + "\n" + page_stream(["12"], 300, 40)))
 # Landscape spread: two columns separated by a gutter, folios 13 / 14.
 left = page_stream([l[:48] for l in body], 50, 560, size=11, lead=15)
 right = page_stream([l[:48] for l in body], 446, 560, size=11, lead=15)

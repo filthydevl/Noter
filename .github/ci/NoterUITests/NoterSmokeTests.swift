@@ -35,6 +35,12 @@ final class NoterSmokeTests: XCTestCase {
             .matching(NSPredicate(format: "value CONTAINS[c] 'brown fox' OR label CONTAINS[c] 'brown fox'"))
             .firstMatch.exists
         print("NOTER-SMOKE: transcript shows recognized text: \(recognized)")
+        let marker = app.descendants(matching: .any).matching(NSPredicate(
+            format: "value CONTAINS 'London. 7' OR value CONTAINS 'London.7' OR label CONTAINS 'London. 7'"))
+            .firstMatch.exists
+        let london = app.descendants(matching: .any).matching(NSPredicate(
+            format: "value CONTAINS 'spoke in London.' OR label CONTAINS 'spoke in London.'")).firstMatch.exists
+        print("NOTER-SMOKE: sentence before footnote shown: \(london), footnote marker left in text: \(marker)")
         assertRunning(app, "after text recognition")
 
         // Reading options: change theme and font, nothing crashes.
@@ -148,6 +154,31 @@ final class NoterSmokeTests: XCTestCase {
             sleep(3)
         } else {
             print("NOTER-SMOKE: search field missing")
+        }
+        assertRunning(app, "after searching")
+
+        // Notes panel (no highlights in this test: its empty state).
+        app.buttons["Notes"].tap()
+        sleep(1)
+        print("NOTER-SMOKE: notes panel shown: \(app.staticTexts["Notes"].exists), "
+              + "empty state: \(app.staticTexts["No highlights yet"].exists)")
+        snapshot(app, "10-notes")
+        if app.buttons["Close notes"].exists { app.buttons["Close notes"].tap() }
+        sleep(1)
+
+        // Save PDF with highlights + scribbles: the file is written and the share sheet opens.
+        let save = app.buttons["Save PDF"]
+        if save.waitForExistence(timeout: 5) {
+            save.tap()
+            let withInk = app.buttons["PDF with highlights + scribbles"]
+            if withInk.waitForExistence(timeout: 5) { withInk.tap() }
+            let sheet = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == 'Save to Files' OR identifier == 'ActivityListView'")).firstMatch
+            let shown = sheet.waitForExistence(timeout: 30)
+            print("NOTER-SMOKE: save PDF share sheet shown: \(shown)")
+            snapshot(app, "11-save-pdf")
+        } else {
+            print("NOTER-SMOKE: save PDF button missing")
         }
         assertRunning(app, "at the end of the smoke test")
     }

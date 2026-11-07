@@ -33,6 +33,9 @@ enum HighlightExporter {
             md += quoted + "\n"
             let tags = h.tagKeys.compactMap { keywords[$0] }
             if !tags.isEmpty { md += "\nKey words: " + tags.map { "`\($0)`" }.joined(separator: " ") + "\n" }
+            if let note = h.noteText {
+                md += "\n**Note:** " + note.replacingOccurrences(of: "\n", with: "  \n") + "\n"
+            }
             md += "\n"
         }
         try? Data(md.utf8).write(to: url, options: [.atomic])
@@ -41,7 +44,11 @@ enum HighlightExporter {
     @MainActor
     static func plainText(_ session: DocumentSession) -> String {
         session.sortedHighlights()
-            .map { "\($0.text)\n— \(session.pageLabel(for: $0))" }
+            .map { h in
+                var s = "\(h.text)\n— \(session.pageLabel(for: h))"
+                if let note = h.noteText { s += "\nNote: \(note)" }
+                return s
+            }
             .joined(separator: "\n\n")
     }
 }

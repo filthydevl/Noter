@@ -70,7 +70,8 @@ struct HighlightsListView: View {
                                 available: keywords.filter { !(h.isKeyword && $0.id == h.keywordKey) },
                                 open: { session.open(h) },
                                 toggleTag: { session.toggleTag($0, on: h.id) },
-                                delete: { session.removeHighlights([h.id]) })
+                                delete: { session.removeHighlights([h.id]) },
+                                note: h.noteText)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -113,7 +114,9 @@ struct TagChip: View {
     }
 }
 
-private struct HighlightRow: View {
+/// One highlight card: color, book page, text and the key word tag column. In the
+/// Highlights panel its note is shown below; in the Notes panel you write it there.
+struct HighlightRow: View {
     let highlight: Highlight
     let label: String
     let tags: [KeywordEntry]
@@ -121,8 +124,39 @@ private struct HighlightRow: View {
     let open: () -> Void
     let toggleTag: (String) -> Void
     let delete: () -> Void
+    /// Read-only note (Highlights panel).
+    var note: String? = nil
+    /// Editable note (Notes panel).
+    var editNote: ((String) -> Void)? = nil
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            card
+            if let editNote {
+                NoteEditor(initial: highlight.note ?? "", commit: editNote)
+            } else if let note {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "text.bubble")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(note)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(10)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Note: \(note)")
+            }
+        }
+        .padding(14)
+        .background(Color(.systemBackground).opacity(0.75),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var card: some View {
         HStack(alignment: .top, spacing: 10) {
             Button(action: open) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -193,8 +227,37 @@ private struct HighlightRow: View {
             }
             .frame(maxWidth: 120, alignment: .trailing)
         }
-        .padding(14)
-        .background(Color(.systemBackground).opacity(0.75),
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+/// The note field under a highlight in the Notes panel. Grows as you type.
+struct NoteEditor: View {
+    let initial: String
+    let commit: (String) -> Void
+    @State private var text = ""
+    @State private var loaded = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "square.and.pencil")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+            TextField("Add a note or comment…", text: $text, axis: .vertical)
+                .font(.subheadline)
+                .lineLimit(1...14)
+                .accessibilityLabel("Note")
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onAppear {
+            if !loaded {
+                text = initial
+                loaded = true
+            }
+        }
+        .onChange(of: text) { _, new in
+            if loaded { commit(new) }
+        }
     }
 }

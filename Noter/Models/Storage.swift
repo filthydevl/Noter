@@ -54,7 +54,8 @@ enum Storage {
 
     /// Every export file of a document (Markdown and PDFs).
     static func exportURLs(for info: DocumentInfo) -> [URL] {
-        [exportURL(for: info)] + ["Highlights", "Key words", "Questions"].map { exportURL(for: info, $0, ext: "pdf") }
+        [exportURL(for: info)] + ["Highlights", "Key words", "Questions", "Notes", "Highlighted",
+                                  "Highlighted with scribbles"].map { exportURL(for: info, $0, ext: "pdf") }
     }
 
     /// Atomic write: the old file stays intact until the new one is fully on disk,

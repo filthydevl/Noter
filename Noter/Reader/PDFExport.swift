@@ -6,8 +6,9 @@ import SwiftUI
 /// also show up in the Files app.
 @MainActor
 enum PDFExport {
-    static func highlights(_ session: DocumentSession) -> URL? {
-        let items = session.sortedHighlights()
+    /// Highlights with their tags and notes (`onlyWithNotes`: the Notes panel's export).
+    static func highlights(_ session: DocumentSession, onlyWithNotes: Bool = false) -> URL? {
+        let items = session.sortedHighlights().filter { !onlyWithNotes || $0.noteText != nil }
         let keywords = Dictionary(uniqueKeysWithValues: session.keywordEntries().map { ($0.id, $0) })
         var body = ""
         var lastLabel: String?
@@ -22,7 +23,14 @@ enum PDFExport {
             if !tags.isEmpty {
                 body += "<div class='tags'>" + tags.map(tag).joined(separator: " ") + "</div>"
             }
+            if let note = h.noteText {
+                body += "<div class='note'>" + esc(note).replacingOccurrences(of: "\n", with: "<br>") + "</div>"
+            }
             body += "</div>"
+        }
+        if onlyWithNotes {
+            let count = "\(items.count) note\(items.count == 1 ? "" : "s")"
+            return write(session, "Notes", title: "Notes", subtitle: count, body: body)
         }
         let count = "\(items.count) highlight\(items.count == 1 ? "" : "s")"
         return write(session, "Highlights", title: "Highlights", subtitle: count, body: body)
@@ -87,6 +95,8 @@ enum PDFExport {
                  margin: 0 0 9pt 0; line-height: 1.4; }
         .meta { font-family: -apple-system, Helvetica, sans-serif; color: #8e8e93; font-size: 9pt; margin-top: 3pt; }
         .tags { margin-top: 4pt; }
+        .note { font-family: -apple-system, Helvetica, sans-serif; font-size: 10.5pt; color: #3a3a3c;
+                background: #f2f2f7; border-radius: 6pt; padding: 5pt 8pt; margin-top: 6pt; line-height: 1.35; }
         .tag { font-family: -apple-system, Helvetica, sans-serif; font-size: 9pt; font-weight: 600;
                border: 1pt solid; border-radius: 6pt; padding: 1pt 6pt; }
         .tag.big { font-size: 13pt; padding: 2pt 8pt; }

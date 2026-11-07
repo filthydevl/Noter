@@ -49,12 +49,13 @@ final class SessionHolder: ObservableObject {
 
 /// The slide-in panel on the right.
 enum SidePanel {
-    case highlights, keywords, questions, search
+    case highlights, notes, keywords, questions, search
 }
 
 struct ReaderView: View {
     @ObservedObject var session: DocumentSession
     @State private var panel: SidePanel?
+    @State private var savedPDF: ShareItem?
 
     var body: some View {
         ZStack {
@@ -118,6 +119,7 @@ struct ReaderView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: session.toast)
+        .sheet(item: $savedPDF) { ShareSheet(url: $0.url) }
         .navigationTitle(session.info.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
@@ -128,6 +130,8 @@ struct ReaderView: View {
         switch panel {
         case .highlights:
             HighlightsListView(session: session) { self.panel = nil }
+        case .notes:
+            NotesListView(session: session) { self.panel = nil }
         case .keywords:
             KeywordsListView(session: session) { self.panel = nil }
         case .questions:
@@ -182,6 +186,28 @@ struct ReaderView: View {
                 Image(systemName: "magnifyingglass")
             }
             .accessibilityLabel("Search")
+
+            Menu {
+                Button {
+                    session.savePDF(includeScribbles: false) { savedPDF = ShareItem(url: $0) }
+                } label: {
+                    Label("PDF with highlights", systemImage: "highlighter")
+                }
+                Button {
+                    session.savePDF(includeScribbles: true) { savedPDF = ShareItem(url: $0) }
+                } label: {
+                    Label("PDF with highlights + scribbles", systemImage: "pencil.tip")
+                }
+                Text("Highlights stay real PDF highlights (notes become their comments). Scribbles are baked onto the pages only if you choose so.")
+            } label: {
+                if session.isSavingPDF {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "square.and.arrow.up")
+                }
+            }
+            .disabled(session.isSavingPDF)
+            .accessibilityLabel("Save PDF")
 
             Menu {
                 Picker("Page layout", selection: layoutBinding) {
@@ -282,6 +308,9 @@ private struct ToolRail: View {
 
             railButton("text.quote", label: "Highlights", selected: panel == .highlights) {
                 panel = panel == .highlights ? nil : .highlights
+            }
+            railButton("text.bubble", label: "Notes", selected: panel == .notes) {
+                panel = panel == .notes ? nil : .notes
             }
             railButton("key", label: "Key words", selected: panel == .keywords) {
                 panel = panel == .keywords ? nil : .keywords

@@ -171,6 +171,8 @@ struct Highlight: Codable, Identifiable, Equatable {
     /// Key words (their `keywordKey`) this highlight is tagged with. Optional so
     /// highlights saved before tags existed still load.
     var tags: [String]?
+    /// Your note / comment on this highlight (the Notes panel).
+    var note: String?
 
     var tokenKeys: [TokenKey] {
         spans.flatMap { s in
@@ -179,6 +181,12 @@ struct Highlight: Codable, Identifiable, Equatable {
     }
 
     var tagKeys: [String] { tags ?? [] }
+
+    /// The note, if it has any text.
+    var noteText: String? {
+        guard let n = note?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty else { return nil }
+        return n
+    }
 
     /// A highlight of just a word or short phrase counts as a key word.
     var isKeyword: Bool {

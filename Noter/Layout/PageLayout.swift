@@ -584,8 +584,13 @@ enum PageLayout {
             let rowMedianH = row.tokens.map(\.rect.height).sorted()[row.tokens.count / 2]
             var needsSpace = false
             for (ti, tok) in row.tokens.enumerated() {
+                let prevText = ti > 0 ? row.tokens[ti - 1].text
+                    : (ri > 0 && !headings.contains(ri - 1) ? rows[ri - 1].tokens.last?.text : nil)
+                let nextText = ti + 1 < row.tokens.count ? row.tokens[ti + 1].text
+                    : (ri + 1 < rows.count ? rows[ri + 1].tokens.first?.text : nil)
                 var display = SymbolCheck.clean(
-                    noteMarkerStripped(tok, rowMedianHeight: rowMedianH, rowMidY: row.midY(atX: tok.rect.midX)))
+                    noteMarkerStripped(tok, prev: prevText, next: nextText, rowMedianHeight: rowMedianH,
+                                       rowMidY: row.midY(atX: tok.rect.midX)))
                 if needsSpace && !display.isEmpty { text.append(" ") }
                 // "contin-" + "uing" → "continuing"
                 if ti == row.tokens.count - 1, ri + 1 < rows.count, display.count > 2, !headings.contains(ri),
@@ -616,17 +621,52 @@ enum PageLayout {
             folio: folio, indexByKey: index, headingRanges: headingRanges, runningHeader: runningHeader)
     }
 
-    /// Footnote reference numbers don't belong in the text: "war.12" → "war.", and a
-    /// small raised "12" on its own is dropped entirely.
-    static func noteMarkerStripped(_ tok: LayoutToken, rowMedianHeight: CGFloat, rowMidY: CGFloat) -> String {
+    /// Footnote reference numbers don't belong in the text (or in what's read aloud):
+    /// * glued to a word: "war.12" / "war.”12" / "war¹²" → "war." / "war.”" / "war";
+    /// * on their own, set small and raised;
+    /// * on their own right after the end of a sentence ("…the war. 12 Then…", or at
+    ///   the end of the line) — Vision often reads the raised number at full height;
+    /// * on their own after a comma / semicolon / colon when a little smaller.
+    /// "p. 12", "No. 3" and numbers that start a lowercase phrase ("12 people") stay.
+    static func noteMarkerStripped(_ tok: LayoutToken, prev: String?, next: String?, rowMedianHeight: CGFloat,
+                                   rowMidY: CGFloat) -> String {
         let t = tok.text
-        if t.count <= 3, t.allSatisfy(\.isNumber), tok.rect.height < rowMedianHeight * 0.75,
-           tok.rect.midY < rowMidY {
-            return ""
+        let superscripts = "⁰¹²³⁴⁵⁶⁷⁸⁹"
+        if !t.isEmpty, t.allSatisfy({ superscripts.contains($0) }) { return "" }
+        if ["*", "†", "‡", "§"].contains(t), prev != nil { return "" }
+        if t.count <= 3, t.allSatisfy(\.isNumber) {
+            let smaller = tok.rect.height < rowMedianHeight * 0.75
+            if smaller, tok.rect.midY < rowMidY { return "" }
+            if let prev, !isNumberingWord(prev) {
+                let p = prev.trimmingCharacters(in: CharacterSet(charactersIn: "”’\"')]»"))
+                let startsSentence = next.map { n in
+                    let first = n.trimmingCharacters(in: CharacterSet(charactersIn: "“‘\"'([«")).first
+                    return first?.isUppercase == true || first == nil
+                } ?? true
+                let beforeMark = p.dropLast().last
+                if let last = p.last, ".!?".contains(last),
+                   beforeMark.map({ $0.isLetter || $0.isNumber || ")]".contains($0) }) == true, startsSentence {
+                    return ""
+                }
+                if let last = p.last, ",;:".contains(last), tok.rect.height < rowMedianHeight * 0.88 {
+                    return ""
+                }
+            }
         }
-        if let r = t.range(of: #"(?<=\p{Ll}{2}[.,;:)\]”’"]?)\d{1,3}$"#, options: .regularExpression) {
-            return String(t[..<r.lowerBound])
+        var out = t
+        while let last = out.last, superscripts.contains(last), out.count > 1 { out.removeLast() }
+        if let r = out.range(of: #"(?<=\p{Ll}{2}[.,;:!?)\]”’"]{0,2})\d{1,3}$"#, options: .regularExpression) {
+            return String(out[..<r.lowerBound])
         }
-        return t
+        return out
+    }
+
+    /// "p." "pp." "No." "vol." "ch." "fig."… — a number after these is a reference, not a
+    /// footnote marker.
+    private static func isNumberingWord(_ word: String) -> Bool {
+        let w = word.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "(“‘\"'"))
+        return ["p.", "pp.", "no.", "nos.", "vol.", "vols.", "ch.", "chap.", "fig.", "figs.", "art.", "sec.",
+                "para.", "n.", "nn.", "ed.", "eds.", "cf.", "v.", "c.", "ca.", "ibid.", "id.", "op.", "pt.",
+                "bk.", "l.", "ll.", "vs.", "st.", "rev."].contains(w)
     }
 }

@@ -62,6 +62,8 @@ final class DocumentSession: ObservableObject {
     @Published private(set) var toast: String?
     @Published private(set) var speechPosition: SpeechPosition?
     @Published private(set) var labelsVersion = 0
+    /// "Save PDF" is preparing the file.
+    @Published private(set) var isSavingPDF = false
 
     let pdf: PDFDocument
     let ocr: OCRStore
@@ -81,6 +83,8 @@ final class DocumentSession: ObservableObject {
     private var toastTask: Task<Void, Never>?
     /// Bookkeeping after OCR pages finish is batched (see `pageReady`).
     private var readyFlush: Task<Void, Never>?
+    /// Notes are saved a moment after you stop typing.
+    private var noteSave: Task<Void, Never>?
 
     var pageCount: Int { pdf.pageCount }
     var secondsSinceUserActivity: TimeInterval { Date().timeIntervalSince(lastUserActivity) }
@@ -399,14 +403,17 @@ final class DocumentSession: ObservableObject {
             }
         }
         let merged = lo...hi
-        // Keep the key word tags of any highlight this one swallows.
+        // Keep the key word tags and notes of any highlight this one swallows.
         var tags: [String] = []
+        var notes: [String] = []
         for old in highlights where absorbed.contains(old.id) {
             for t in old.tagKeys where !tags.contains(t) { tags.append(t) }
+            if let n = old.noteText { notes.append(n) }
         }
         let h = Highlight(
             id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: merged), rects: lp.lineRects(for: merged),
-            text: lp.string(for: merged), color: color, created: Date(), tags: tags.isEmpty ? nil : tags)
+            text: lp.string(for: merged), color: color, created: Date(), tags: tags.isEmpty ? nil : tags,
+            note: notes.isEmpty ? nil : notes.joined(separator: "\n\n"))
         pushUndo()
         highlights.removeAll { absorbed.contains($0.id) }
         highlights.append(h)
@@ -450,7 +457,12 @@ final class DocumentSession: ObservableObject {
     }
 
     func undo() {
-        guard let previous = undoStack.popLast() else { return }
+        guard var previous = undoStack.popLast() else { return }
+        // Undo is for highlights and tags; notes keep what you last typed.
+        let notes = Dictionary(uniqueKeysWithValues: highlights.map { ($0.id, $0.note) })
+        for i in previous.indices {
+            if let n = notes[previous[i].id] { previous[i].note = n }
+        }
         highlights = previous
         canUndo = !undoStack.isEmpty
         highlightsChanged()
@@ -565,6 +577,47 @@ final class DocumentSession: ObservableObject {
         pushUndo()
         highlights[i].tags = tags.isEmpty ? nil : tags
         highlightsChanged()
+    }
+
+    // MARK: - Save PDF
+
+    /// A copy of the PDF with your highlights (and notes as their comments) built in;
+    /// scribbles too if `includeScribbles`. Calls back with the file to share / save.
+    func savePDF(includeScribbles: Bool, done: @escaping (URL) -> Void) {
+        guard !isSavingPDF else { return }
+        isSavingPDF = true
+        let info = self.info, items = highlights
+        let ink = includeScribbles ? AnnotatedPDFExport.inkImages(self) : nil
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let url = AnnotatedPDFExport.export(info: info, highlights: items, ink: ink)
+            await MainActor.run {
+                guard let self else { return }
+                self.isSavingPDF = false
+                if let url {
+                    done(url)
+                } else {
+                    self.showToast("Couldn't save the PDF")
+                }
+            }
+        }
+    }
+
+    // MARK: - Notes
+
+    /// Your note on a highlight (typed in the Notes panel). Saved shortly after you
+    /// stop typing.
+    func setNote(_ text: String, on id: UUID) {
+        guard let i = highlights.firstIndex(where: { $0.id == id }), (highlights[i].note ?? "") != text else { return }
+        highlights[i].note = text.isEmpty ? nil : text
+        rebuildIndex()
+        noteSave?.cancel()
+        noteSave = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.noteSave = nil
+            Storage.save(self.highlights, to: Storage.highlightsURL(self.info.id))
+            HighlightExporter.export(self)
+        }
     }
 
     // MARK: - Questions
