@@ -1,0 +1,99 @@
+name: iOS build & simulator smoke test
+
+on:
+  push:
+    branches: [claude/ipad-notes-apple-pencil-gxgfwz]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      BUNDLE_ID: com.filthydevl.noter
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          LATEST=$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)
+          sudo xcode-select -s "$LATEST"
+          xcodebuild -version
+
+      - name: Build (xcodebuild -target Noter, iphonesimulator)
+        run: |
+          xcodebuild -project Noter.xcodeproj -target Noter -sdk iphonesimulator -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 || true
+          echo "::group::errors"
+          grep -E "error:" build.log | sort -u | head -300 || true
+          echo "::endgroup::"
+          echo "::group::warnings"
+          grep -E "warning:" build.log | sort -u | head -300 || true
+          echo "::endgroup::"
+          grep -E "\*\* BUILD (SUCCEEDED|FAILED) \*\*" build.log || tail -50 build.log
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build.log
+
+      - name: Boot iPad simulator
+        run: |
+          xcrun simctl list devices available | grep -i ipad
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          c = [(rt, x) for rt, xs in d.items() if "iOS" in rt for x in xs if "iPad" in x["name"]]
+          c.sort(key=lambda p: (p[0], "Pro" in p[1]["name"], "13-inch" in p[1]["name"]))
+          print(c[-1][1]["udid"])')
+          xcrun simctl list devices | grep "$UDID"
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Install, seed a sample PDF, launch
+        run: |
+          mkdir -p smoke
+          xcrun simctl install "$UDID" build/Debug-iphonesimulator/Noter.app
+          DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)
+          ID=11111111-2222-3333-4444-555555555555
+          DIR="$DATA/Library/Application Support/Library/$ID"
+          mkdir -p "$DIR/ocr"
+          python3 .github/ci/make_sample_pdf.py "$DIR/document.pdf"
+          printf '{"id":"%s","title":"Sample Book","pageCount":2,"added":700000000,"layoutMode":"auto","lastPage":0,"viewMode":"pdf","highlightCount":0,"ocrPagesDone":0}' "$ID" > "$DIR/info.json"
+          xcrun simctl launch --stdout="$PWD/smoke/app.out" --stderr="$PWD/smoke/app.err" "$UDID" "$BUNDLE_ID"
+          sleep 20
+          xcrun simctl io "$UDID" screenshot smoke/launch.png || true
+          cat smoke/app.out smoke/app.err || true
+          if pgrep -fl "Noter.app/Noter"; then
+            echo "NOTER-SMOKE: app is running 20s after launch"
+          else
+            echo "NOTER-SMOKE: app is NOT running"
+            ls -la ~/Library/Logs/DiagnosticReports/ || true
+            for f in ~/Library/Logs/DiagnosticReports/Noter*; do echo "== $f"; head -c 12000 "$f"; done
+            exit 1
+          fi
+          xcrun simctl terminate "$UDID" "$BUNDLE_ID" || true
+
+      - name: UI smoke test (open reader, OCR, Text tab, read aloud)
+        run: |
+          brew install xcodegen >/dev/null
+          cp .github/ci/NoterCI.yml NoterCI.yml
+          xcodegen --spec NoterCI.yml
+          set -o pipefail
+          xcodebuild test -project NoterCI.xcodeproj -scheme NoterCI -destination "id=$UDID" \
+            -derivedDataPath build/dd -resultBundlePath smoke/NoterCI.xcresult 2>&1 \
+            | tee smoke/uitest.log | grep -E "error:|NOTER-SMOKE|Test Case|Executed|TEST (SUCCEEDED|FAILED)|XCTAssert|failed"
+
+      - name: Crash reports
+        if: always()
+        run: |
+          ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i noter || echo "no Noter crash reports"
+          for f in ~/Library/Logs/DiagnosticReports/Noter*; do [ -e "$f" ] && { echo "== $f"; head -c 12000 "$f"; }; done; true
+
+      - name: Upload logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: noter-ci
+          path: |
+            build.log
+            smoke/
+          if-no-files-found: ignore
