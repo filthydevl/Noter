@@ -36,6 +36,16 @@ struct SpeechControlView: View {
                         Text(Self.speedLabel(s)).tag(s)
                     }
                 }
+                Section {
+                    Toggle(isOn: $speech.followVoiceOver) {
+                        Label("Use VoiceOver's voice", systemImage: "accessibility")
+                    }
+                    if speech.followVoiceOver {
+                        Text(speech.voiceOverRunning
+                             ? "VoiceOver is on: reading with its voice and speed."
+                             : "Turn on VoiceOver to read with its voice (set it to a Siri voice in VoiceOver › Speech).")
+                    }
+                }
                 Menu("Voice") {
                     ForEach(speech.voiceSections, id: \.title) { section in
                         Section(section.title) {

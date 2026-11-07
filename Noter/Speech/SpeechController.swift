@@ -1,4 +1,5 @@
 import AVFoundation
+import UIKit
 
 /// Read-aloud using Apple's on-device voices (Premium / Enhanced "neural" voices when
 /// installed). Speaks one book page per utterance, queues the next page ahead of time,
@@ -22,6 +23,17 @@ final class SpeechController: NSObject, ObservableObject {
         }
     }
 
+    /// Experimental: let VoiceOver's speech settings (its voice, e.g. a Siri voice, and
+    /// its rate) take over while VoiceOver is running. Apple only applies these settings
+    /// while an assistive technology is active; otherwise the voice picked here is used.
+    @Published var followVoiceOver: Bool {
+        didSet {
+            UserDefaults.standard.set(followVoiceOver, forKey: Self.followVoiceOverKey)
+            if isActive, oldValue != followVoiceOver { restart() }
+        }
+    }
+    @Published private(set) var voiceOverRunning = UIAccessibility.isVoiceOverRunning
+
     weak var session: DocumentSession?
 
     static let speeds: [Double] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
@@ -29,6 +41,7 @@ final class SpeechController: NSObject, ObservableObject {
     private static let voiceKey = "noter.voice"
     /// Set once you pick a voice yourself; until then Noter always uses the best one installed.
     private static let voiceChosenKey = "noter.voiceChosen"
+    private static let followVoiceOverKey = "noter.followVoiceOver"
 
     private let synth = AVSpeechSynthesizer()
     private struct Chunk {
@@ -47,6 +60,7 @@ final class SpeechController: NSObject, ObservableObject {
         let defaults = UserDefaults.standard
         speed = defaults.object(forKey: Self.speedKey) as? Double ?? 1.0
         voiceID = defaults.string(forKey: Self.voiceKey) ?? ""
+        followVoiceOver = defaults.bool(forKey: Self.followVoiceOverKey)
         super.init()
         synth.delegate = self
         refreshVoices()
@@ -54,6 +68,30 @@ final class SpeechController: NSObject, ObservableObject {
         NotificationCenter.default.addObserver(
             self, selector: #selector(availableVoicesChanged),
             name: AVSpeechSynthesizer.availableVoicesDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(voiceOverStatusChanged),
+            name: UIAccessibility.voiceOverStatusDidChangeNotification, object: nil)
+    }
+
+    /// The setting is read when an utterance starts, so when VoiceOver is switched on or
+    /// off mid-page, re-queue from the current word to switch voices right away.
+    @objc nonisolated private func voiceOverStatusChanged() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let running = UIAccessibility.isVoiceOverRunning
+            guard running != self.voiceOverRunning else { return }
+            self.voiceOverRunning = running
+            guard self.followVoiceOver, self.isActive else { return }
+            if self.isPlaying {
+                self.restart()
+            } else {
+                // Paused: drop the paused utterance so ▶ restarts from the current word
+                // with the new voice.
+                self.generation += 1
+                self.chunks.removeAll()
+                if self.synth.isSpeaking || self.synth.isPaused { self.synth.stopSpeaking(at: .immediate) }
+            }
+        }
     }
 
     @objc nonisolated private func availableVoicesChanged() {
@@ -130,7 +168,7 @@ final class SpeechController: NSObject, ObservableObject {
         let sample = AVSpeechUtterance(string: "Hi, I'm \(v.name). This is how I'll read to you.")
         sample.voice = v
         sample.rate = rate
-        sample.prefersAssistiveTechnologySettings = false
+        sample.prefersAssistiveTechnologySettings = followVoiceOver
         synth.speak(sample) // not a page chunk, so the delegate ignores it
     }
 
@@ -259,7 +297,7 @@ final class SpeechController: NSObject, ObservableObject {
         u.voice = AVSpeechSynthesisVoice(identifier: voiceID) ?? voices.first
         u.rate = rate
         u.postUtteranceDelay = 0.15
-        u.prefersAssistiveTechnologySettings = false
+        u.prefersAssistiveTechnologySettings = followVoiceOver
         chunks[ObjectIdentifier(u)] = Chunk(utterance: u, slot: lp.slot, offset: start)
         synth.speak(u)
     }
