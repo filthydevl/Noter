@@ -49,8 +49,8 @@ struct SpeechControlView: View {
                     }
                     if speech.followVoiceOver {
                         Text(speech.voiceOverRunning
-                             ? "VoiceOver is on: reading with its voice and speed (set the speed with the rotor). Turn this off to use the speeds above."
-                             : "Only while VoiceOver is on. Until then Noter reads with the voice below.")
+                             ? "VoiceOver is on: reading with its voice and speed."
+                             : "Turn on VoiceOver to read with its voice (set it to a Siri voice in VoiceOver › Speech).")
                     }
                 }
                 Menu {

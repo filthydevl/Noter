@@ -55,7 +55,6 @@ enum SidePanel {
 struct ReaderView: View {
     @ObservedObject var session: DocumentSession
     @State private var panel: SidePanel?
-    @State private var showTextOptions = false
 
     var body: some View {
         ZStack {
@@ -69,14 +68,13 @@ struct ReaderView: View {
                 .opacity(session.viewMode == .transcript ? 1 : 0)
                 .allowsHitTesting(session.viewMode == .transcript)
         }
-        .overlay(alignment: .topTrailing) {
-            SpeechControlView(speech: session.speech) { session.showReadingPosition() }
-                .padding(.top, 10)
-                .padding(.trailing, 14)
-        }
         .overlay(alignment: .leading) {
-            ToolRail(session: session, scribble: session.scribble, panel: $panel)
-                .padding(.leading, 14)
+            // The player sits right above the tool rail.
+            VStack(alignment: .leading, spacing: 12) {
+                SpeechControlView(speech: session.speech) { session.showReadingPosition() }
+                ToolRail(session: session, scribble: session.scribble, panel: $panel)
+            }
+            .padding(.leading, 14)
         }
         .overlay(alignment: .bottom) {
             if session.penMode == .scribble && session.viewMode != .transcript {
@@ -185,19 +183,6 @@ struct ReaderView: View {
             }
             .accessibilityLabel("Search")
 
-            if session.viewMode == .transcript {
-                Button {
-                    showTextOptions = true
-                } label: {
-                    Image(systemName: "textformat.size")
-                }
-                .accessibilityLabel("Reading options")
-                .popover(isPresented: $showTextOptions) {
-                    TextOptionsView(session: session)
-                        .presentationCompactAdaptation(.popover)
-                }
-            }
-
             Menu {
                 Picker("Page layout", selection: layoutBinding) {
                     ForEach(LayoutMode.allCases) { Text($0.title).tag($0) }
@@ -217,6 +202,7 @@ private struct ToolRail: View {
     @ObservedObject var scribble: ScribbleSettings
     @Binding var panel: SidePanel?
     @State private var showColors = false
+    @State private var showTextOptions = false
 
     private var scribbling: Bool { session.penMode == .scribble }
     private var penColor: Color { scribbling ? scribble.color.color : session.color.color }
@@ -302,6 +288,18 @@ private struct ToolRail: View {
             }
             railButton("questionmark.bubble", label: "Questions", selected: panel == .questions, tint: .purple) {
                 panel = panel == .questions ? nil : .questions
+            }
+
+            // Text view customization (theme, font, size, spacing, margins…).
+            if session.viewMode == .transcript {
+                divider
+                railButton("textformat.size", label: "Reading options", selected: showTextOptions) {
+                    showTextOptions = true
+                }
+                .popover(isPresented: $showTextOptions, arrowEdge: .leading) {
+                    TextOptionsView(session: session)
+                        .presentationCompactAdaptation(.popover)
+                }
             }
         }
         .padding(6)

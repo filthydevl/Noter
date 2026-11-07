@@ -13,11 +13,7 @@ final class SpeechController: NSObject, ObservableObject {
     @Published var speed: Double {
         didSet {
             UserDefaults.standard.set(speed, forKey: Self.speedKey)
-            guard oldValue != speed else { return }
-            if useAssistive {
-                session?.showToast("VoiceOver sets the speed of its voice (rotor › Speaking Rate)")
-            }
-            if isActive { restart() }
+            if isActive, oldValue != speed { restart() }
         }
     }
     @Published var voiceID: String {
@@ -58,18 +54,12 @@ final class SpeechController: NSObject, ObservableObject {
     private static let followVoiceOverKey = "noter.followVoiceOver.v2"
     private static let skipKey = "noter.skip"
 
-    private var synth = AVSpeechSynthesizer()
+    private let synth = AVSpeechSynthesizer()
     private struct Chunk {
         let utterance: AVSpeechUtterance
         let slot: SlotKey
-        /// The word reading started at.
-        let token: Int
         /// Maps positions in the spoken string back to the page text.
         let map: SpokenMap
-        /// Read with VoiceOver's voice settings.
-        let assistive: Bool
-        var started = false
-        var spokeWord = false
     }
 
     /// The spoken string is the page text minus skipped parts; each segment is a run
@@ -94,18 +84,6 @@ final class SpeechController: NSObject, ObservableObject {
     private var position: SpeechPosition?
     private var generation = 0
     private var fetching = 0
-    /// VoiceOver's voice (e.g. a Siri voice) turned out to be off-limits to apps: it
-    /// produced no audio, so Noter reads with its own voice for the rest of the session.
-    private var assistiveFailed = false
-    /// The synthesizer was replaced once already because it never started speaking.
-    private var resetSynth = false
-
-    /// VoiceOver's settings only apply while VoiceOver is running. With it off, asking
-    /// for them makes iOS hand the utterance to the Spoken Content voice — often a Siri
-    /// voice apps aren't allowed to use — and nothing is heard. So only ask while it's on.
-    private var useAssistive: Bool {
-        followVoiceOver && UIAccessibility.isVoiceOverRunning && !assistiveFailed
-    }
 
     override init() {
         let defaults = UserDefaults.standard
@@ -225,7 +203,7 @@ final class SpeechController: NSObject, ObservableObject {
         let sample = AVSpeechUtterance(string: "Hi, I'm \(v.name). This is how I'll read to you.")
         sample.voice = v
         sample.rate = rate
-        sample.prefersAssistiveTechnologySettings = useAssistive
+        sample.prefersAssistiveTechnologySettings = followVoiceOver
         synth.speak(sample) // not a page chunk, so the delegate ignores it
     }
 
@@ -371,63 +349,21 @@ final class SpeechController: NSObject, ObservableObject {
         u.voice = AVSpeechSynthesisVoice(identifier: voiceID) ?? voices.first
         u.rate = rate
         u.postUtteranceDelay = 0.15
-        let assistive = useAssistive
-        u.prefersAssistiveTechnologySettings = assistive
-        let id = ObjectIdentifier(u)
-        chunks[id] = Chunk(utterance: u, slot: lp.slot, token: token, map: map, assistive: assistive)
+        u.prefersAssistiveTechnologySettings = followVoiceOver
+        chunks[ObjectIdentifier(u)] = Chunk(utterance: u, slot: lp.slot, map: map)
         synth.speak(u)
-        watchStart(id)
-    }
-
-    // MARK: Watchdog
-
-    /// If the first page queued never starts speaking, the voice is unusable (or the
-    /// synthesizer is stuck): switch to Noter's own voice / a fresh synthesizer and go on.
-    private func watchStart(_ id: ObjectIdentifier) {
-        let gen = generation
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            guard let self, gen == self.generation, self.isPlaying,
-                  let c = self.chunks[id], !c.started,
-                  !self.chunks.values.contains(where: { $0.started }) else { return }
-            self.recover(from: c)
-        }
-    }
-
-    private func recover(from c: Chunk) {
-        if c.assistive {
-            assistiveFailed = true
-            session?.showToast("VoiceOver's voice isn't available to apps — reading with \(currentVoiceName)")
-        } else if !resetSynth {
-            resetSynth = true
-            synth.delegate = nil
-            synth.stopSpeaking(at: .immediate)
-            synth = AVSpeechSynthesizer()
-            synth.delegate = self
-        } else {
-            session?.showToast("Couldn't start the voice. Try another voice from the speed menu.")
-            stop()
-            return
-        }
-        play(from: c.slot, token: c.token)
-    }
-
-    private var currentVoiceName: String {
-        (AVSpeechSynthesisVoice(identifier: voiceID) ?? voices.first)?.name ?? "the selected voice"
     }
 
     // MARK: Delegate (main actor)
 
     fileprivate func didStart(_ id: ObjectIdentifier) {
         guard let c = chunks[id] else { return }
-        chunks[id]?.started = true
         isLoading = false
         // Queue the next page while this one is being read, so there's no pause.
         if lastQueued == c.slot, let n = next(after: c.slot) { queue(n, token: 0) }
     }
 
     fileprivate func willSpeak(_ id: ObjectIdentifier, range: NSRange) {
-        chunks[id]?.spokeWord = true
         guard let c = chunks[id], let lp = session?.logicalPage(c.slot),
               let offset = c.map.textOffset(forSpoken: range.location),
               let token = lp.tokenIndex(atUTF16: offset) else { return }
@@ -437,14 +373,8 @@ final class SpeechController: NSObject, ObservableObject {
         session?.speechMoved(p)
     }
 
-    fileprivate func didFinish(_ id: ObjectIdentifier, cancelled: Bool) {
-        guard let c = chunks.removeValue(forKey: id) else { return }
-        // A whole page "read" without a single word: the voice made no sound (VoiceOver's
-        // Siri voice does this for apps). Read it again with Noter's own voice.
-        if !cancelled, c.assistive, !c.spokeWord, isActive {
-            recover(from: c)
-            return
-        }
+    fileprivate func didFinish(_ id: ObjectIdentifier) {
+        guard chunks.removeValue(forKey: id) != nil else { return }
         guard chunks.isEmpty, fetching == 0, isActive else { return }
         // Nothing left in the queue: continue with the following page, or stop at the end.
         if let n = lastQueued.flatMap({ next(after: $0) }) {
@@ -470,11 +400,11 @@ extension SpeechController: AVSpeechSynthesizerDelegate {
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         let id = ObjectIdentifier(utterance)
-        Task { @MainActor [weak self] in self?.didFinish(id, cancelled: false) }
+        Task { @MainActor [weak self] in self?.didFinish(id) }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         let id = ObjectIdentifier(utterance)
-        Task { @MainActor [weak self] in self?.didFinish(id, cancelled: true) }
+        Task { @MainActor [weak self] in self?.didFinish(id) }
     }
 }
