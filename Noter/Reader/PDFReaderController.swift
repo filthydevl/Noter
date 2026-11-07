@@ -27,6 +27,8 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
     private var previewAnnotations: [PDFAnnotation] = []
     private var speechAnnotations: [PDFAnnotation] = []
     private var speechPhrase: SpeechPhrase?
+    private var wordAnnotations: [PDFAnnotation] = []
+    private var speechWord: SpeechWord?
     private var hookedScrollViews = Set<ObjectIdentifier>()
     private var didInitialScroll = false
     private var ready = false
@@ -320,7 +322,8 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    /// Tints just the sentence / phrase being read (not the whole line).
+    /// Speechify-style read-along: a light tint on the sentence / phrase being read, and
+    /// a darker fill with a solid underline (same color) on the word being spoken.
     func showSpeech(_ position: SpeechPosition?) {
         guard let s = session, let position, let lp = s.logicalPage(position.slot),
               let phrase = lp.phraseRange(containing: position.token),
@@ -328,31 +331,61 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
             clearSpeech()
             return
         }
-        let key = SpeechPhrase(slot: position.slot, lower: phrase.lowerBound, upper: phrase.upperBound)
-        guard key != speechPhrase else { return }
-        clearSpeech()
-        speechPhrase = key
-
         let geometry = PageGeometry(page: page)
-        var union: CGRect?
-        for r in lp.lineRects(for: phrase) {
-            let pr = geometry.pageRect(fromNormalized: r.insetBy(dx: -0.002, dy: r.height * 0.04))
-            let a = PDFAnnotation(bounds: pr, forType: .square, withProperties: nil)
-            a.color = .clear
-            a.interiorColor = Self.speechColor.withAlphaComponent(0.18)
-            let border = PDFBorder()
-            border.lineWidth = 0
-            a.border = border
-            page.addAnnotation(a)
-            speechAnnotations.append(a)
-            union = union.map { $0.union(pr) } ?? pr
+
+        let phraseKey = SpeechPhrase(slot: position.slot, lower: phrase.lowerBound, upper: phrase.upperBound)
+        if phraseKey != speechPhrase {
+            clearSpeech()
+            speechPhrase = phraseKey
+            var union: CGRect?
+            for r in lp.lineRects(for: phrase) {
+                let pr = geometry.pageRect(fromNormalized: r.insetBy(dx: -0.002, dy: r.height * 0.04))
+                speechAnnotations.append(addFill(pr, alpha: 0.16, on: page))
+                union = union.map { $0.union(pr) } ?? pr
+            }
+            if let union { follow(union, on: page) }
         }
-        if let union { follow(union, on: page) }
+
+        let wordKey = SpeechWord(slot: position.slot, token: position.token)
+        guard wordKey != speechWord else { return }
+        clearWord()
+        speechWord = wordKey
+        guard let r = lp.lineRects(for: position.token...position.token).first else { return }
+        let box = r.insetBy(dx: -0.001, dy: r.height * 0.04)
+        wordAnnotations.append(addFill(geometry.pageRect(fromNormalized: box), alpha: 0.30, on: page))
+        // Underline along the bottom of the word (in displayed-page space, so it also
+        // sits right on rotated pages).
+        let thickness = max(box.height * 0.1, 0.0015)
+        let underline = CGRect(x: box.minX, y: box.maxY - thickness, width: box.width, height: thickness)
+        wordAnnotations.append(addFill(geometry.pageRect(fromNormalized: underline), alpha: 0.95, on: page))
+    }
+
+    private struct SpeechWord: Equatable {
+        let slot: SlotKey
+        let token: Int
     }
 
     private static let speechColor = UIColor(named: "AccentColor") ?? .systemIndigo
 
+    private func addFill(_ rect: CGRect, alpha: CGFloat, on page: PDFPage) -> PDFAnnotation {
+        let a = PDFAnnotation(bounds: rect, forType: .square, withProperties: nil)
+        a.color = .clear
+        a.interiorColor = Self.speechColor.withAlphaComponent(alpha)
+        let border = PDFBorder()
+        border.lineWidth = 0
+        a.border = border
+        page.addAnnotation(a)
+        return a
+    }
+
+    private func clearWord() {
+        wordAnnotations.forEach { $0.page?.removeAnnotation($0) }
+        wordAnnotations.removeAll()
+        speechWord = nil
+    }
+
     private func clearSpeech() {
+        clearWord()
         speechAnnotations.forEach { $0.page?.removeAnnotation($0) }
         speechAnnotations.removeAll()
         speechPhrase = nil

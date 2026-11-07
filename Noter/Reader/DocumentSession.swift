@@ -289,6 +289,15 @@ final class DocumentSession: ObservableObject {
         }
     }
 
+    /// Parts of a book page that read-aloud skips (dimmed in the text view).
+    func skippedRanges(_ lp: LogicalPage) -> [NSRange] {
+        SkipFilter.excludedRanges(in: lp, options: speech.skip)
+    }
+
+    func skipOptionsChanged() {
+        transcriptController?.refreshSkipped()
+    }
+
     func undo() {
         guard let previous = undoStack.popLast() else { return }
         highlights = previous

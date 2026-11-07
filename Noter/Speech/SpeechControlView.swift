@@ -46,6 +46,24 @@ struct SpeechControlView: View {
                              : "Turn on VoiceOver to read with its voice (set it to a Siri voice in VoiceOver › Speech).")
                     }
                 }
+                Menu {
+                    ForEach(SkipOptions.items) { item in
+                        Toggle(item.title, isOn: Binding(
+                            get: { speech.skip.contains(item.option) },
+                            set: { on in
+                                var options = speech.skip
+                                if on {
+                                    options.insert(item.option)
+                                } else {
+                                    options.remove(item.option)
+                                }
+                                speech.skip = options
+                            }))
+                    }
+                    Text("Skipped text is dimmed in the Text view.")
+                } label: {
+                    Label("Skip while reading", systemImage: "forward")
+                }
                 Menu("Voice") {
                     ForEach(speech.voiceSections, id: \.title) { section in
                         Section(section.title) {

@@ -94,7 +94,8 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         if let pages = s.logicalPages(indexPath.section), indexPath.item < pages.count {
             let lp = pages[indexPath.item]
             cell.configure(page: lp, header: s.headerLabel(for: lp.slot),
-                           highlights: s.transcriptHighlightRanges(lp), fontSize: s.transcriptFontSize)
+                           highlights: s.transcriptHighlightRanges(lp), skipped: s.skippedRanges(lp),
+                           fontSize: s.transcriptFontSize)
             if let p = s.speechPosition, p.slot == lp.slot { cell.setSpeech(token: p.token) }
         } else {
             cell.configurePlaceholder(header: "PDF page \(indexPath.section + 1)", fontSize: s.transcriptFontSize)
@@ -133,6 +134,11 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             guard let cell = cell as? TranscriptCell, let lp = cell.page else { continue }
             cell.applyHighlights(s.transcriptHighlightRanges(lp))
         }
+    }
+
+    /// Skip options changed: re-dim skipped text in the visible pages.
+    func refreshSkipped() {
+        collectionView.reconfigureItems(at: collectionView.indexPathsForVisibleItems)
     }
 
     func refreshHeaders() {

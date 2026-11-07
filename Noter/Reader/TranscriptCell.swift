@@ -12,6 +12,7 @@ final class TranscriptCell: UICollectionViewCell {
     private let highlightLayer = CALayer()
     private let speechPhraseLayer = CAShapeLayer()
     private let speechWordLayer = CAShapeLayer()
+    private let speechUnderlineLayer = CAShapeLayer()
     private let previewLayer = CAShapeLayer()
 
     private(set) var page: LogicalPage?
@@ -35,9 +36,11 @@ final class TranscriptCell: UICollectionViewCell {
         textView.dataDetectorTypes = []
 
         speechPhraseLayer.fillColor = Self.speechColor.withAlphaComponent(0.13).cgColor
-        speechWordLayer.fillColor = Self.speechColor.withAlphaComponent(0.22).cgColor
+        speechWordLayer.fillColor = Self.speechColor.withAlphaComponent(0.30).cgColor
+        speechUnderlineLayer.fillColor = Self.speechColor.withAlphaComponent(0.95).cgColor
         previewLayer.fillColor = UIColor.clear.cgColor
-        for (i, layer) in [highlightLayer, speechPhraseLayer, speechWordLayer, previewLayer].enumerated() {
+        for (i, layer) in [highlightLayer, speechPhraseLayer, speechWordLayer, speechUnderlineLayer,
+                           previewLayer].enumerated() {
             textView.layer.insertSublayer(layer, at: UInt32(i))
         }
 
@@ -71,6 +74,7 @@ final class TranscriptCell: UICollectionViewCell {
             previewLayer.path = nil
             speechPhraseLayer.path = nil
             speechWordLayer.path = nil
+            speechUnderlineLayer.path = nil
         }
     }
 
@@ -78,7 +82,7 @@ final class TranscriptCell: UICollectionViewCell {
         super.layoutSubviews()
         // Geometry depends on the final width, so redraw overlays after layout.
         withoutAnimation {
-            for layer in [highlightLayer, speechPhraseLayer, speechWordLayer, previewLayer] {
+            for layer in [highlightLayer, speechPhraseLayer, speechWordLayer, speechUnderlineLayer, previewLayer] {
                 layer.frame = textView.bounds
             }
         }
@@ -98,7 +102,8 @@ final class TranscriptCell: UICollectionViewCell {
         return [.font: font, .foregroundColor: UIColor.label, .paragraphStyle: paragraph]
     }
 
-    func configure(page: LogicalPage, header text: String, highlights: [(NSRange, UIColor)], fontSize: CGFloat) {
+    func configure(page: LogicalPage, header text: String, highlights: [(NSRange, UIColor)],
+                   skipped: [NSRange], fontSize: CGFloat) {
         self.page = page
         header.text = text
         if page.text.isEmpty {
@@ -106,7 +111,12 @@ final class TranscriptCell: UICollectionViewCell {
                 .font: UIFont.italicSystemFont(ofSize: fontSize * 0.8), .foregroundColor: UIColor.tertiaryLabel,
             ])
         } else {
-            textView.attributedText = NSAttributedString(string: page.text, attributes: Self.attributes(fontSize))
+            let body = NSMutableAttributedString(string: page.text, attributes: Self.attributes(fontSize))
+            // Text that read-aloud skips is dimmed.
+            for r in skipped where NSMaxRange(r) <= body.length {
+                body.addAttribute(.foregroundColor, value: UIColor.tertiaryLabel, range: r)
+            }
+            textView.attributedText = body
         }
         applyHighlights(highlights)
         setNeedsLayout()
@@ -234,12 +244,18 @@ final class TranscriptCell: UICollectionViewCell {
                   let phrase = page.phraseRange(containing: token) else {
                 speechPhraseLayer.path = nil
                 speechWordLayer.path = nil
+                speechUnderlineLayer.path = nil
                 return
             }
             let phraseRects = textRects(for: page.textRange(for: phrase))
             let wordRects = textRects(for: page.tokenRanges[token])
             speechPhraseLayer.path = phraseRects.isEmpty ? nil : path(phraseRects, radius: 4)
             speechWordLayer.path = wordRects.isEmpty ? nil : path(wordRects, radius: 4)
+            // A solid underline under the word being spoken (Speechify-style).
+            let underlines = wordRects.map { r in
+                CGRect(x: r.minX + 1, y: r.maxY - 2.5, width: max(r.width - 2, 2), height: 2.5)
+            }
+            speechUnderlineLayer.path = underlines.isEmpty ? nil : path(underlines, radius: 1.25)
             wordRect = wordRects.first ?? phraseRects.first
         }
         return wordRect

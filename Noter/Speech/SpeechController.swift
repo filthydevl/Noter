@@ -33,6 +33,15 @@ final class SpeechController: NSObject, ObservableObject {
         }
     }
     @Published private(set) var voiceOverRunning = UIAccessibility.isVoiceOverRunning
+    /// What not to read aloud (headers, footnotes, citations…).
+    @Published var skip: SkipOptions {
+        didSet {
+            guard oldValue != skip else { return }
+            UserDefaults.standard.set(skip.rawValue, forKey: Self.skipKey)
+            session?.skipOptionsChanged()
+            if isActive { restart() }
+        }
+    }
 
     weak var session: DocumentSession?
 
@@ -42,13 +51,32 @@ final class SpeechController: NSObject, ObservableObject {
     /// Set once you pick a voice yourself; until then Noter always uses the best one installed.
     private static let voiceChosenKey = "noter.voiceChosen"
     private static let followVoiceOverKey = "noter.followVoiceOver"
+    private static let skipKey = "noter.skip"
 
     private let synth = AVSpeechSynthesizer()
     private struct Chunk {
         let utterance: AVSpeechUtterance
         let slot: SlotKey
-        /// UTF-16 offset of the utterance's first character in the page text.
-        let offset: Int
+        /// Maps positions in the spoken string back to the page text.
+        let map: SpokenMap
+    }
+
+    /// The spoken string is the page text minus skipped parts; each segment is a run
+    /// of page text copied verbatim (UTF-16 offsets).
+    private struct SpokenMap {
+        struct Segment {
+            let spoken: Int
+            let text: Int
+            let length: Int
+        }
+        var segments: [Segment] = []
+
+        func textOffset(forSpoken offset: Int) -> Int? {
+            for s in segments where offset < s.spoken + s.length {
+                return offset >= s.spoken ? s.text + (offset - s.spoken) : s.text
+            }
+            return nil
+        }
     }
     private var chunks: [ObjectIdentifier: Chunk] = [:]
     private var lastQueued: SlotKey?
@@ -61,6 +89,7 @@ final class SpeechController: NSObject, ObservableObject {
         speed = defaults.object(forKey: Self.speedKey) as? Double ?? 1.0
         voiceID = defaults.string(forKey: Self.voiceKey) ?? ""
         followVoiceOver = defaults.bool(forKey: Self.followVoiceOverKey)
+        skip = (defaults.object(forKey: Self.skipKey) as? Int).map(SkipOptions.init(rawValue:)) ?? .defaults
         super.init()
         synth.delegate = self
         refreshVoices()
@@ -282,7 +311,22 @@ final class SpeechController: NSObject, ObservableObject {
     private func speak(_ lp: LogicalPage, token: Int) {
         let ns = lp.text as NSString
         let start = token < lp.tokenRanges.count ? lp.tokenRanges[max(token, 0)].location : ns.length
-        let text = ns.substring(from: start)
+        // Copy the page text from `start`, leaving out skipped ranges.
+        let spoken = NSMutableString()
+        var map = SpokenMap()
+        func copy(_ from: Int, _ to: Int) {
+            guard to > from else { return }
+            map.segments.append(.init(spoken: spoken.length, text: from, length: to - from))
+            spoken.append(ns.substring(with: NSRange(location: from, length: to - from)))
+        }
+        var cursor = start
+        for r in SkipFilter.excludedRanges(in: lp, options: skip) where NSMaxRange(r) > cursor {
+            copy(cursor, max(cursor, r.location))
+            spoken.append(" ")
+            cursor = max(cursor, NSMaxRange(r))
+        }
+        copy(cursor, ns.length)
+        let text = spoken as String
         lastQueued = lp.slot
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             // Blank page — move on.
@@ -298,7 +342,7 @@ final class SpeechController: NSObject, ObservableObject {
         u.rate = rate
         u.postUtteranceDelay = 0.15
         u.prefersAssistiveTechnologySettings = followVoiceOver
-        chunks[ObjectIdentifier(u)] = Chunk(utterance: u, slot: lp.slot, offset: start)
+        chunks[ObjectIdentifier(u)] = Chunk(utterance: u, slot: lp.slot, map: map)
         synth.speak(u)
     }
 
@@ -313,7 +357,8 @@ final class SpeechController: NSObject, ObservableObject {
 
     fileprivate func willSpeak(_ id: ObjectIdentifier, range: NSRange) {
         guard let c = chunks[id], let lp = session?.logicalPage(c.slot),
-              let token = lp.tokenIndex(atUTF16: c.offset + range.location) else { return }
+              let offset = c.map.textOffset(forSpoken: range.location),
+              let token = lp.tokenIndex(atUTF16: offset) else { return }
         let p = SpeechPosition(pdfIndex: c.slot.pdfIndex, half: c.slot.half, token: token)
         guard p != position else { return }
         position = p
