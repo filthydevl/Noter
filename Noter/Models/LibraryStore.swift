@@ -43,7 +43,7 @@ final class LibraryStore: ObservableObject {
 
     func delete(_ doc: DocumentInfo) {
         try? FileManager.default.removeItem(at: Storage.folder(doc.id))
-        try? FileManager.default.removeItem(at: Storage.exportURL(for: doc))
+        for url in Storage.exportURLs(for: doc) { try? FileManager.default.removeItem(at: url) }
         reload()
     }
 

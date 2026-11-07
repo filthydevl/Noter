@@ -49,7 +49,7 @@ final class SessionHolder: ObservableObject {
 
 /// The slide-in panel on the right.
 enum SidePanel {
-    case highlights, keywords
+    case highlights, keywords, questions
 }
 
 struct ReaderView: View {
@@ -113,7 +113,9 @@ struct ReaderView: View {
         case .highlights:
             HighlightsListView(session: session) { self.panel = nil }
         case .keywords:
-            KeywordsListView(session: session, index: session.keywords) { self.panel = nil }
+            KeywordsListView(session: session) { self.panel = nil }
+        case .questions:
+            QuestionsListView(session: session, index: session.questions) { self.panel = nil }
         }
     }
 
@@ -168,7 +170,7 @@ struct ReaderView: View {
 }
 
 /// Floating vertical toolbar on the left: highlighter, eraser, color, undo, highlights,
-/// key words.
+/// key words, questions.
 private struct ToolRail: View {
     @ObservedObject var session: DocumentSession
     @Binding var panel: SidePanel?
@@ -228,8 +230,11 @@ private struct ToolRail: View {
             railButton("text.quote", label: "Highlights", selected: panel == .highlights) {
                 panel = panel == .highlights ? nil : .highlights
             }
-            railButton("key", label: "Key words", selected: panel == .keywords, tint: .teal) {
+            railButton("key", label: "Key words", selected: panel == .keywords) {
                 panel = panel == .keywords ? nil : .keywords
+            }
+            railButton("questionmark.bubble", label: "Questions", selected: panel == .questions, tint: .purple) {
+                panel = panel == .questions ? nil : .questions
             }
         }
         .padding(6)

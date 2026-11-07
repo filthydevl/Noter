@@ -13,7 +13,7 @@ def page_stream(lines, x0, y0, size=12, lead=16):
 body = [
     "The quick brown fox jumps over the lazy dog near the river bank.",
     "During the Second World War, Winston Churchill spoke in London.",
-    "Highlights are saved immediately and exported to a Markdown file.",
+    "Why did so many women join the war effort? Who could have known?",
     "In May 1940 the war effort changed the lives of women in Britain.",
 ] * 6
 

@@ -10,8 +10,8 @@ final class TranscriptCell: UICollectionViewCell {
     let textView = UITextView(usingTextLayoutManager: false)
     /// Drawn behind the text, bottom to top.
     private let highlightLayer = CALayer()
-    private let keywordLayer = CAShapeLayer()
-    private let keywordUnderlineLayer = CAShapeLayer()
+    private let markLayer = CAShapeLayer()
+    private let markUnderlineLayer = CAShapeLayer()
     private let speechPhraseLayer = CAShapeLayer()
     private let speechWordLayer = CAShapeLayer()
     private let speechUnderlineLayer = CAShapeLayer()
@@ -20,7 +20,7 @@ final class TranscriptCell: UICollectionViewCell {
 
     private(set) var page: LogicalPage?
     private var highlights: [(NSRange, UIColor)] = []
-    private var keywords: [NSRange] = []
+    private var marks: [NSRange] = []
     private var flashRange: NSRange?
     private var speechToken: Int?
     private var previewRange: NSRange?
@@ -44,13 +44,13 @@ final class TranscriptCell: UICollectionViewCell {
         speechWordLayer.fillColor = Self.speechColor.withAlphaComponent(0.30).cgColor
         speechUnderlineLayer.fillColor = Self.speechColor.withAlphaComponent(0.95).cgColor
         previewLayer.fillColor = UIColor.clear.cgColor
-        keywordLayer.fillColor = UIColor.systemTeal.withAlphaComponent(0.14).cgColor
-        keywordUnderlineLayer.fillColor = UIColor.systemTeal.withAlphaComponent(0.7).cgColor
+        markLayer.fillColor = UIColor.systemPurple.withAlphaComponent(0.16).cgColor
+        markUnderlineLayer.fillColor = UIColor.systemPurple.withAlphaComponent(0.7).cgColor
         flashLayer.fillColor = Self.speechColor.withAlphaComponent(0.10).cgColor
         flashLayer.strokeColor = Self.speechColor.cgColor
         flashLayer.lineWidth = 2
         flashLayer.opacity = 0
-        for (i, layer) in [highlightLayer, keywordLayer, keywordUnderlineLayer, speechPhraseLayer, speechWordLayer,
+        for (i, layer) in [highlightLayer, markLayer, markUnderlineLayer, speechPhraseLayer, speechWordLayer,
                            speechUnderlineLayer, previewLayer, flashLayer].enumerated() {
             textView.layer.insertSublayer(layer, at: UInt32(i))
         }
@@ -78,14 +78,14 @@ final class TranscriptCell: UICollectionViewCell {
         super.prepareForReuse()
         page = nil
         highlights = []
-        keywords = []
+        marks = []
         flashRange = nil
         speechToken = nil
         previewRange = nil
         withoutAnimation {
             highlightLayer.sublayers = nil
-            keywordLayer.path = nil
-            keywordUnderlineLayer.path = nil
+            markLayer.path = nil
+            markUnderlineLayer.path = nil
             flashLayer.removeAllAnimations()
             flashLayer.path = nil
             previewLayer.path = nil
@@ -99,13 +99,13 @@ final class TranscriptCell: UICollectionViewCell {
         super.layoutSubviews()
         // Geometry depends on the final width, so redraw overlays after layout.
         withoutAnimation {
-            for layer in [highlightLayer, keywordLayer, keywordUnderlineLayer, speechPhraseLayer, speechWordLayer,
+            for layer in [highlightLayer, markLayer, markUnderlineLayer, speechPhraseLayer, speechWordLayer,
                           speechUnderlineLayer, previewLayer, flashLayer] {
                 layer.frame = textView.bounds
             }
         }
         redrawHighlights()
-        redrawKeywords()
+        redrawMarks()
         redrawFlash()
         redrawPreview()
         _ = drawSpeech()
@@ -123,7 +123,7 @@ final class TranscriptCell: UICollectionViewCell {
     }
 
     func configure(page: LogicalPage, header text: String, highlights: [(NSRange, UIColor)],
-                   skipped: [NSRange], keywords: [NSRange], fontSize: CGFloat) {
+                   skipped: [NSRange], marks: [NSRange], fontSize: CGFloat) {
         self.page = page
         header.text = text
         if page.text.isEmpty {
@@ -139,7 +139,7 @@ final class TranscriptCell: UICollectionViewCell {
             textView.attributedText = body
         }
         applyHighlights(highlights)
-        applyKeywords(keywords)
+        applyMarks(marks)
         setNeedsLayout()
     }
 
@@ -150,25 +150,25 @@ final class TranscriptCell: UICollectionViewCell {
             .font: UIFont.italicSystemFont(ofSize: fontSize * 0.8), .foregroundColor: UIColor.tertiaryLabel,
         ])
         applyHighlights([])
-        applyKeywords([])
+        applyMarks([])
     }
 
-    /// Key words found by the key word tool (shown when "Mark on pages" is on).
-    func applyKeywords(_ ranges: [NSRange]) {
-        keywords = ranges
-        redrawKeywords()
+    /// Questions found by the questions highlighter (shown when "Mark on pages" is on).
+    func applyMarks(_ ranges: [NSRange]) {
+        marks = ranges
+        redrawMarks()
     }
 
-    private func redrawKeywords() {
+    private func redrawMarks() {
         withoutAnimation {
-            guard page != nil, !keywords.isEmpty else {
-                keywordLayer.path = nil
-                keywordUnderlineLayer.path = nil
+            guard page != nil, !marks.isEmpty else {
+                markLayer.path = nil
+                markUnderlineLayer.path = nil
                 return
             }
-            let rects = keywords.flatMap { textRects(for: $0) }
-            keywordLayer.path = path(rects, radius: 3)
-            keywordUnderlineLayer.path = path(rects.map {
+            let rects = marks.flatMap { textRects(for: $0) }
+            markLayer.path = path(rects, radius: 3)
+            markUnderlineLayer.path = path(rects.map {
                 CGRect(x: $0.minX + 1, y: $0.maxY - 1.5, width: max($0.width - 2, 2), height: 1.5)
             }, radius: 0.75)
         }

@@ -1,89 +1,56 @@
 import SwiftUI
 
-/// Slide-in panel listing the key words found in the book — people, events, places,
-/// organizations, dates and key terms — each with the book page numbers it appears on.
-/// Tap a key word (or a page number) to jump there; it blinks so it's easy to spot.
+/// Slide-in panel with your key words — every single word or short phrase you've
+/// highlighted — in their highlight color, with the book pages you highlighted them on
+/// and the highlights you've tagged with them. Tap a page or a highlight to jump there.
 struct KeywordsListView: View {
     @ObservedObject var session: DocumentSession
-    @ObservedObject var index: KeywordIndex
     var onClose: () -> Void
-    @State private var filter: KeywordKind?
+    @State private var share: ShareItem?
 
     var body: some View {
         let _ = session.labelsVersion // refresh when page numbers improve
-        let all = index.keywords
-        let kinds = KeywordKind.allCases.filter { k in all.contains { $0.kind == k } }
+        let entries = session.keywordEntries()
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Key words")
                         .font(.title3.weight(.semibold))
-                    Text(subtitle)
+                    Text("\(entries.count) key word\(entries.count == 1 ? "" : "s")")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(Color.primary.opacity(0.07), in: Circle())
+                if !entries.isEmpty {
+                    Menu {
+                        Button {
+                            if let url = PDFExport.keywords(session) { share = ShareItem(url: url) }
+                        } label: {
+                            Label("Export PDF", systemImage: "doc.richtext")
+                        }
+                    } label: {
+                        PanelIcon(symbol: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("Export key words")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close key words")
+                Button(action: onClose) { PanelIcon(symbol: "xmark") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close key words")
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
-            .padding(.bottom, 10)
+            .padding(.bottom, 12)
 
-            Toggle(isOn: $index.markOnPages) {
-                Label("Mark on pages", systemImage: "highlighter")
-                    .font(.subheadline.weight(.medium))
-            }
-            .tint(.teal)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 10)
-
-            if kinds.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        chip("All", selected: filter == nil) { filter = nil }
-                        ForEach(kinds) { k in
-                            chip(k.title, selected: filter == k) { filter = k }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-                .padding(.bottom, 8)
-            }
-
-            if all.isEmpty {
-                Group {
-                    if index.isScanning || session.ocrDone == 0 {
-                        ProgressView("Finding key words…")
-                    } else {
-                        ContentUnavailableView(
-                            "No key words yet",
-                            systemImage: "key",
-                            description: Text("Key words show up once the text of the book has been recognized."))
-                    }
-                }
-                .frame(maxHeight: .infinity)
+            if entries.isEmpty {
+                ContentUnavailableView(
+                    "No key words yet",
+                    systemImage: "key",
+                    description: Text("Highlight a single word or a short phrase — a name, an event, a term — and it becomes a key word. Then tag your other highlights with it."))
+                    .frame(maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(kinds.filter { filter == nil || $0 == filter }) { kind in
-                            Label(kind.title, systemImage: kind.symbol)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                                .padding(.top, 8)
-                                .padding(.leading, 4)
-                            ForEach(all.filter { $0.kind == kind }) { k in
-                                KeywordRow(keyword: k, session: session)
-                            }
-                        }
+                    LazyVStack(spacing: 10) {
+                        ForEach(entries) { KeywordRow(keyword: $0, session: session) }
                     }
                     .padding(.horizontal, 14)
                     .padding(.bottom, 20)
@@ -92,60 +59,38 @@ struct KeywordsListView: View {
         }
         .frame(maxHeight: .infinity)
         .background(.regularMaterial)
-        .onAppear { index.start() }
-    }
-
-    private var subtitle: String {
-        let found = "\(index.keywords.count) found"
-        guard index.isScanning || session.ocrDone < session.pageCount else { return found }
-        return "\(found) · scanned \(index.scannedPages) of \(session.pageCount) pages"
-    }
-
-    private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(selected ? Color.white : Color.primary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(selected ? Color.accentColor : Color.primary.opacity(0.07), in: Capsule())
-        }
-        .buttonStyle(.plain)
+        .sheet(item: $share) { ShareSheet(url: $0.url) }
     }
 }
 
 private struct KeywordRow: View {
-    let keyword: Keyword
+    let keyword: KeywordEntry
     @ObservedObject var session: DocumentSession
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                if let first = keyword.occurrences.first { session.open(first) }
-            } label: {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(keyword.text)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    Spacer(minLength: 8)
-                    Text("\(keyword.count)×")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center) {
+                Button {
+                    if let first = keyword.mentions.first { session.open(first) }
+                } label: {
+                    TagChip(keyword: keyword)
+                        .font(.body)
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                Spacer(minLength: 8)
+                Text("\(keyword.linked.count) linked")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
 
-            // Same page-number style as the highlights panel.
+            // Where you highlighted it — same page-number style as the highlights panel.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(keyword.firstPerPage.prefix(40), id: \.self) { occurrence in
+                    ForEach(keyword.mentions) { h in
                         Button {
-                            session.open(occurrence)
+                            session.open(h)
                         } label: {
-                            Text(session.label(for: occurrence.slot))
+                            Text(session.pageLabel(for: h))
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 8)
@@ -155,6 +100,32 @@ private struct KeywordRow: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+
+            // Highlights tagged with it.
+            ForEach(keyword.linked) { h in
+                Button {
+                    session.open(h)
+                } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(h.color.color)
+                            .frame(width: 3)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(h.text)
+                                .font(.system(.footnote, design: .serif))
+                                .foregroundStyle(.primary)
+                                .lineLimit(3)
+                                .multilineTextAlignment(.leading)
+                            Text(session.pageLabel(for: h))
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(12)

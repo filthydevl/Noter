@@ -18,6 +18,7 @@ enum HighlightExporter {
 
         var md = "# \(session.info.title) — Highlights\n\n"
         md += "_\(items.count) highlight\(items.count == 1 ? "" : "s") · updated \(formatter.string(from: Date()))_\n"
+        let keywords = Dictionary(uniqueKeysWithValues: session.keywordEntries().map { ($0.id, $0.text) })
         var lastLabel: String?
         for h in items {
             let label = session.pageLabel(for: h)
@@ -29,7 +30,10 @@ enum HighlightExporter {
                 .split(separator: "\n", omittingEmptySubsequences: true)
                 .map { "> \($0)" }
                 .joined(separator: "\n>\n")
-            md += quoted + "\n\n"
+            md += quoted + "\n"
+            let tags = h.tagKeys.compactMap { keywords[$0] }
+            if !tags.isEmpty { md += "\nKey words: " + tags.map { "`\($0)`" }.joined(separator: " ") + "\n" }
+            md += "\n"
         }
         try? Data(md.utf8).write(to: url, options: [.atomic])
     }

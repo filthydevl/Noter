@@ -1,7 +1,7 @@
 import UIKit
 import PDFKit
 
-/// Drawn above one PDF page (PDFKit moves and zooms it with the page): key word marks,
+/// Drawn above one PDF page (PDFKit moves and zooms it with the page): question marks,
 /// the read-along sentence / word, the pen preview, and the blinking "here it is" box.
 /// Using plain layers instead of PDF annotations keeps PDFKit from re-rendering the
 /// page on every spoken word.
@@ -12,15 +12,15 @@ final class PDFPageOverlay: UIView {
     private let page: PDFPage
     private let geometry: PageGeometry
 
-    private var keywordRects: [CGRect] = []
+    private var markRects: [CGRect] = []
     private var phraseRects: [CGRect] = []
     private var wordRect: CGRect?
     private var previewRects: [CGRect] = []
     private var previewColor: UIColor?
     private var flashRects: [CGRect] = []
 
-    private let keywordLayer = CAShapeLayer()
-    private let keywordUnderlineLayer = CAShapeLayer()
+    private let markLayer = CAShapeLayer()
+    private let markUnderlineLayer = CAShapeLayer()
     private let phraseLayer = CAShapeLayer()
     private let wordLayer = CAShapeLayer()
     private let underlineLayer = CAShapeLayer()
@@ -28,7 +28,8 @@ final class PDFPageOverlay: UIView {
     private let flashLayer = CAShapeLayer()
 
     static let accent = UIColor(named: "AccentColor") ?? .systemIndigo
-    static let keywordColor = UIColor.systemTeal
+    /// The questions highlighter.
+    static let markColor = UIColor.systemPurple
 
     init(page: PDFPage, pdfView: PDFView) {
         self.page = page
@@ -38,15 +39,15 @@ final class PDFPageOverlay: UIView {
         isUserInteractionEnabled = false
         backgroundColor = .clear
 
-        keywordLayer.fillColor = Self.keywordColor.withAlphaComponent(0.14).cgColor
-        keywordUnderlineLayer.fillColor = Self.keywordColor.withAlphaComponent(0.7).cgColor
+        markLayer.fillColor = Self.markColor.withAlphaComponent(0.16).cgColor
+        markUnderlineLayer.fillColor = Self.markColor.withAlphaComponent(0.7).cgColor
         phraseLayer.fillColor = Self.accent.withAlphaComponent(0.16).cgColor
         wordLayer.fillColor = Self.accent.withAlphaComponent(0.30).cgColor
         underlineLayer.fillColor = Self.accent.withAlphaComponent(0.95).cgColor
         flashLayer.fillColor = Self.accent.withAlphaComponent(0.10).cgColor
         flashLayer.strokeColor = Self.accent.cgColor
         flashLayer.opacity = 0
-        for l in [keywordLayer, keywordUnderlineLayer, phraseLayer, wordLayer, underlineLayer, previewLayer, flashLayer] {
+        for l in [markLayer, markUnderlineLayer, phraseLayer, wordLayer, underlineLayer, previewLayer, flashLayer] {
             layer.addSublayer(l)
         }
     }
@@ -55,8 +56,8 @@ final class PDFPageOverlay: UIView {
 
     // MARK: State
 
-    func setKeywords(_ rects: [CGRect]) {
-        keywordRects = rects
+    func setMarks(_ rects: [CGRect]) {
+        markRects = rects
         redraw()
     }
 
@@ -125,14 +126,14 @@ final class PDFPageOverlay: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        for l in [keywordLayer, keywordUnderlineLayer, phraseLayer, wordLayer, underlineLayer, previewLayer, flashLayer] {
+        for l in [markLayer, markUnderlineLayer, phraseLayer, wordLayer, underlineLayer, previewLayer, flashLayer] {
             l.frame = bounds
         }
         guard window != nil else { return }
 
-        let keywords = keywordRects.compactMap { viewRect($0.insetBy(dx: -0.001, dy: $0.height * 0.04)) }
-        keywordLayer.path = path(keywords, radius: 2)
-        keywordUnderlineLayer.path = path(underlines(keywords, ratio: 0.07), radius: 0.5)
+        let marks = markRects.compactMap { viewRect($0.insetBy(dx: -0.001, dy: $0.height * 0.04)) }
+        markLayer.path = path(marks, radius: 2)
+        markUnderlineLayer.path = path(underlines(marks, ratio: 0.07), radius: 0.5)
 
         phraseLayer.path = path(phraseRects.compactMap { viewRect($0.insetBy(dx: -0.002, dy: $0.height * 0.04)) },
                                 radius: 3)

@@ -12,7 +12,7 @@ extension PageGeometry {
 /// * Finger: scroll, zoom, tap links — PDFKit's normal behaviour.
 /// * Pencil: highlight. The stroke is snapped to whole words on the OCR'd text lines
 ///   live while you draw, and saved the moment you lift the pencil.
-/// * Read-along, key words, the pen preview and the "here it is" blink are drawn on a
+/// * Read-along, question marks, the pen preview and the "here it is" blink are drawn on a
 ///   per-page overlay view (not PDF annotations), so PDFKit never re-renders the page
 ///   for them.
 final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOverlayViewProvider {
@@ -217,7 +217,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         let index = s.pdf.index(for: page)
         let overlay = overlays[index] ?? PDFPageOverlay(page: page, pdfView: view)
         overlays[index] = overlay
-        overlay.setKeywords(keywordRects(onPage: index))
+        overlay.setMarks(markRects(onPage: index))
         if let speech, speech.page == index {
             overlay.setSpeech(phrase: speech.phrase, word: speech.word)
         } else {
@@ -238,14 +238,14 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         if overlays[index] === overlayView { overlays[index] = nil }
     }
 
-    private func keywordRects(onPage index: Int) -> [CGRect] {
-        guard let s = session, s.keywords.markOnPages, let pages = s.logicalPages(index) else { return [] }
-        return pages.flatMap { lp in s.keywordRanges(lp).flatMap { lp.lineRects(for: $0) } }
+    private func markRects(onPage index: Int) -> [CGRect] {
+        guard let s = session, s.questions.markOnPages, let pages = s.logicalPages(index) else { return [] }
+        return pages.flatMap { lp in s.questionRanges(lp).flatMap { lp.lineRects(for: $0) } }
     }
 
-    /// Key words were found / toggled: redraw the marks on the visible pages.
-    func refreshKeywordMarks() {
-        for (index, overlay) in overlays { overlay.setKeywords(keywordRects(onPage: index)) }
+    /// Questions were found / toggled: redraw the marks on the visible pages.
+    func refreshMarks() {
+        for (index, overlay) in overlays { overlay.setMarks(markRects(onPage: index)) }
     }
 
     /// Boxes and blinks the given rects (normalized) on a page, once it's on screen.

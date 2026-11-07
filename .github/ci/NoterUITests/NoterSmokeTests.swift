@@ -60,25 +60,29 @@ final class NoterSmokeTests: XCTestCase {
         app.buttons["PDF"].tap()
         sleep(1)
 
-        // Key words: names / events / dates are found, marked on the page, and tapping
-        // one jumps there and blinks it.
+        // Key words come from your own short highlights (none in this test).
         app.buttons["Key words"].tap()
-        let keyword = app.buttons.matching(NSPredicate(
-            format: "label CONTAINS 'Churchill' OR label CONTAINS 'Second World War' OR label CONTAINS 'London'"))
-            .firstMatch
-        let found = keyword.waitForExistence(timeout: 60)
-        print("NOTER-SMOKE: key words found: \(found)")
+        sleep(1)
+        print("NOTER-SMOKE: key words empty state: \(app.staticTexts["No key words yet"].exists)")
         snapshot(app, "6-keywords")
+
+        // Questions highlighter: finds the questions, marks them, jumps and blinks.
+        app.buttons["Questions"].tap()
+        let question = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Why did so many women'")).firstMatch
+        let found = question.waitForExistence(timeout: 60)
+        let rhetorical = app.staticTexts["Rhetorical"].exists
+        print("NOTER-SMOKE: questions found: \(found), rhetorical label shown: \(rhetorical)")
+        snapshot(app, "7-questions")
         let mark = app.switches["Mark on pages"]
         if mark.exists { mark.tap() }
         sleep(1)
-        if found { keyword.tap() }
+        if found { question.tap() }
         sleep(3)
-        snapshot(app, "7-keyword-jump")
-        assertRunning(app, "after jumping to a key word")
+        snapshot(app, "8-question-jump")
+        assertRunning(app, "after jumping to a question")
         app.buttons["Text"].tap()
         sleep(2)
-        if found { keyword.tap() }
+        if found { question.tap() }
         sleep(3)
         assertRunning(app, "at the end of the smoke test")
     }

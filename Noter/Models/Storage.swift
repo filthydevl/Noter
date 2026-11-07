@@ -40,10 +40,20 @@ enum Storage {
     static func ocrPageURL(_ id: UUID, _ page: Int) -> URL { ocrFolder(id).appendingPathComponent("p\(page).json") }
 
     static func exportURL(for info: DocumentInfo) -> URL {
+        exportURL(for: info, "Highlights", ext: "md")
+    }
+
+    /// `Documents/Highlights/<title> – <kind>.<ext>`, visible in the Files app.
+    static func exportURL(for info: DocumentInfo, _ kind: String, ext: String) -> URL {
         let bad = CharacterSet(charactersIn: "/\\:?%*|\"<>")
         let clean = info.title.components(separatedBy: bad).joined(separator: "-")
         let name = clean.isEmpty ? info.id.uuidString : String(clean.prefix(120))
-        return exportFolder.appendingPathComponent("\(name) – Highlights.md")
+        return exportFolder.appendingPathComponent("\(name) – \(kind).\(ext)")
+    }
+
+    /// Every export file of a document (Markdown and PDFs).
+    static func exportURLs(for info: DocumentInfo) -> [URL] {
+        [exportURL(for: info)] + ["Highlights", "Key words", "Questions"].map { exportURL(for: info, $0, ext: "pdf") }
     }
 
     /// Atomic write: the old file stays intact until the new one is fully on disk,

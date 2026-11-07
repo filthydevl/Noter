@@ -95,7 +95,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             let lp = pages[indexPath.item]
             cell.configure(page: lp, header: s.headerLabel(for: lp.slot),
                            highlights: s.transcriptHighlightRanges(lp), skipped: s.skippedRanges(lp),
-                           keywords: s.keywordTextRanges(lp), fontSize: s.transcriptFontSize)
+                           marks: s.questionTextRanges(lp), fontSize: s.transcriptFontSize)
             if let p = s.speechPosition, p.slot == lp.slot { cell.setSpeech(token: p.token) }
         } else {
             cell.configurePlaceholder(header: "PDF page \(indexPath.section + 1)", fontSize: s.transcriptFontSize)
@@ -136,12 +136,12 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         }
     }
 
-    /// Key words were found / toggled: redraw the marks on the visible pages.
-    func refreshKeywordMarks() {
+    /// Questions were found / toggled: redraw the marks on the visible pages.
+    func refreshMarks() {
         guard let s = session else { return }
         for cell in collectionView.visibleCells {
             guard let cell = cell as? TranscriptCell, let lp = cell.page else { continue }
-            cell.applyKeywords(s.keywordTextRanges(lp))
+            cell.applyMarks(s.questionTextRanges(lp))
         }
     }
 

@@ -152,11 +152,39 @@ struct Highlight: Codable, Identifiable, Equatable {
     var text: String
     var color: HighlightColor
     var created: Date
+    /// Key words (their `keywordKey`) this highlight is tagged with. Optional so
+    /// highlights saved before tags existed still load.
+    var tags: [String]?
 
     var tokenKeys: [TokenKey] {
         spans.flatMap { s in
             s.end >= s.start ? (s.start...s.end).map { TokenKey(line: s.line, token: $0) } : []
         }
+    }
+
+    var tagKeys: [String] { tags ?? [] }
+
+    /// A highlight of just a word or short phrase counts as a key word.
+    var isKeyword: Bool {
+        let words = text.split(whereSeparator: \.isWhitespace)
+        return !words.isEmpty && words.count <= 5 && text.count <= 50
+    }
+
+    /// Groups highlights of the same word / phrase ("Churchill’s" and "churchill").
+    var keywordKey: String { Highlight.keywordKey(text) }
+
+    static func keywordKey(_ text: String) -> String {
+        keywordDisplay(text).lowercased()
+    }
+
+    /// The highlight text tidied up to show as a key word.
+    static func keywordDisplay(_ text: String) -> String {
+        var t = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters))
+        for suffix in ["’s", "'s"] where t.hasSuffix(suffix) {
+            t.removeLast(2)
+        }
+        return t
     }
 }
 

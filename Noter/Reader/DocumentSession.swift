@@ -40,7 +40,7 @@ final class DocumentSession: ObservableObject {
     let pdf: PDFDocument
     let ocr: OCRStore
     let speech: SpeechController
-    let keywords: KeywordIndex
+    let questions: QuestionIndex
     weak var pdfController: PDFReaderController?
     weak var transcriptController: TranscriptController?
 
@@ -64,7 +64,7 @@ final class DocumentSession: ObservableObject {
         let ocr = OCRStore(docID: info.id, pageCount: pdf.pageCount)
         self.ocr = ocr
         self.speech = SpeechController()
-        self.keywords = KeywordIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
+        self.questions = QuestionIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
         let defaults = UserDefaults.standard
         self.color = HighlightColor(rawValue: defaults.string(forKey: "noter.highlightColor") ?? "") ?? .yellow
         let fontSize = defaults.double(forKey: "noter.fontSize")
@@ -78,8 +78,8 @@ final class DocumentSession: ObservableObject {
         rebuildIndex()
         speech.session = self
         ocr.onPageReady = { [weak self] index in self?.pageReady(index) }
-        keywords.onChange = { [weak self] in self?.keywordsChanged() }
-        if keywords.markOnPages { keywords.start() }
+        questions.onChange = { [weak self] in self?.marksChanged() }
+        if questions.markOnPages { questions.start() }
         ocr.setFocus(currentPage)
         ocrDone = ocr.doneCount
         recomputeLabels()
@@ -89,7 +89,7 @@ final class DocumentSession: ObservableObject {
 
     func close() {
         speech.stop()
-        keywords.stop()
+        questions.stop()
         ocr.stop()
         saveAll()
     }
@@ -139,7 +139,7 @@ final class DocumentSession: ObservableObject {
         info.layoutMode = mode
         saveInfo()
         layoutCache.removeAll()
-        keywords.reset(mode: mode)
+        questions.reset(mode: mode)
         recomputeLabels()
         transcriptController?.reloadAll()
         HighlightExporter.export(self)
@@ -152,7 +152,7 @@ final class DocumentSession: ObservableObject {
         saveInfo()
         recomputeLabels()
         transcriptController?.pageBecameReady(index)
-        keywords.pageReady(index)
+        questions.pageReady(index)
         if ocr.isComplete { HighlightExporter.export(self) }
     }
 
@@ -261,9 +261,14 @@ final class DocumentSession: ObservableObject {
             }
         }
         let merged = lo...hi
+        // Keep the key word tags of any highlight this one swallows.
+        var tags: [String] = []
+        for old in highlights where absorbed.contains(old.id) {
+            for t in old.tagKeys where !tags.contains(t) { tags.append(t) }
+        }
         let h = Highlight(
             id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: merged), rects: lp.lineRects(for: merged),
-            text: lp.string(for: merged), color: color, created: Date())
+            text: lp.string(for: merged), color: color, created: Date(), tags: tags.isEmpty ? nil : tags)
         pushUndo()
         highlights.removeAll { absorbed.contains($0.id) }
         highlights.append(h)
@@ -336,39 +341,76 @@ final class DocumentSession: ObservableObject {
         }
     }
 
-    /// Jumps to one mention of a key word and blinks a box around it.
-    func open(_ occurrence: KeywordOccurrence) {
-        let slot = occurrence.slot
+    /// Jumps to a spot in the book (a question…) and blinks a box around it.
+    func open(_ location: TextLocation) {
+        let slot = location.slot
         setCurrentPage(slot.pdfIndex)
         let mode = lastReadingMode
         viewMode = mode
         noteUserActivity()
-        guard let lp = logicalPage(slot), occurrence.tokens.upperBound < lp.tokens.count else { return }
+        guard let lp = logicalPage(slot), location.tokens.upperBound < lp.tokens.count else { return }
         if mode == .pdf {
-            let rects = lp.lineRects(for: occurrence.tokens)
+            let rects = lp.lineRects(for: location.tokens)
             pdfController?.goTo(page: slot.pdfIndex, rect: rects.first)
             pdfController?.flash(pageIndex: slot.pdfIndex, rects: rects)
         } else {
             transcriptController?.scroll(toPage: slot.pdfIndex, half: slot.half)
-            transcriptController?.flash(slot: slot, range: lp.textRange(for: occurrence.tokens))
+            transcriptController?.flash(slot: slot, range: lp.textRange(for: location.tokens))
         }
     }
 
-    // MARK: - Key words
+    // MARK: - Key words (your one-word / short-phrase highlights) and tags
 
-    /// Key word token ranges to mark on a book page (empty unless "Mark on pages" is on).
-    func keywordRanges(_ lp: LogicalPage) -> [ClosedRange<Int>] {
-        guard keywords.markOnPages else { return [] }
-        return keywords.ranges(on: lp.slot).filter { $0.upperBound < lp.tokens.count }
+    /// Every word or short phrase you've highlighted, with where you highlighted it and
+    /// the highlights you've tagged with it. Alphabetical.
+    func keywordEntries() -> [KeywordEntry] {
+        let sorted = sortedHighlights()
+        var order: [String] = []
+        var mentions: [String: [Highlight]] = [:]
+        for h in sorted where h.isKeyword {
+            let key = h.keywordKey
+            guard !key.isEmpty else { continue }
+            if mentions[key] == nil { order.append(key) }
+            mentions[key, default: []].append(h)
+        }
+        return order.compactMap { key -> KeywordEntry? in
+            guard let ms = mentions[key], let latest = ms.max(by: { $0.created < $1.created }) else { return nil }
+            let linked = sorted.filter { $0.keywordKey != key && $0.tagKeys.contains(key) }
+            return KeywordEntry(id: key, text: Highlight.keywordDisplay(latest.text), color: latest.color,
+                                mentions: ms, linked: linked)
+        }
+        .sorted { $0.text.localizedCaseInsensitiveCompare($1.text) == .orderedAscending }
     }
 
-    func keywordTextRanges(_ lp: LogicalPage) -> [NSRange] {
-        keywordRanges(lp).map { lp.textRange(for: $0) }
+    /// Adds or removes a key word tag on a highlight.
+    func toggleTag(_ key: String, on id: UUID) {
+        guard let i = highlights.firstIndex(where: { $0.id == id }) else { return }
+        var tags = highlights[i].tagKeys
+        if let j = tags.firstIndex(of: key) {
+            tags.remove(at: j)
+        } else {
+            tags.append(key)
+        }
+        pushUndo()
+        highlights[i].tags = tags.isEmpty ? nil : tags
+        highlightsChanged()
     }
 
-    private func keywordsChanged() {
-        pdfController?.refreshKeywordMarks()
-        transcriptController?.refreshKeywordMarks()
+    // MARK: - Questions
+
+    /// Question token ranges to mark on a book page (empty unless "Mark on pages" is on).
+    func questionRanges(_ lp: LogicalPage) -> [ClosedRange<Int>] {
+        guard questions.markOnPages else { return [] }
+        return questions.ranges(on: lp.slot).filter { $0.upperBound < lp.tokens.count }
+    }
+
+    func questionTextRanges(_ lp: LogicalPage) -> [NSRange] {
+        questionRanges(lp).map { lp.textRange(for: $0) }
+    }
+
+    private func marksChanged() {
+        pdfController?.refreshMarks()
+        transcriptController?.refreshMarks()
     }
 
     private func pushUndo() {
@@ -427,4 +469,15 @@ extension HighlightColor {
     }
 
     var color: Color { Color(uiColor: uiColor) }
+
+    /// For the PDF exports.
+    var hex: String {
+        switch self {
+        case .yellow: "#FFD61A"
+        case .green: "#66D966"
+        case .blue: "#66B8FF"
+        case .pink: "#FF80B8"
+        case .orange: "#FF9E33"
+        }
+    }
 }
