@@ -45,7 +45,7 @@ struct KeywordsListView: View {
                 ContentUnavailableView(
                     "No key words yet",
                     systemImage: "key",
-                    description: Text("Highlight a single word or a short phrase — a name, an event, a term — and it becomes a key word. Then tag your other highlights with it."))
+                    description: Text("Highlight a single word or a short phrase — a name, an event, a term — or circle or underline it with the scribble pen, and it becomes a key word. Then tag your other highlights with it."))
                     .frame(maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -90,7 +90,13 @@ private struct KeywordRow: View {
                         Button {
                             session.open(h)
                         } label: {
-                            Text(session.pageLabel(for: h))
+                            HStack(spacing: 3) {
+                                Text(session.pageLabel(for: h))
+                                if let mark = h.inkMark {
+                                    Image(systemName: mark == "underline" ? "underline" : "circle")
+                                        .accessibilityLabel(mark == "underline" ? "underlined" : "circled")
+                                }
+                            }
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 8)

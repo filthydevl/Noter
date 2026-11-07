@@ -32,6 +32,9 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
     private var saveWork: DispatchWorkItem?
 
     weak var settings: ScribbleSettings?
+    /// The page's strokes after a change (for circled / underlined key words).
+    var onStrokesChanged: (([InkStrokeInfo]) -> Void)?
+    private var strokesWork: DispatchWorkItem?
     var onActivity: (() -> Void)?
     var onMessage: ((String) -> Void)?
 
@@ -76,6 +79,7 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
             setDrawing(drawing.transformed(using: toView))
             pending = nil
             considered = canvas.drawing.strokes.count
+            if !drawing.strokes.isEmpty { scheduleStrokeReport() }
         } else if appliedSize != .zero, appliedSize != bounds.size {
             // The overlay was resized (zoom): keep the drawing on the same words.
             let s = CGAffineTransform(scaleX: bounds.width / appliedSize.width, y: bounds.height / appliedSize.height)
@@ -111,6 +115,7 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
         guard !programmatic else { return }
         onActivity?()
         scheduleSave()
+        scheduleStrokeReport()
         let count = canvas.drawing.strokes.count
         if count < considered { considered = count }
         if settings?.autoTidy == true, count > considered {
@@ -120,6 +125,27 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
             tidyWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: work)
         }
+    }
+
+    /// Tells the session about the page's strokes, once you pause.
+    private func scheduleStrokeReport() {
+        strokesWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.reportStrokes() }
+        strokesWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+    }
+
+    private func reportStrokes() {
+        guard pending == nil, let onStrokesChanged else { return }
+        let w = max(pageSize.width, 1), h = max(pageSize.height, 1)
+        let infos = pageDrawing.strokes.map { s -> InkStrokeInfo in
+            let points = s.path.interpolatedPoints(by: .distance(3)).map { p -> CGPoint in
+                let q = p.location.applying(s.transform)
+                return CGPoint(x: q.x / w, y: q.y / h)
+            }
+            return InkStrokeInfo(date: s.path.creationDate, points: points, color: s.ink.color)
+        }
+        onStrokesChanged(infos)
     }
 
     private func scheduleSave() {
@@ -205,6 +231,7 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
         texts = newTexts
         layoutLabels()
         saveNow()
+        scheduleStrokeReport()
     }
 
     /// Erases everything on this page (undoable).

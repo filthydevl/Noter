@@ -9,6 +9,10 @@ import PDFKit
 final class DocumentSession: ObservableObject {
     @Published var info: DocumentInfo
     @Published private(set) var highlights: [Highlight] = []
+    /// Words you circled or underlined with the scribble pen (key word mentions).
+    @Published private(set) var inkMarks: [Highlight] = []
+    /// Scribble strokes already looked at, per page.
+    private var inkAnalyzed: [Int: Set<Date>] = [:]
     @Published var viewMode: ViewMode {
         didSet {
             guard oldValue != viewMode else { return }
@@ -108,6 +112,7 @@ final class DocumentSession: ObservableObject {
         self.lastReadingMode = startMode
         self.currentPage = max(0, min(info.lastPage, pdf.pageCount - 1))
         self.highlights = Storage.load([Highlight].self, from: Storage.highlightsURL(info.id)) ?? []
+        self.inkMarks = Storage.load([Highlight].self, from: DocumentSession.inkMarksURL(info.id)) ?? []
 
         rebuildIndex()
         speech.session = self
@@ -374,7 +379,11 @@ final class DocumentSession: ObservableObject {
     }
 
     func sortedHighlights() -> [Highlight] {
-        highlights.sorted { a, b in
+        bookOrder(highlights)
+    }
+
+    private func bookOrder(_ items: [Highlight]) -> [Highlight] {
+        items.sorted { a, b in
             let ka = (a.page, half(of: a), a.rects.first?.minY ?? 0, a.rects.first?.minX ?? 0)
             let kb = (b.page, half(of: b), b.rects.first?.minY ?? 0, b.rects.first?.minX ?? 0)
             return ka < kb
@@ -550,7 +559,7 @@ final class DocumentSession: ObservableObject {
         let sorted = sortedHighlights()
         var order: [String] = []
         var mentions: [String: [Highlight]] = [:]
-        for h in sorted where h.isKeyword {
+        for h in bookOrder(highlights + inkMarks) where h.isKeyword {
             let key = h.keywordKey
             guard !key.isEmpty else { continue }
             if mentions[key] == nil { order.append(key) }
@@ -577,6 +586,56 @@ final class DocumentSession: ObservableObject {
         pushUndo()
         highlights[i].tags = tags.isEmpty ? nil : tags
         highlightsChanged()
+    }
+
+    // MARK: - Circled / underlined words (scribble pen → key words)
+
+    private static func inkMarksURL(_ id: UUID) -> URL {
+        Storage.folder(id).appendingPathComponent("inkmarks.json")
+    }
+
+    /// The scribbles on a page changed: words newly circled or underlined become key
+    /// word mentions; mentions whose stroke was erased go away.
+    func inkStrokesChanged(page: Int, strokes: [InkStrokeInfo]) {
+        let dates = Set(strokes.map(\.date))
+        var changed = false
+        let before = inkMarks.count
+        inkMarks.removeAll { $0.page == page && $0.inkStroke.map { !dates.contains($0) } == true }
+        changed = inkMarks.count != before
+        var analyzed = inkAnalyzed[page, default: []].intersection(dates)
+        // Not recognized yet: look again once the page has text.
+        if let pages = logicalPages(page) {
+            let known = Set(inkMarks.filter { $0.page == page }.compactMap(\.inkStroke))
+            for s in strokes where !analyzed.contains(s.date) && !known.contains(s.date) {
+                analyzed.insert(s.date)
+                guard let m = InkMarkDetector.detect(s.points, in: pages) else { continue }
+                let lp = m.page
+                inkMarks.append(Highlight(
+                    id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: m.range), rects: lp.lineRects(for: m.range),
+                    text: lp.string(for: m.range), color: highlightColor(like: s.color), created: Date(),
+                    inkMark: m.kind.rawValue, inkStroke: s.date))
+                changed = true
+                showToast("“\(Highlight.keywordDisplay(lp.string(for: m.range)))” added to key words")
+            }
+        }
+        inkAnalyzed[page] = analyzed
+        guard changed else { return }
+        Storage.save(inkMarks, to: Self.inkMarksURL(info.id))
+        HighlightExporter.export(self)
+    }
+
+    /// The highlight color closest to an ink color (black / gray ink: your highlight color).
+    private func highlightColor(like ink: UIColor) -> HighlightColor {
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        ink.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        guard saturation > 0.25, brightness > 0.25 else { return color }
+        switch hue {
+        case ..<0.05, 0.85...: return .pink
+        case ..<0.11: return .orange
+        case ..<0.2: return .yellow
+        case ..<0.47: return .green
+        default: return .blue
+        }
     }
 
     // MARK: - Save PDF

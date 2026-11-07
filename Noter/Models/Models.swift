@@ -173,6 +173,12 @@ struct Highlight: Codable, Identifiable, Equatable {
     var tags: [String]?
     /// Your note / comment on this highlight (the Notes panel).
     var note: String?
+    /// Set for a word you circled or underlined with the scribble pen ("circle" /
+    /// "underline"): it's a key word mention, not a highlight on the page.
+    var inkMark: String?
+    /// The scribble stroke that marked it (its creation time), so erasing the stroke
+    /// removes the mention.
+    var inkStroke: Date?
 
     var tokenKeys: [TokenKey] {
         spans.flatMap { s in

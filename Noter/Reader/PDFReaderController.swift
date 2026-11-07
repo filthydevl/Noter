@@ -264,6 +264,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
             ink.settings = s.scribble
             ink.onActivity = { [weak s] in s?.noteUserActivity() }
             ink.onMessage = { [weak s] in s?.showToast($0) }
+            ink.onStrokesChanged = { [weak s] in s?.inkStrokesChanged(page: index, strokes: $0) }
             overlay.attachInk(ink)
         }
         applyScribble(to: overlay)
