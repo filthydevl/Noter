@@ -5,17 +5,22 @@ import Vision
 /// Renders one PDF page and runs Apple's on-device text recognition (Vision) on it, in
 /// two passes:
 ///  1. the whole page at high resolution;
-///  2. every line Vision wasn't sure about (low confidence, or garbled-looking) is
+///  2. every line Vision wasn't sure about (low confidence, garbled-looking, or with a
+///     doubtful symbol such as a "?" ending a sentence that isn't a question) is
 ///     rendered again on its own at more than twice the resolution and re-read, with
 ///     the page's own names and terms as a custom vocabulary. The better reading wins.
+/// Among Vision's alternative readings of a line, one with the same words but more
+/// plausible punctuation is preferred, and look-alike symbols are cleaned up.
 /// Thread-safe: called from the background OCR worker with its own CGPDFDocument.
 enum OCREngine {
     /// Bumped when recognition improves; older pages are re-read in the background.
-    static let version = 2
+    static let version = 3
 
     private struct Line {
         var line: OCRLine
         var confidence: Float
+        /// Vision's text before symbol cleanup.
+        var raw: String
     }
 
     static func recognize(pdf: CGPDFDocument, index: Int) -> OCRPage {
@@ -47,7 +52,7 @@ enum OCREngine {
     private static let garbled = try? NSRegularExpression(pattern: #"[a-z][0-9][a-z]|[|~¦]|[a-z][A-Z]{2,}[a-z]"#)
 
     private static func needsSecondLook(_ l: Line) -> Bool {
-        if l.confidence < 0.75 { return true }
+        if l.confidence < 0.75 || hasDoubtfulSymbol(l) { return true }
         let t = l.line.t
         return garbled?.firstMatch(in: t, range: NSRange(location: 0, length: (t as NSString).length)) != nil
     }
@@ -72,13 +77,24 @@ enum OCREngine {
                 .sorted { $0.line.r.minX < $1.line.r.minX }
             guard !found.isEmpty else { continue }
             let confidence = found.map(\.confidence).reduce(0, +) / Float(found.count)
-            guard confidence > lines[i].confidence + 0.05 else { continue }
+            let text = found.map(\.line.t).joined(separator: " ")
+            // A doubtful symbol: trust the sharper reading if it reads the same words
+            // and settles the symbol. Otherwise the clearly more confident one wins.
+            let raw = found.map(\.raw).joined(separator: " ")
+            let settlesSymbol = hasDoubtfulSymbol(lines[i]) && SymbolCheck.sameWords(text, lines[i].line.t)
+                && !SymbolCheck.isSuspicious(raw) && confidence >= lines[i].confidence - 0.05
+            guard settlesSymbol || confidence > lines[i].confidence + 0.05 else { continue }
             let rect = found.dropFirst().reduce(found[0].line.r) { $0.union($1.line.r) }
-            out[i] = Line(line: OCRLine(t: found.map(\.line.t).joined(separator: " "), r: rect,
+            out[i] = Line(line: OCRLine(t: text, r: rect,
                                         k: found.flatMap(\.line.k)),
-                          confidence: confidence)
+                          confidence: confidence, raw: raw)
         }
         return out
+    }
+
+    /// The raw reading had a doubtful symbol (before cleanup).
+    private static func hasDoubtfulSymbol(_ l: Line) -> Bool {
+        SymbolCheck.isSuspicious(l.raw)
     }
 
     /// Capitalized words that recur on the page (names, places, terms) help Vision read
@@ -143,15 +159,30 @@ enum OCREngine {
 
         var lines: [Line] = []
         for observation in request.results ?? [] {
-            guard let candidate = observation.topCandidates(1).first else { continue }
+            guard let candidate = bestCandidate(observation.topCandidates(3)) else { continue }
             let text = candidate.string
             guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
             let lineRect = map(observation.boundingBox)
             let tokens = tokenize(text, candidate: candidate, lineRect: lineRect, map: map)
             guard !tokens.isEmpty else { continue }
-            lines.append(Line(line: OCRLine(t: text, r: lineRect, k: tokens), confidence: candidate.confidence))
+            let cleaned = tokens.map(\.t).joined(separator: " ")
+            lines.append(Line(line: OCRLine(t: cleaned, r: lineRect, k: tokens), confidence: candidate.confidence,
+                              raw: text))
         }
         return lines
+    }
+
+    /// Vision's top reading, unless it has a doubtful symbol and a close runner-up reads
+    /// the same words with more plausible punctuation.
+    private static func bestCandidate(_ candidates: [VNRecognizedText]) -> VNRecognizedText? {
+        guard let best = candidates.first else { return nil }
+        guard SymbolCheck.isSuspicious(best.string) else { return best }
+        for alt in candidates.dropFirst()
+        where alt.confidence >= best.confidence - 0.05 && !SymbolCheck.isSuspicious(alt.string)
+            && SymbolCheck.sameWords(alt.string, best.string) {
+            return alt
+        }
+        return best
     }
 
     /// Splits a recognized line on whitespace (keeping punctuation attached to words)
@@ -197,7 +228,7 @@ enum OCREngine {
 
         return zip(pieces, boxes).map { piece, box in
             let r = box ?? proportional(piece.start, piece.end)
-            return OCRToken(t: String(text[piece.range]), r: clamp(r))
+            return OCRToken(t: SymbolCheck.clean(String(text[piece.range])), r: clamp(r))
         }
     }
 

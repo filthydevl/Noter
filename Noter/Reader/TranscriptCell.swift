@@ -55,6 +55,11 @@ final class TranscriptCell: UICollectionViewCell {
             textView.layer.insertSublayer(layer, at: UInt32(i))
         }
 
+        // Overlay tints are stronger in dark mode (they sit on a dark background there).
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (cell: TranscriptCell, _: UITraitCollection) in
+            cell.setNeedsLayout()
+        }
+
         for v in [header, textView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(v)
@@ -185,6 +190,9 @@ final class TranscriptCell: UICollectionViewCell {
                 return
             }
             let rects = marks.flatMap { textRects(for: $0) }
+            let dark = traitCollection.userInterfaceStyle == .dark
+            markLayer.fillColor = UIColor.systemPurple.resolvedColor(with: traitCollection)
+                .withAlphaComponent(dark ? 0.32 : 0.16).cgColor
             markLayer.path = path(rects, radius: 3)
             markUnderlineLayer.path = path(rects.map {
                 CGRect(x: $0.minX + 1, y: $0.maxY - 1.5, width: max($0.width - 2, 2), height: 1.5)
@@ -340,6 +348,11 @@ final class TranscriptCell: UICollectionViewCell {
             }
             let phraseRects = textRects(for: page.textRange(for: phrase))
             let wordRects = textRects(for: page.tokenRanges[token])
+            let dark = traitCollection.userInterfaceStyle == .dark
+            let accent = Self.speechColor.resolvedColor(with: traitCollection)
+            speechPhraseLayer.fillColor = accent.withAlphaComponent(dark ? 0.34 : 0.17).cgColor
+            speechWordLayer.fillColor = accent.withAlphaComponent(dark ? 0.55 : 0.32).cgColor
+            speechUnderlineLayer.fillColor = accent.withAlphaComponent(0.95).cgColor
             speechPhraseLayer.path = phraseRects.isEmpty ? nil : path(phraseRects, radius: 4)
             speechWordLayer.path = wordRects.isEmpty ? nil : path(wordRects, radius: 4)
             // A solid underline under the word being spoken (Speechify-style).

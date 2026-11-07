@@ -66,8 +66,48 @@ enum QuestionFinder {
         let end = sentence.trimmingCharacters(in: closers)
         guard end.hasSuffix("?") || end.hasSuffix("？") else { return false }
         // At least two words, so stray OCR marks aren't counted.
-        return sentence.split(whereSeparator: \.isWhitespace).count >= 2
+        guard sentence.split(whereSeparator: \.isWhitespace).count >= 2 else { return false }
+        // Text recognition sometimes turns a full stop, a note number or a smudge into
+        // "?": only count sentences that are worded like a question.
+        return looksInterrogative(sentence)
     }
+
+    private static let interrogatives: Set<String> = [
+        "who", "whom", "whose", "what", "which", "when", "where", "why", "how", "whither", "whence",
+    ]
+    private static let auxiliaries: Set<String> = [
+        "is", "are", "was", "were", "am", "do", "does", "did", "can", "could", "will", "would", "shall",
+        "should", "may", "might", "must", "has", "have", "had", "need", "dare", "ought",
+        "isn't", "aren't", "wasn't", "weren't", "don't", "doesn't", "didn't", "can't", "couldn't", "won't",
+        "wouldn't", "shouldn't", "haven't", "hasn't", "hadn't", "mustn't",
+    ]
+    private static let leadIns: Set<String> = [
+        "and", "but", "or", "so", "yet", "then", "now", "well", "oh", "still", "besides", "surely",
+        "after", "if", "indeed", "again", "also", "really", "perhaps", "thus", "hence",
+    ]
+
+    /// Worded like a question: opens with a question word or an inverted auxiliary
+    /// ("Why did…", "Were they…"), perhaps after "And"/"But"; has a question clause after
+    /// a comma, colon or dash ("…, but who would pay?"); is a tag question ("…, wasn't
+    /// it?"); or is a very short question ("Really?", "Women at war?").
+    static func looksInterrogative(_ sentence: String) -> Bool {
+        let s = sentence.lowercased().replacingOccurrences(of: "’", with: "'")
+        let words = s.split(whereSeparator: { !($0.isLetter || $0 == "'") }).map(String.init)
+        guard let first = words.first else { return false }
+        if interrogatives.contains(first) || auxiliaries.contains(first) { return true }
+        if leadIns.contains(first), words.count > 1,
+           interrogatives.contains(words[1]) || auxiliaries.contains(words[1]) {
+            return true
+        }
+        let range = NSRange(location: 0, length: (s as NSString).length)
+        if let clause, clause.firstMatch(in: s, range: range) != nil { return true }
+        if rhetoricalPatterns.contains(where: { $0.firstMatch(in: s, range: range) != nil }) { return true }
+        return words.count <= 4
+    }
+
+    /// A question clause later in the sentence.
+    private static let clause = regex(
+        #"[,;:—–\-"“(]\s*(?:(?:and|but|or|so|yet)\s+)?(?:who|whom|whose|what|which|when|where|why|how|is|are|was|were|do|does|did|can|could|will|would|shall|should|may|might|must|has|have|had)\b[^,;:]*\?\s*["”')\]]*\s*$"#)
 
     /// Asked for effect rather than for an answer:
     /// * negative openers — "Isn't it…", "Wasn't this…"

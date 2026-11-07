@@ -50,7 +50,8 @@ final class SpeechController: NSObject, ObservableObject {
     private static let voiceKey = "noter.voice"
     /// Set once you pick a voice yourself; until then Noter always uses the best one installed.
     private static let voiceChosenKey = "noter.voiceChosen"
-    private static let followVoiceOverKey = "noter.followVoiceOver"
+    /// (v2: on by default.)
+    private static let followVoiceOverKey = "noter.followVoiceOver.v2"
     private static let skipKey = "noter.skip"
 
     private let synth = AVSpeechSynthesizer()
@@ -88,7 +89,7 @@ final class SpeechController: NSObject, ObservableObject {
         let defaults = UserDefaults.standard
         speed = defaults.object(forKey: Self.speedKey) as? Double ?? 1.0
         voiceID = defaults.string(forKey: Self.voiceKey) ?? ""
-        followVoiceOver = defaults.bool(forKey: Self.followVoiceOverKey)
+        followVoiceOver = defaults.object(forKey: Self.followVoiceOverKey) as? Bool ?? true
         skip = (defaults.object(forKey: Self.skipKey) as? Int).map(SkipOptions.init(rawValue:)) ?? .defaults
         super.init()
         synth.delegate = self
@@ -110,6 +111,11 @@ final class SpeechController: NSObject, ObservableObject {
             let running = UIAccessibility.isVoiceOverRunning
             guard running != self.voiceOverRunning else { return }
             self.voiceOverRunning = running
+            // Turning VoiceOver on means you want its voice.
+            if running, !self.followVoiceOver {
+                self.followVoiceOver = true
+                return // its didSet already re-queued the reading
+            }
             guard self.followVoiceOver, self.isActive else { return }
             if self.isPlaying {
                 self.restart()

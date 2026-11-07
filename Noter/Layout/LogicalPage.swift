@@ -30,6 +30,9 @@ struct LogicalPage {
     let indexByKey: [TokenKey: Int]
     /// Chapter / section headings in `text` (shown as headings in the transcript).
     let headingRanges: [NSRange]
+    /// The book's running header on this page (not in `text`, so it isn't read aloud;
+    /// shown next to the page number instead).
+    let runningHeader: String?
 
     var slot: SlotKey { SlotKey(pdfIndex: pdfIndex, half: half) }
 

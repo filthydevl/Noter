@@ -123,10 +123,11 @@ enum PageLayout {
             let (folio, folioRows) = detectFolio(rows)
             var body = rows.enumerated().filter { !folioRows.contains($0.offset) }.map(\.element)
             // Running headers / footers and footnotes aren't part of the text you read.
-            body = removePageFurniture(body)
+            let furniture = removePageFurniture(body)
+            body = furniture.rows
             let headings = detectHeadings(body)
             return assemble(body, pdfIndex: pdfIndex, half: half, halfCount: halves, region: region, folio: folio,
-                            headings: headings)
+                            headings: headings, runningHeader: furniture.header)
         }
     }
 
@@ -218,27 +219,44 @@ enum PageLayout {
     // MARK: Page furniture
 
     /// Drops the running header / footer and the footnotes block at the bottom of the
-    /// page, so the transcript (and read-aloud) is just the text.
-    static func removePageFurniture(_ rows: [Row]) -> [Row] {
-        guard rows.count >= 3 else { return rows }
+    /// page, so the transcript (and read-aloud) is just the text. Returns the running
+    /// header's text too, to show next to the page number instead.
+    static func removePageFurniture(_ rows: [Row]) -> (rows: [Row], header: String?) {
+        guard rows.count >= 3 else { return (rows, nil) }
         let heights = rows.map(\.rect.height).sorted()
         let medianH = max(heights[heights.count / 2], 0.002)
         let byY = rows.indices.sorted { rows[$0].rect.midY < rows[$1].rect.midY }
-        var drop = Set<Int>()
-
-        // Running header: a short, ordinary-sized line alone in the top margin.
-        let top = byY[0], second = byY[1]
-        let t = rows[top]
-        if t.rect.midY < 0.09, t.tokens.count <= 10, t.rect.height < medianH * 1.15,
-           rows[second].rect.minY - t.rect.maxY > medianH * 1.2 {
-            drop.insert(top)
+        var gaps: [CGFloat] = []
+        for k in 1..<byY.count {
+            let g = rows[byY[k]].rect.minY - rows[byY[k - 1]].rect.maxY
+            if g > 0 { gaps.append(g) }
         }
-        // Running footer: same at the bottom.
-        let bottom = byY[byY.count - 1], above = byY[byY.count - 2]
-        let b = rows[bottom]
-        if b.rect.midY > 0.93, b.tokens.count <= 10, b.rect.height < medianH * 1.15,
-           b.rect.minY - rows[above].rect.maxY > medianH * 1.2 {
-            drop.insert(bottom)
+        gaps.sort()
+        let typicalGap = gaps.isEmpty ? medianH * 0.4 : gaps[gaps.count / 2]
+        var drop = Set<Int>()
+        var header: String?
+
+        /// A short line in the margin, set apart from the text, not a sentence and not
+        /// set larger than the text (that would be a heading).
+        func isFurniture(_ row: Row, gap: CGFloat) -> Bool {
+            let text = row.tokens.map(\.text).joined(separator: " ")
+            let sentence = text.hasSuffix(".") && !text.hasSuffix("..")
+            return row.tokens.count <= 12 && row.rect.height < medianH * 1.25 && !sentence
+                && gap > max(medianH * 0.9, typicalGap * 1.8)
+                && text.range(of: #"^(chapter|part|book|section)\b"#, options: [.regularExpression, .caseInsensitive]) == nil
+        }
+
+        // Running header: top of the page.
+        let top = rows[byY[0]]
+        if top.rect.midY < 0.16, isFurniture(top, gap: rows[byY[1]].rect.minY - top.rect.maxY) {
+            drop.insert(byY[0])
+            header = top.tokens.map(\.text).joined(separator: " ")
+        }
+        // Running footer: bottom of the page.
+        let bottomIndex = byY[byY.count - 1]
+        let bottom = rows[bottomIndex]
+        if bottom.rect.midY > 0.86, isFurniture(bottom, gap: bottom.rect.minY - rows[byY[byY.count - 2]].rect.maxY) {
+            drop.insert(bottomIndex)
         }
 
         // Footnotes: a block of smaller lines at the bottom, set apart by a gap or
@@ -255,39 +273,91 @@ enum PageLayout {
             let marker = rows[first].tokens.first?.text.first.map { $0.isNumber || "*†‡§".contains($0) } ?? false
             if gap > medianH * 0.8 || marker { drop.formUnion(block) }
         }
-        return rows.enumerated().filter { !drop.contains($0.offset) }.map(\.element)
+        return (rows.enumerated().filter { !drop.contains($0.offset) }.map(\.element), header)
     }
 
     // MARK: Headings
 
-    /// Chapter / section headings: rows set in larger type, short ALL-CAPS lines, or
-    /// short centred lines set apart from the text — returned as row indices.
+    /// Chapter / section headings, as row indices. A heading must
+    ///  * be short (≤ 12 words) and start with a capital or a number,
+    ///  * not read like part of a sentence: no "." "," ";" ":" at the end, no lowercase
+    ///    continuation on the next line, not continuing an unfinished previous line,
+    ///  * be set apart from the text by extra space,
+    ///  * and look like a heading: larger type (judged from word heights, which one
+    ///    tall character can't inflate), ALL CAPS, centred, or "Chapter N".
+    /// A heading that wraps onto a second line in the same style keeps both lines.
     static func detectHeadings(_ rows: [Row]) -> Set<Int> {
-        guard rows.count >= 2 else { return [] }
-        let heights = rows.map(\.rect.height).sorted()
-        let medianH = max(heights[heights.count / 2], 0.002)
+        guard rows.count >= 3 else { return [] }
+        func median(_ v: [CGFloat]) -> CGFloat {
+            let s = v.sorted()
+            return s.isEmpty ? 0 : s[s.count / 2]
+        }
+        let bodyH = max(median(rows.flatMap { $0.tokens.map(\.rect.height) }), 0.002)
+        let rowH = rows.map { median($0.tokens.map(\.rect.height)) }
+        var gaps: [CGFloat] = []
+        for i in 1..<rows.count {
+            let g = rows[i].rect.minY - rows[i - 1].rect.maxY
+            if g > 0 { gaps.append(g) }
+        }
+        let typicalGap = max(gaps.isEmpty ? bodyH * 0.4 : median(gaps), bodyH * 0.15)
         let colMin = rows.map(\.rect.minX).min() ?? 0, colMax = rows.map(\.rect.maxX).max() ?? 1
         let colW = max(colMax - colMin, 0.01), colMid = (colMin + colMax) / 2
-        var out = Set<Int>()
-        for (i, row) in rows.enumerated() {
-            let words = row.tokens.map(\.text)
-            let joined = words.joined(separator: " ")
-            guard words.count <= 14, joined.count >= 2 else { continue }
-            let gapAbove = i == 0 ? 1 : row.rect.minY - rows[i - 1].rect.maxY
-            let gapBelow = i == rows.count - 1 ? 1 : rows[i + 1].rect.minY - row.rect.maxY
-            let letters = joined.filter(\.isLetter)
-            let caps = letters.count >= 4 && Double(letters.filter(\.isUppercase).count) / Double(letters.count) > 0.8
-            let endsSentence = joined.hasSuffix(".") && !joined.hasSuffix("..")
-            let big = row.rect.height >= medianH * 1.3
-            let capsLine = caps && words.count <= 10 && gapAbove > medianH * 0.8
-            let centred = row.rect.width < colW * 0.6 && abs(row.rect.midX - colMid) < colW * 0.06
-                && gapAbove > medianH * 1.2 && gapBelow > medianH * 0.9 && !endsSentence
-            let chapter = joined.range(of: #"^(chapter|part|book|section)\s+([0-9ivxlc]+|[a-z]+)\b"#,
-                                       options: [.regularExpression, .caseInsensitive]) != nil && words.count <= 8
-            if big || capsLine || centred || chapter { out.insert(i) }
+
+        func text(_ i: Int) -> String { rows[i].tokens.map(\.text).joined(separator: " ") }
+        func gapAbove(_ i: Int) -> CGFloat { i == 0 ? .infinity : rows[i].rect.minY - rows[i - 1].rect.maxY }
+        func gapBelow(_ i: Int) -> CGFloat {
+            i == rows.count - 1 ? .infinity : rows[i + 1].rect.minY - rows[i].rect.maxY
         }
-        // A heading isn't half the page.
-        return out.count > rows.count / 2 ? [] : out
+        func isCaps(_ t: String) -> Bool {
+            let letters = t.filter(\.isLetter)
+            return letters.count >= 4 && Double(letters.filter(\.isUppercase).count) / Double(letters.count) > 0.85
+        }
+        let chapterPattern = #"^(chapter|part|book|section)\s+([0-9ivxlc]+|[a-z]+)\b"#
+
+        var out = Set<Int>()
+        var style: [Int: String] = [:] // why each heading qualified, for wrapped lines
+        for i in rows.indices {
+            let t = text(i)
+            let words = rows[i].tokens.count
+            guard (1...12).contains(words), let firstLetter = t.first(where: { $0.isLetter || $0.isNumber }),
+                  firstLetter.isUppercase || firstLetter.isNumber else { continue }
+            // Reads like part of a sentence.
+            if let last = t.last, ".,;:".contains(last), !t.hasSuffix("...") { continue }
+            if i + 1 < rows.count, gapBelow(i) < typicalGap * 1.6,
+               let next = text(i + 1).first(where: \.isLetter), next.isLowercase { continue }
+            if i > 0, gapAbove(i) < typicalGap * 1.6, let prevLast = text(i - 1).last,
+               prevLast.isLetter || prevLast == "," || prevLast == "-" { continue }
+
+            let spacedAbove = gapAbove(i) > typicalGap * 1.7
+            let spacedBelow = gapBelow(i) > typicalGap * 1.3
+            let big = rowH[i] >= bodyH * 1.35
+            let caps = isCaps(t) && words <= 10
+            let centred = rows[i].rect.width < colW * 0.7 && abs(rows[i].rect.midX - colMid) < colW * 0.05
+            let chapter = t.range(of: chapterPattern, options: [.regularExpression, .caseInsensitive]) != nil
+                && words <= 8
+
+            if (big || chapter) && (spacedAbove || spacedBelow) {
+                out.insert(i)
+                style[i] = big ? "big" : "chapter"
+            } else if (caps || (centred && words <= 10)) && spacedAbove && spacedBelow {
+                out.insert(i)
+                style[i] = caps ? "caps" : "centred"
+            }
+        }
+
+        // Second line of a wrapped heading: same style, tight below the first.
+        for i in out.sorted() where i + 1 < rows.count && !out.contains(i + 1) {
+            let j = i + 1
+            let t = text(j)
+            guard rows[j].tokens.count <= 12, gapBelow(i) < typicalGap * 1.6,
+                  let last = t.last, !".,;:".contains(last) else { continue }
+            let sameSize = abs(rowH[j] - rowH[i]) < rowH[i] * 0.12
+            if (style[i] == "big" && sameSize && rowH[j] >= bodyH * 1.35) || (style[i] == "caps" && isCaps(t)) {
+                out.insert(j)
+            }
+        }
+        // Headings are rare: if a lot of lines qualify, the page is just unusual.
+        return out.count > max(2, rows.count / 4) ? [] : out
     }
 
     // MARK: Page numbers
@@ -297,15 +367,18 @@ enum PageLayout {
     /// end separated by a wide gap ("24      THE TITLE").
     static func detectFolio(_ rows: [Row]) -> (Folio?, Set<Int>) {
         guard !rows.isEmpty else { return (nil, []) }
-        var candidates: [Int] = Array(0..<min(2, rows.count))
-        for i in max(0, rows.count - 2)..<rows.count where !candidates.contains(i) { candidates.append(i) }
+        // The two highest and two lowest rows on the page (not reading order: with two
+        // columns the last row read isn't the lowest one).
+        let byY = rows.indices.sorted { rows[$0].rect.midY < rows[$1].rect.midY }
+        var candidates = Array(byY.prefix(2))
+        for i in byY.suffix(2) where !candidates.contains(i) { candidates.append(i) }
 
         var folio: Folio?
         var excluded = Set<Int>()
         for i in candidates {
             let row = rows[i]
-            let top = row.rect.midY < 0.13
-            let bottom = row.rect.midY > 0.87
+            let top = row.rect.midY < 0.16
+            let bottom = row.rect.midY > 0.84
             guard top || bottom else { continue }
             let words = row.tokens.map(\.text)
             if let f = parseFolio(words.joined(separator: " ")) {
@@ -313,14 +386,15 @@ enum PageLayout {
                 excluded.insert(i)
                 continue
             }
-            guard top, words.count >= 2, words.count <= 14 else { continue }
+            // A running header / footer with the number at one end: "24   THE TITLE".
+            guard words.count >= 2, words.count <= 14 else { continue }
             let h = max(row.rect.height, 0.005)
             let t = row.tokens
-            if let f = parseArabic(words[0]), t[1].rect.minX - t[0].rect.maxX > 1.5 * h {
+            if let f = parseFolio(words[0]), t[1].rect.minX - t[0].rect.maxX > 0.8 * h {
                 folio = folio ?? f
                 excluded.insert(i)
-            } else if let f = parseArabic(words[words.count - 1]),
-                      t[t.count - 1].rect.minX - t[t.count - 2].rect.maxX > 1.5 * h {
+            } else if let f = parseFolio(words[words.count - 1]),
+                      t[t.count - 1].rect.minX - t[t.count - 2].rect.maxX > 0.8 * h {
                 folio = folio ?? f
                 excluded.insert(i)
             }
@@ -358,7 +432,8 @@ enum PageLayout {
     // MARK: Transcript
 
     static func assemble(_ rows: [Row], pdfIndex: Int, half: Int, halfCount: Int,
-                         region: CGRect, folio: Folio?, headings: Set<Int> = []) -> LogicalPage {
+                         region: CGRect, folio: Folio?, headings: Set<Int> = [],
+                         runningHeader: String? = nil) -> LogicalPage {
         var tokens: [LayoutToken] = []
         var lines: [LayoutLine] = []
         var ranges: [NSRange] = []
@@ -404,7 +479,8 @@ enum PageLayout {
             let rowMedianH = row.tokens.map(\.rect.height).sorted()[row.tokens.count / 2]
             var needsSpace = false
             for (ti, tok) in row.tokens.enumerated() {
-                var display = noteMarkerStripped(tok, rowMedianHeight: rowMedianH, rowMidY: row.rect.midY)
+                var display = SymbolCheck.clean(
+                    noteMarkerStripped(tok, rowMedianHeight: rowMedianH, rowMidY: row.rect.midY))
                 if needsSpace && !display.isEmpty { text.append(" ") }
                 // "contin-" + "uing" → "continuing"
                 if ti == row.tokens.count - 1, ri + 1 < rows.count, display.count > 2, !headings.contains(ri),
@@ -432,7 +508,7 @@ enum PageLayout {
         return LogicalPage(
             pdfIndex: pdfIndex, half: half, halfCount: halfCount, region: region,
             tokens: tokens, lines: lines, text: text as String, tokenRanges: ranges,
-            folio: folio, indexByKey: index, headingRanges: headingRanges)
+            folio: folio, indexByKey: index, headingRanges: headingRanges, runningHeader: runningHeader)
     }
 
     /// Footnote reference numbers don't belong in the text: "war.12" → "war.", and a

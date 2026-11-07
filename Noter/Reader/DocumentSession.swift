@@ -244,12 +244,20 @@ final class DocumentSession: ObservableObject {
         return "PDF page \(slot.pdfIndex + 1)"
     }
 
+    /// Label above a page in the text view: printed page number, PDF page, and the
+    /// running header (none of which is read aloud).
     func headerLabel(for slot: SlotKey) -> String {
+        var text: String
         if let l = labels[slot] {
             let side = halfCount(slot.pdfIndex) > 1 ? (slot.half == 0 ? " left" : " right") : ""
-            return "Page \(l)   ·   PDF \(slot.pdfIndex + 1)\(side)"
+            text = "Page \(l)   ·   PDF \(slot.pdfIndex + 1)\(side)"
+        } else {
+            text = label(for: slot)
         }
-        return label(for: slot)
+        if let running = layoutCache[slot.pdfIndex]?.first(where: { $0.half == slot.half })?.runningHeader {
+            text += "   ·   " + running
+        }
+        return text
     }
 
     func half(of h: Highlight) -> Int {
