@@ -120,14 +120,14 @@ enum PageLayout {
                 rows.append(Row(rect: rect, tokens: toks))
             }
             sortReadingOrder(&rows)
-            let (folio, folioRows) = detectFolio(rows)
-            var body = rows.enumerated().filter { !folioRows.contains($0.offset) }.map(\.element)
+            let found = detectFolio(rows)
+            var body = rows.enumerated().filter { !found.rows.contains($0.offset) }.map(\.element)
             // Running headers / footers and footnotes aren't part of the text you read.
             let furniture = removePageFurniture(body)
             body = furniture.rows
             let headings = detectHeadings(body)
-            return assemble(body, pdfIndex: pdfIndex, half: half, halfCount: halves, region: region, folio: folio,
-                            headings: headings, runningHeader: furniture.header)
+            return assemble(body, pdfIndex: pdfIndex, half: half, halfCount: halves, region: region,
+                            folio: found.folio, headings: headings, runningHeader: found.header ?? furniture.header)
         }
     }
 
@@ -236,28 +236,47 @@ enum PageLayout {
         var drop = Set<Int>()
         var header: String?
 
-        /// A short line in the margin, set apart from the text, not a sentence and not
-        /// set larger than the text (that would be a heading).
-        func isFurniture(_ row: Row, gap: CGFloat) -> Bool {
-            let text = row.tokens.map(\.text).joined(separator: " ")
+        let tokenHeights = rows.flatMap { $0.tokens.map(\.rect.height) }.sorted()
+        let bodyH = max(tokenHeights[tokenHeights.count / 2], 0.002)
+        let colMin = rows.map(\.rect.minX).min() ?? 0, colMax = rows.map(\.rect.maxX).max() ?? 1
+        let colW = max(colMax - colMin, 0.01)
+
+        /// The page's top / bottom line (all its pieces) is a running header / footer if
+        /// it sits in the margin, is short, isn't set larger than the text (that would be
+        /// a heading), isn't a sentence, and stands apart: a bigger gap than between
+        /// lines, ALL CAPS / small caps, or not running the full width.
+        func furniture(top: Bool) -> (rows: [Int], text: String)? {
+            let band = PageLayout.edgeBand(rows, top: top)
+            guard !band.isEmpty, band.count < rows.count else { return nil }
+            let tokens = band.flatMap { rows[$0].tokens }.sorted { $0.rect.minX < $1.rect.minX }
+            let text = tokens.map(\.text).joined(separator: " ")
+            let minY = band.map { rows[$0].rect.minY }.min() ?? 0
+            let maxY = band.map { rows[$0].rect.maxY }.max() ?? 1
+            let midY = (minY + maxY) / 2
+            guard top ? midY < 0.16 : midY > 0.86 else { return nil }
+            let others = rows.indices.filter { !band.contains($0) }
+            let gap = top
+                ? (others.map { rows[$0].rect.minY }.min() ?? 1) - maxY
+                : minY - (others.map { rows[$0].rect.maxY }.max() ?? 0)
+            let heights = tokens.map(\.rect.height).sorted()
+            let lineH = heights[heights.count / 2]
+            let width = (tokens.map(\.rect.maxX).max() ?? 0) - (tokens.map(\.rect.minX).min() ?? 0)
+            let letters = text.filter(\.isLetter)
+            let caps = letters.count >= 3
+                && Double(letters.filter(\.isUppercase).count) / Double(letters.count) > 0.8
             let sentence = text.hasSuffix(".") && !text.hasSuffix("..")
-            return row.tokens.count <= 12 && row.rect.height < medianH * 1.25 && !sentence
-                && gap > max(medianH * 0.9, typicalGap * 1.8)
-                && text.range(of: #"^(chapter|part|book|section)\b"#, options: [.regularExpression, .caseInsensitive]) == nil
+            let chapter = text.range(of: #"^(chapter|part|book|section)\b"#,
+                                     options: [.regularExpression, .caseInsensitive]) != nil
+            guard tokens.count <= 12, lineH < bodyH * 1.25, !sentence, !chapter else { return nil }
+            guard gap > typicalGap * 1.3 || caps || width < colW * 0.7 else { return nil }
+            return (band, text)
         }
 
-        // Running header: top of the page.
-        let top = rows[byY[0]]
-        if top.rect.midY < 0.16, isFurniture(top, gap: rows[byY[1]].rect.minY - top.rect.maxY) {
-            drop.insert(byY[0])
-            header = top.tokens.map(\.text).joined(separator: " ")
+        if let h = furniture(top: true) {
+            drop.formUnion(h.rows)
+            header = h.text
         }
-        // Running footer: bottom of the page.
-        let bottomIndex = byY[byY.count - 1]
-        let bottom = rows[bottomIndex]
-        if bottom.rect.midY > 0.86, isFurniture(bottom, gap: bottom.rect.minY - rows[byY[byY.count - 2]].rect.maxY) {
-            drop.insert(bottomIndex)
-        }
+        if let f = furniture(top: false) { drop.formUnion(f.rows) }
 
         // Footnotes: a block of smaller lines at the bottom, set apart by a gap or
         // starting with a note marker (1, *, †…).
@@ -365,41 +384,82 @@ enum PageLayout {
     /// Looks for a printed page number in the top/bottom margin: either a line that is
     /// only a number ("24", "– 24 –", "xii") or a running header with the number at one
     /// end separated by a wide gap ("24      THE TITLE").
-    static func detectFolio(_ rows: [Row]) -> (Folio?, Set<Int>) {
-        guard !rows.isEmpty else { return (nil, []) }
-        // The two highest and two lowest rows on the page (not reading order: with two
-        // columns the last row read isn't the lowest one).
-        let byY = rows.indices.sorted { rows[$0].rect.midY < rows[$1].rect.midY }
-        var candidates = Array(byY.prefix(2))
-        for i in byY.suffix(2) where !candidates.contains(i) { candidates.append(i) }
+    /// The rows on the page's top (or bottom) visual line. Vision often reads one header
+    /// line — "12", "JANE DOE", "WOMEN AND WAR" — as separate pieces.
+    static func edgeBand(_ rows: [Row], top: Bool) -> [Int] {
+        guard !rows.isEmpty else { return [] }
+        let byY = rows.indices.sorted {
+            top ? rows[$0].rect.midY < rows[$1].rect.midY : rows[$0].rect.midY > rows[$1].rect.midY
+        }
+        let anchor = rows[byY[0]].rect
+        return byY.filter { i in
+            let r = rows[i].rect
+            let overlap = min(anchor.maxY, r.maxY) - max(anchor.minY, r.minY)
+            return overlap > 0.4 * min(anchor.height, r.height)
+        }
+    }
 
+    /// A page number at the end of a header line: arabic, or lowercase roman ("xii")
+    /// — not a capital "I" that starts a sentence.
+    private static func edgeFolio(_ word: String) -> Folio? {
+        let junk = CharacterSet(charactersIn: "-–—()[]{}.,·•|*_").union(.whitespaces)
+        let t = word.trimmingCharacters(in: junk)
+        if let f = parseArabic(t) { return f }
+        if t == t.lowercased(), let r = parseRoman(t) { return Folio(value: r, roman: true) }
+        return nil
+    }
+
+    /// Finds the printed page number (folio) on the page's top or bottom line — on its
+    /// own ("24", "– 24 –") or at either end of a running header ("24   JANE DOE",
+    /// "WOMEN AND WAR   25") — and returns the rows of that whole line (they're not
+    /// read), plus the header's words for the page label.
+    static func detectFolio(_ rows: [Row]) -> (folio: Folio?, rows: Set<Int>, header: String?) {
+        guard !rows.isEmpty else { return (nil, [], nil) }
+        let colMin = rows.map(\.rect.minX).min() ?? 0, colMax = rows.map(\.rect.maxX).max() ?? 1
+        let colW = max(colMax - colMin, 0.01)
         var folio: Folio?
         var excluded = Set<Int>()
-        for i in candidates {
-            let row = rows[i]
-            let top = row.rect.midY < 0.16
-            let bottom = row.rect.midY > 0.84
-            guard top || bottom else { continue }
-            let words = row.tokens.map(\.text)
+        var header: String?
+        for top in [true, false] {
+            let band = edgeBand(rows, top: top)
+            guard !band.isEmpty, !band.contains(where: excluded.contains) else { continue }
+            let midY = band.map { rows[$0].rect.midY }.reduce(0, +) / CGFloat(band.count)
+            guard top ? midY < 0.16 : midY > 0.84 else { continue }
+            let tokens = band.flatMap { rows[$0].tokens }.sorted { $0.rect.minX < $1.rect.minX }
+            guard !tokens.isEmpty, tokens.count <= 16 else { continue }
+            let words = tokens.map(\.text)
+            let heights = tokens.map(\.rect.height).sorted()
+            let h = max(heights[heights.count / 2], 0.005)
+            let width = (tokens.map(\.rect.maxX).max() ?? 0) - (tokens.map(\.rect.minX).min() ?? 0)
+            // A body line runs the full width; a header line is shorter or has a gap.
+            let narrow = width < colW * 0.85
+            var found: Folio?
+            var numberAt: Int?
             if let f = parseFolio(words.joined(separator: " ")) {
-                folio = folio ?? f
-                excluded.insert(i)
-                continue
+                found = f
+            } else if words.count >= 2 {
+                let n = words.count
+                if let f = edgeFolio(words[0]), narrow || tokens[1].rect.minX - tokens[0].rect.maxX > 0.8 * h {
+                    found = f
+                    numberAt = 0
+                } else if let f = edgeFolio(words[n - 1]),
+                          narrow || tokens[n - 1].rect.minX - tokens[n - 2].rect.maxX > 0.8 * h {
+                    found = f
+                    numberAt = n - 1
+                }
             }
-            // A running header / footer with the number at one end: "24   THE TITLE".
-            guard words.count >= 2, words.count <= 14 else { continue }
-            let h = max(row.rect.height, 0.005)
-            let t = row.tokens
-            if let f = parseFolio(words[0]), t[1].rect.minX - t[0].rect.maxX > 0.8 * h {
-                folio = folio ?? f
-                excluded.insert(i)
-            } else if let f = parseFolio(words[words.count - 1]),
-                      t[t.count - 1].rect.minX - t[t.count - 2].rect.maxX > 0.8 * h {
-                folio = folio ?? f
-                excluded.insert(i)
+            guard let f = found else { continue }
+            folio = folio ?? f
+            excluded.formUnion(band)
+            if top, words.count > 1 {
+                var rest = words
+                if let i = numberAt { rest.remove(at: i) }
+                let t = rest.joined(separator: " ")
+                    .trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.whitespaces))
+                if !t.isEmpty { header = t }
             }
         }
-        return (folio, excluded)
+        return (folio, excluded, header)
     }
 
     static func parseFolio(_ s: String) -> Folio? {

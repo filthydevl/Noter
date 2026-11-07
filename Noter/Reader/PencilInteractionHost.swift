@@ -1,8 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// Apple Pencil double-tap (Pencil 2 / Pro) and squeeze (Pencil Pro) switch between
-/// highlighter and eraser, respecting the action chosen in iPad Settings › Apple Pencil.
+/// Apple Pencil double-tap (Pencil 2 / Pro) and squeeze (Pencil Pro) switch between the
+/// highlighter and the scribble pen, unless double-tap / squeeze is turned off in iPad
+/// Settings › Apple Pencil.
 struct PencilInteractionHost: UIViewRepresentable {
     var onToggle: () -> Void
 

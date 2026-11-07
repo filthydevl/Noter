@@ -55,6 +55,7 @@ enum SidePanel {
 struct ReaderView: View {
     @ObservedObject var session: DocumentSession
     @State private var panel: SidePanel?
+    @State private var showTextOptions = false
 
     var body: some View {
         ZStack {
@@ -96,7 +97,7 @@ struct ReaderView: View {
             }
         }
         .animation(.snappy(duration: 0.28), value: panel)
-        .background(PencilInteractionHost { session.toggleTool() })
+        .background(PencilInteractionHost { session.pencilButton() })
         .overlay(alignment: .bottom) {
             if let toast = session.toast {
                 Text(toast)
@@ -161,21 +162,22 @@ struct ReaderView: View {
                 .accessibilityLabel("Improving recognized text, \(session.ocrUpgradeLeft) pages left")
             }
 
+            if session.viewMode == .transcript {
+                Button {
+                    showTextOptions = true
+                } label: {
+                    Image(systemName: "textformat.size")
+                }
+                .accessibilityLabel("Reading options")
+                .popover(isPresented: $showTextOptions) {
+                    TextOptionsView(session: session)
+                        .presentationCompactAdaptation(.popover)
+                }
+            }
+
             Menu {
                 Picker("Page layout", selection: layoutBinding) {
                     ForEach(LayoutMode.allCases) { Text($0.title).tag($0) }
-                }
-                Section("Text size") {
-                    Button {
-                        session.transcriptFontSize = min(session.transcriptFontSize + 2, 40)
-                    } label: {
-                        Label("Larger text", systemImage: "textformat.size.larger")
-                    }
-                    Button {
-                        session.transcriptFontSize = max(session.transcriptFontSize - 2, 13)
-                    } label: {
-                        Label("Smaller text", systemImage: "textformat.size.smaller")
-                    }
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")

@@ -46,6 +46,14 @@ final class DocumentSession: ObservableObject {
             transcriptController?.reloadAll()
         }
     }
+    /// Text view reading options (theme, font, spacing, margins, alignment).
+    @Published var textAppearance = TextAppearance.load() {
+        didSet {
+            guard oldValue != textAppearance else { return }
+            textAppearance.save()
+            transcriptController?.appearanceChanged()
+        }
+    }
     @Published private(set) var ocrDone = 0
     /// Pages still to be re-read by the improved (second-pass) recognizer.
     @Published private(set) var ocrUpgradeLeft = 0
@@ -380,7 +388,15 @@ final class DocumentSession: ObservableObject {
         highlightsChanged()
     }
 
-    /// Pencil double-tap / squeeze: pen ↔ eraser.
+    /// Apple Pencil double-tap / squeeze: highlighter ↔ scribble pen.
+    func pencilButton() {
+        tool = .pen
+        penMode = penMode == .highlight ? .scribble : .highlight
+        scribble.lasso = false
+        showToast(penMode == .scribble ? "Scribble pen" : "Highlighter")
+    }
+
+    /// Pen ↔ eraser.
     func toggleTool() {
         tool = tool == .pen ? .erase : .pen
         showToast(tool == .erase ? "Eraser" : (penMode == .scribble ? "Scribble pen" : "Highlighter"))

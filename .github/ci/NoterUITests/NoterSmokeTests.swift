@@ -37,6 +37,21 @@ final class NoterSmokeTests: XCTestCase {
         print("NOTER-SMOKE: transcript shows recognized text: \(recognized)")
         assertRunning(app, "after text recognition")
 
+        // Reading options: change theme and font, nothing crashes.
+        let options = app.buttons["Reading options"]
+        if options.waitForExistence(timeout: 5) {
+            options.tap()
+            let sepia = app.buttons["Sepia theme"]
+            print("NOTER-SMOKE: reading options shown: \(sepia.waitForExistence(timeout: 5))")
+            if sepia.exists { sepia.tap() }
+            if app.buttons["Charter"].exists { app.buttons["Charter"].tap() }
+            sleep(1)
+            snapshot(app, "3b-reading-options")
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.95)).tap() // dismiss the popover
+            sleep(1)
+            assertRunning(app, "after changing reading options")
+        }
+
         // Read aloud
         let play = app.buttons["Read aloud"]
         XCTAssertTrue(play.waitForExistence(timeout: 10), "Read-aloud button missing")

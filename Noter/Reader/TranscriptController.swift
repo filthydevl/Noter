@@ -15,6 +15,8 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
     private var didInitialScroll = false
     private var initialScrollScheduled = false
     private var speechIndexPath: IndexPath?
+    /// Widest the column of text may get (reading options).
+    private var maxTextWidth: CGFloat = 740
 
     private struct Stroke {
         let indexPath: IndexPath
@@ -32,9 +34,10 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         self.session = session
         super.init(frame: .zero)
 
-        let layout = UICollectionViewCompositionalLayout { _, env in
+        let layout = UICollectionViewCompositionalLayout { [weak self] _, env in
             let width = env.container.effectiveContentSize.width
-            let side = max(28, (width - 740) / 2)
+            let maxText = self?.maxTextWidth ?? 740
+            let side = max(28, (width - maxText) / 2)
             let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(1200))
             let item = NSCollectionLayoutItem(layoutSize: size)
             let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [item])
@@ -43,7 +46,9 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             return section
         }
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        collectionView.backgroundColor = .systemBackground
+        collectionView.backgroundColor = session.textAppearance.theme.background
+        maxTextWidth = session.textAppearance.width.points
+        overrideUserInterfaceStyle = session.textAppearance.theme.interfaceStyle
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.alwaysBounceVertical = true
@@ -95,10 +100,12 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             let lp = pages[indexPath.item]
             cell.configure(page: lp, header: s.headerLabel(for: lp.slot),
                            highlights: s.transcriptHighlightRanges(lp), skipped: s.skippedRanges(lp),
-                           marks: s.questionTextRanges(lp), fontSize: s.transcriptFontSize)
+                           marks: s.questionTextRanges(lp), fontSize: s.transcriptFontSize,
+                           appearance: s.textAppearance)
             if let p = s.speechPosition, p.slot == lp.slot { cell.setSpeech(token: p.token) }
         } else {
-            cell.configurePlaceholder(header: "PDF page \(indexPath.section + 1)", fontSize: s.transcriptFontSize)
+            cell.configurePlaceholder(header: "PDF page \(indexPath.section + 1)", fontSize: s.transcriptFontSize,
+                                      appearance: s.textAppearance)
             if s.viewMode == .transcript { s.ocr.setFocus(indexPath.section) }
         }
         return cell
@@ -134,6 +141,17 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             guard let cell = cell as? TranscriptCell, let lp = cell.page else { continue }
             cell.applyHighlights(s.transcriptHighlightRanges(lp))
         }
+    }
+
+    /// Reading options changed: page color, column width, then re-lay out the text.
+    func appearanceChanged() {
+        guard let s = session else { return }
+        let a = s.textAppearance
+        overrideUserInterfaceStyle = a.theme.interfaceStyle
+        collectionView.backgroundColor = a.theme.background
+        maxTextWidth = a.width.points
+        collectionView.collectionViewLayout.invalidateLayout()
+        reloadAll()
     }
 
     /// Questions were found / toggled: redraw the marks on the visible pages.

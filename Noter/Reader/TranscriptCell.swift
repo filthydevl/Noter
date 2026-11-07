@@ -118,46 +118,25 @@ final class TranscriptCell: UICollectionViewCell {
 
     // MARK: Content
 
-    static func attributes(_ size: CGFloat) -> [NSAttributedString.Key: Any] {
-        let base = UIFont.systemFont(ofSize: size)
-        let font = base.fontDescriptor.withDesign(.serif).map { UIFont(descriptor: $0, size: size) } ?? base
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = size * 0.38
-        paragraph.paragraphSpacing = size * 0.9
-        return [.font: font, .foregroundColor: UIColor.label, .paragraphStyle: paragraph]
-    }
-
-    static func headingAttributes(_ size: CGFloat) -> [NSAttributedString.Key: Any] {
-        let headingSize = size * 1.3
-        let base = UIFont.systemFont(ofSize: headingSize, weight: .bold)
-        let font = base.fontDescriptor.withDesign(.serif)
-            .flatMap { $0.withSymbolicTraits(.traitBold) }
-            .map { UIFont(descriptor: $0, size: headingSize) } ?? base
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = size * 0.15
-        paragraph.paragraphSpacingBefore = size * 0.6
-        paragraph.paragraphSpacing = size * 0.55
-        return [.font: font, .paragraphStyle: paragraph]
-    }
-
     func configure(page: LogicalPage, header text: String, highlights: [(NSRange, UIColor)],
-                   skipped: [NSRange], marks: [NSRange], fontSize: CGFloat) {
+                   skipped: [NSRange], marks: [NSRange], fontSize: CGFloat, appearance: TextAppearance) {
         self.page = page
         header.text = text
+        header.textColor = appearance.theme.secondary
         if page.text.isEmpty {
-            textView.attributedText = NSAttributedString(string: "No text on this page.", attributes: [
-                .font: UIFont.italicSystemFont(ofSize: fontSize * 0.8), .foregroundColor: UIColor.tertiaryLabel,
-            ])
+            textView.attributedText = NSAttributedString(string: "No text on this page.",
+                                                         attributes: appearance.noteAttributes(size: fontSize))
         } else {
-            let body = NSMutableAttributedString(string: page.text, attributes: Self.attributes(fontSize))
+            let body = NSMutableAttributedString(string: page.text,
+                                                 attributes: appearance.bodyAttributes(size: fontSize))
             // Chapter / section headings.
-            let heading = Self.headingAttributes(fontSize)
+            let heading = appearance.headingAttributes(size: fontSize)
             for r in page.headingRanges where NSMaxRange(r) <= body.length {
                 body.addAttributes(heading, range: r)
             }
             // Text that read-aloud skips is dimmed.
             for r in skipped where NSMaxRange(r) <= body.length {
-                body.addAttribute(.foregroundColor, value: UIColor.tertiaryLabel, range: r)
+                body.addAttribute(.foregroundColor, value: appearance.theme.secondary, range: r)
             }
             textView.attributedText = body
         }
@@ -166,12 +145,12 @@ final class TranscriptCell: UICollectionViewCell {
         setNeedsLayout()
     }
 
-    func configurePlaceholder(header text: String, fontSize: CGFloat) {
+    func configurePlaceholder(header text: String, fontSize: CGFloat, appearance: TextAppearance) {
         page = nil
         header.text = text
-        textView.attributedText = NSAttributedString(string: "Recognizing text…", attributes: [
-            .font: UIFont.italicSystemFont(ofSize: fontSize * 0.8), .foregroundColor: UIColor.tertiaryLabel,
-        ])
+        header.textColor = appearance.theme.secondary
+        textView.attributedText = NSAttributedString(string: "Recognizing text…",
+                                                     attributes: appearance.noteAttributes(size: fontSize))
         applyHighlights([])
         applyMarks([])
     }
