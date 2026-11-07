@@ -95,7 +95,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             let lp = pages[indexPath.item]
             cell.configure(page: lp, header: s.headerLabel(for: lp.slot),
                            highlights: s.transcriptHighlightRanges(lp), skipped: s.skippedRanges(lp),
-                           fontSize: s.transcriptFontSize)
+                           keywords: s.keywordTextRanges(lp), fontSize: s.transcriptFontSize)
             if let p = s.speechPosition, p.slot == lp.slot { cell.setSpeech(token: p.token) }
         } else {
             cell.configurePlaceholder(header: "PDF page \(indexPath.section + 1)", fontSize: s.transcriptFontSize)
@@ -133,6 +133,35 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         for cell in collectionView.visibleCells {
             guard let cell = cell as? TranscriptCell, let lp = cell.page else { continue }
             cell.applyHighlights(s.transcriptHighlightRanges(lp))
+        }
+    }
+
+    /// Key words were found / toggled: redraw the marks on the visible pages.
+    func refreshKeywordMarks() {
+        guard let s = session else { return }
+        for cell in collectionView.visibleCells {
+            guard let cell = cell as? TranscriptCell, let lp = cell.page else { continue }
+            cell.applyKeywords(s.keywordTextRanges(lp))
+        }
+    }
+
+    /// After a jump: brings the range on screen and blinks a box around it.
+    func flash(slot: SlotKey, range: NSRange) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            let ip = IndexPath(item: slot.half, section: slot.pdfIndex)
+            guard let cell = self.collectionView.cellForItem(at: ip) as? TranscriptCell else { return }
+            cell.layoutIfNeeded()
+            if let r = cell.rect(for: range) {
+                let target = cell.textView.convert(r, to: self.collectionView)
+                let inset = self.collectionView.adjustedContentInset
+                let visibleHeight = self.collectionView.bounds.height - inset.top - inset.bottom
+                let y = target.midY - inset.top - visibleHeight * 0.4
+                let maxY = max(-inset.top, self.collectionView.contentSize.height - self.collectionView.bounds.height
+                    + inset.bottom)
+                self.collectionView.setContentOffset(CGPoint(x: 0, y: min(max(y, -inset.top), maxY)), animated: false)
+            }
+            cell.flash(range: range)
         }
     }
 

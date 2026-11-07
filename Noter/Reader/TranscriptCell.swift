@@ -10,13 +10,18 @@ final class TranscriptCell: UICollectionViewCell {
     let textView = UITextView(usingTextLayoutManager: false)
     /// Drawn behind the text, bottom to top.
     private let highlightLayer = CALayer()
+    private let keywordLayer = CAShapeLayer()
+    private let keywordUnderlineLayer = CAShapeLayer()
     private let speechPhraseLayer = CAShapeLayer()
     private let speechWordLayer = CAShapeLayer()
     private let speechUnderlineLayer = CAShapeLayer()
     private let previewLayer = CAShapeLayer()
+    private let flashLayer = CAShapeLayer()
 
     private(set) var page: LogicalPage?
     private var highlights: [(NSRange, UIColor)] = []
+    private var keywords: [NSRange] = []
+    private var flashRange: NSRange?
     private var speechToken: Int?
     private var previewRange: NSRange?
     private var previewColor: UIColor?
@@ -39,8 +44,14 @@ final class TranscriptCell: UICollectionViewCell {
         speechWordLayer.fillColor = Self.speechColor.withAlphaComponent(0.30).cgColor
         speechUnderlineLayer.fillColor = Self.speechColor.withAlphaComponent(0.95).cgColor
         previewLayer.fillColor = UIColor.clear.cgColor
-        for (i, layer) in [highlightLayer, speechPhraseLayer, speechWordLayer, speechUnderlineLayer,
-                           previewLayer].enumerated() {
+        keywordLayer.fillColor = UIColor.systemTeal.withAlphaComponent(0.14).cgColor
+        keywordUnderlineLayer.fillColor = UIColor.systemTeal.withAlphaComponent(0.7).cgColor
+        flashLayer.fillColor = Self.speechColor.withAlphaComponent(0.10).cgColor
+        flashLayer.strokeColor = Self.speechColor.cgColor
+        flashLayer.lineWidth = 2
+        flashLayer.opacity = 0
+        for (i, layer) in [highlightLayer, keywordLayer, keywordUnderlineLayer, speechPhraseLayer, speechWordLayer,
+                           speechUnderlineLayer, previewLayer, flashLayer].enumerated() {
             textView.layer.insertSublayer(layer, at: UInt32(i))
         }
 
@@ -67,10 +78,16 @@ final class TranscriptCell: UICollectionViewCell {
         super.prepareForReuse()
         page = nil
         highlights = []
+        keywords = []
+        flashRange = nil
         speechToken = nil
         previewRange = nil
         withoutAnimation {
             highlightLayer.sublayers = nil
+            keywordLayer.path = nil
+            keywordUnderlineLayer.path = nil
+            flashLayer.removeAllAnimations()
+            flashLayer.path = nil
             previewLayer.path = nil
             speechPhraseLayer.path = nil
             speechWordLayer.path = nil
@@ -82,11 +99,14 @@ final class TranscriptCell: UICollectionViewCell {
         super.layoutSubviews()
         // Geometry depends on the final width, so redraw overlays after layout.
         withoutAnimation {
-            for layer in [highlightLayer, speechPhraseLayer, speechWordLayer, speechUnderlineLayer, previewLayer] {
+            for layer in [highlightLayer, keywordLayer, keywordUnderlineLayer, speechPhraseLayer, speechWordLayer,
+                          speechUnderlineLayer, previewLayer, flashLayer] {
                 layer.frame = textView.bounds
             }
         }
         redrawHighlights()
+        redrawKeywords()
+        redrawFlash()
         redrawPreview()
         _ = drawSpeech()
     }
@@ -103,7 +123,7 @@ final class TranscriptCell: UICollectionViewCell {
     }
 
     func configure(page: LogicalPage, header text: String, highlights: [(NSRange, UIColor)],
-                   skipped: [NSRange], fontSize: CGFloat) {
+                   skipped: [NSRange], keywords: [NSRange], fontSize: CGFloat) {
         self.page = page
         header.text = text
         if page.text.isEmpty {
@@ -119,6 +139,7 @@ final class TranscriptCell: UICollectionViewCell {
             textView.attributedText = body
         }
         applyHighlights(highlights)
+        applyKeywords(keywords)
         setNeedsLayout()
     }
 
@@ -129,6 +150,58 @@ final class TranscriptCell: UICollectionViewCell {
             .font: UIFont.italicSystemFont(ofSize: fontSize * 0.8), .foregroundColor: UIColor.tertiaryLabel,
         ])
         applyHighlights([])
+        applyKeywords([])
+    }
+
+    /// Key words found by the key word tool (shown when "Mark on pages" is on).
+    func applyKeywords(_ ranges: [NSRange]) {
+        keywords = ranges
+        redrawKeywords()
+    }
+
+    private func redrawKeywords() {
+        withoutAnimation {
+            guard page != nil, !keywords.isEmpty else {
+                keywordLayer.path = nil
+                keywordUnderlineLayer.path = nil
+                return
+            }
+            let rects = keywords.flatMap { textRects(for: $0) }
+            keywordLayer.path = path(rects, radius: 3)
+            keywordUnderlineLayer.path = path(rects.map {
+                CGRect(x: $0.minX + 1, y: $0.maxY - 1.5, width: max($0.width - 2, 2), height: 1.5)
+            }, radius: 0.75)
+        }
+    }
+
+    /// Union of the glyph rects of a range (text view coordinates), for scrolling to it.
+    func rect(for range: NSRange) -> CGRect? {
+        let rects = textRects(for: range)
+        guard let first = rects.first else { return nil }
+        return rects.dropFirst().reduce(first) { $0.union($1) }
+    }
+
+    /// Boxes the range and blinks it a few times so it's easy to spot.
+    func flash(range: NSRange) {
+        flashRange = range
+        redrawFlash()
+        flashLayer.removeAnimation(forKey: "flash")
+        let blink = CAKeyframeAnimation(keyPath: "opacity")
+        blink.values = [0, 1, 0.15, 1, 0.15, 1, 0]
+        blink.keyTimes = [0, 0.08, 0.28, 0.46, 0.64, 0.82, 1]
+        blink.duration = 2.6
+        flashLayer.opacity = 0
+        flashLayer.add(blink, forKey: "flash")
+    }
+
+    private func redrawFlash() {
+        withoutAnimation {
+            guard let flashRange else {
+                flashLayer.path = nil
+                return
+            }
+            flashLayer.path = path(textRects(for: flashRange).map { $0.insetBy(dx: -4, dy: -3) }, radius: 6)
+        }
     }
 
     func applyHighlights(_ highlights: [(NSRange, UIColor)]) {

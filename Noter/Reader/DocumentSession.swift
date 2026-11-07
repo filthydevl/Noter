@@ -40,6 +40,7 @@ final class DocumentSession: ObservableObject {
     let pdf: PDFDocument
     let ocr: OCRStore
     let speech: SpeechController
+    let keywords: KeywordIndex
     weak var pdfController: PDFReaderController?
     weak var transcriptController: TranscriptController?
 
@@ -60,8 +61,10 @@ final class DocumentSession: ObservableObject {
         var info = info
         info.lastOpened = Date()
         self.info = info
-        self.ocr = OCRStore(docID: info.id, pageCount: pdf.pageCount)
+        let ocr = OCRStore(docID: info.id, pageCount: pdf.pageCount)
+        self.ocr = ocr
         self.speech = SpeechController()
+        self.keywords = KeywordIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
         let defaults = UserDefaults.standard
         self.color = HighlightColor(rawValue: defaults.string(forKey: "noter.highlightColor") ?? "") ?? .yellow
         let fontSize = defaults.double(forKey: "noter.fontSize")
@@ -75,6 +78,8 @@ final class DocumentSession: ObservableObject {
         rebuildIndex()
         speech.session = self
         ocr.onPageReady = { [weak self] index in self?.pageReady(index) }
+        keywords.onChange = { [weak self] in self?.keywordsChanged() }
+        if keywords.markOnPages { keywords.start() }
         ocr.setFocus(currentPage)
         ocrDone = ocr.doneCount
         recomputeLabels()
@@ -84,6 +89,7 @@ final class DocumentSession: ObservableObject {
 
     func close() {
         speech.stop()
+        keywords.stop()
         ocr.stop()
         saveAll()
     }
@@ -133,6 +139,7 @@ final class DocumentSession: ObservableObject {
         info.layoutMode = mode
         saveInfo()
         layoutCache.removeAll()
+        keywords.reset(mode: mode)
         recomputeLabels()
         transcriptController?.reloadAll()
         HighlightExporter.export(self)
@@ -145,6 +152,7 @@ final class DocumentSession: ObservableObject {
         saveInfo()
         recomputeLabels()
         transcriptController?.pageBecameReady(index)
+        keywords.pageReady(index)
         if ocr.isComplete { HighlightExporter.export(self) }
     }
 
@@ -310,15 +318,57 @@ final class DocumentSession: ObservableObject {
         showToast(tool == .highlight ? "Highlighter" : "Eraser")
     }
 
+    /// Jumps to a highlight and blinks a box around it.
     func open(_ h: Highlight) {
         setCurrentPage(h.page)
         let mode = lastReadingMode
         viewMode = mode
+        noteUserActivity() // don't let read-along scroll away from it
         if mode == .pdf {
             pdfController?.goTo(page: h.page, rect: h.rects.first)
+            pdfController?.flash(pageIndex: h.page, rects: h.rects)
         } else {
-            transcriptController?.scroll(toPage: h.page, half: half(of: h))
+            let slot = SlotKey(pdfIndex: h.page, half: half(of: h))
+            transcriptController?.scroll(toPage: h.page, half: slot.half)
+            if let lp = logicalPage(slot), let r = lp.range(of: h) {
+                transcriptController?.flash(slot: slot, range: lp.textRange(for: r))
+            }
         }
+    }
+
+    /// Jumps to one mention of a key word and blinks a box around it.
+    func open(_ occurrence: KeywordOccurrence) {
+        let slot = occurrence.slot
+        setCurrentPage(slot.pdfIndex)
+        let mode = lastReadingMode
+        viewMode = mode
+        noteUserActivity()
+        guard let lp = logicalPage(slot), occurrence.tokens.upperBound < lp.tokens.count else { return }
+        if mode == .pdf {
+            let rects = lp.lineRects(for: occurrence.tokens)
+            pdfController?.goTo(page: slot.pdfIndex, rect: rects.first)
+            pdfController?.flash(pageIndex: slot.pdfIndex, rects: rects)
+        } else {
+            transcriptController?.scroll(toPage: slot.pdfIndex, half: slot.half)
+            transcriptController?.flash(slot: slot, range: lp.textRange(for: occurrence.tokens))
+        }
+    }
+
+    // MARK: - Key words
+
+    /// Key word token ranges to mark on a book page (empty unless "Mark on pages" is on).
+    func keywordRanges(_ lp: LogicalPage) -> [ClosedRange<Int>] {
+        guard keywords.markOnPages else { return [] }
+        return keywords.ranges(on: lp.slot).filter { $0.upperBound < lp.tokens.count }
+    }
+
+    func keywordTextRanges(_ lp: LogicalPage) -> [NSRange] {
+        keywordRanges(lp).map { lp.textRange(for: $0) }
+    }
+
+    private func keywordsChanged() {
+        pdfController?.refreshKeywordMarks()
+        transcriptController?.refreshKeywordMarks()
     }
 
     private func pushUndo() {

@@ -47,9 +47,14 @@ final class SessionHolder: ObservableObject {
     }
 }
 
+/// The slide-in panel on the right.
+enum SidePanel {
+    case highlights, keywords
+}
+
 struct ReaderView: View {
     @ObservedObject var session: DocumentSession
-    @State private var showHighlights = false
+    @State private var panel: SidePanel?
 
     var body: some View {
         ZStack {
@@ -69,12 +74,12 @@ struct ReaderView: View {
                 .padding(.trailing, 14)
         }
         .overlay(alignment: .leading) {
-            ToolRail(session: session, showHighlights: $showHighlights)
+            ToolRail(session: session, panel: $panel)
                 .padding(.leading, 14)
         }
         .overlay(alignment: .trailing) {
-            if showHighlights {
-                HighlightsListView(session: session) { showHighlights = false }
+            if let panel {
+                sidePanel(panel)
                     .frame(width: 360)
                     .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                     .shadow(color: .black.opacity(0.18), radius: 24, y: 8)
@@ -82,7 +87,7 @@ struct ReaderView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(.snappy(duration: 0.28), value: showHighlights)
+        .animation(.snappy(duration: 0.28), value: panel)
         .background(PencilInteractionHost { session.toggleTool() })
         .overlay(alignment: .bottom) {
             if let toast = session.toast {
@@ -100,6 +105,16 @@ struct ReaderView: View {
         .navigationTitle(session.info.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
+    }
+
+    @ViewBuilder
+    private func sidePanel(_ panel: SidePanel) -> some View {
+        switch panel {
+        case .highlights:
+            HighlightsListView(session: session) { self.panel = nil }
+        case .keywords:
+            KeywordsListView(session: session, index: session.keywords) { self.panel = nil }
+        }
     }
 
     private var layoutBinding: Binding<LayoutMode> {
@@ -152,10 +167,11 @@ struct ReaderView: View {
     }
 }
 
-/// Floating vertical toolbar on the left: highlighter, eraser, color, undo, highlights.
+/// Floating vertical toolbar on the left: highlighter, eraser, color, undo, highlights,
+/// key words.
 private struct ToolRail: View {
     @ObservedObject var session: DocumentSession
-    @Binding var showHighlights: Bool
+    @Binding var panel: SidePanel?
     @State private var showColors = false
 
     var body: some View {
@@ -209,8 +225,11 @@ private struct ToolRail: View {
 
             divider
 
-            railButton("text.quote", label: "Highlights", selected: showHighlights) {
-                showHighlights.toggle()
+            railButton("text.quote", label: "Highlights", selected: panel == .highlights) {
+                panel = panel == .highlights ? nil : .highlights
+            }
+            railButton("key", label: "Key words", selected: panel == .keywords, tint: .teal) {
+                panel = panel == .keywords ? nil : .keywords
             }
         }
         .padding(6)

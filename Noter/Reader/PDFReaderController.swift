@@ -12,9 +12,10 @@ extension PageGeometry {
 /// * Finger: scroll, zoom, tap links — PDFKit's normal behaviour.
 /// * Pencil: highlight. The stroke is snapped to whole words on the OCR'd text lines
 ///   live while you draw, and saved the moment you lift the pencil.
-/// * Read-aloud position is drawn as a separate box annotation that the pencil never
-///   interacts with.
-final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
+/// * Read-along, key words, the pen preview and the "here it is" blink are drawn on a
+///   per-page overlay view (not PDF annotations), so PDFKit never re-renders the page
+///   for them.
+final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOverlayViewProvider {
     let pdfView = PDFView()
     private let inkOverlay = UIView()
     private let inkLayer = CAShapeLayer()
@@ -24,11 +25,18 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
     private weak var session: DocumentSession?
 
     private var rendered: [UUID: (highlight: Highlight, annotations: [PDFAnnotation])] = [:]
-    private var previewAnnotations: [PDFAnnotation] = []
-    private var speechAnnotations: [PDFAnnotation] = []
+    /// Overlays of the pages PDFKit is currently displaying, by page index.
+    private var overlays: [Int: PDFPageOverlay] = [:]
     private var speechPhrase: SpeechPhrase?
-    private var wordAnnotations: [PDFAnnotation] = []
-    private var speechWord: SpeechWord?
+    private var speech: SpeechState?
+    private var preview: (page: Int, rects: [CGRect], color: UIColor)?
+    private var pendingFlash: (page: Int, rects: [CGRect], date: Date)?
+
+    private struct SpeechState {
+        let page: Int
+        let phrase: [CGRect]
+        let word: CGRect?
+    }
     private var hookedScrollViews = Set<ObjectIdentifier>()
     private var didInitialScroll = false
     private var ready = false
@@ -64,6 +72,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
         pdfView.displaysPageBreaks = true
         pdfView.autoScales = true
         pdfView.backgroundColor = .systemGroupedBackground
+        pdfView.pageOverlayViewProvider = self // must be set before the document
         pdfView.document = session.pdf
         addSubview(pdfView)
 
@@ -189,19 +198,73 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
         return a
     }
 
-    private func showPreview(_ lp: LogicalPage, _ r: ClosedRange<Int>, on page: PDFPage,
-                             geometry: PageGeometry, color: HighlightColor) {
-        clearPreview()
-        for rect in lp.lineRects(for: r) {
-            let a = Self.highlightAnnotation(rect: rect, geometry: geometry, color: color.uiColor.withAlphaComponent(0.35))
-            page.addAnnotation(a)
-            previewAnnotations.append(a)
-        }
+    private func showPreview(_ lp: LogicalPage, _ r: ClosedRange<Int>, onPage index: Int, color: HighlightColor) {
+        let rects = lp.lineRects(for: r)
+        if let old = preview, old.page != index { overlays[old.page]?.setPreview([], color: nil) }
+        preview = (index, rects, color.uiColor)
+        overlays[index]?.setPreview(rects, color: color.uiColor)
     }
 
     private func clearPreview() {
-        previewAnnotations.forEach { $0.page?.removeAnnotation($0) }
-        previewAnnotations.removeAll()
+        if let old = preview { overlays[old.page]?.setPreview([], color: nil) }
+        preview = nil
+    }
+
+    // MARK: - Page overlays
+
+    func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> UIView? {
+        guard let s = session else { return nil }
+        let index = s.pdf.index(for: page)
+        let overlay = overlays[index] ?? PDFPageOverlay(page: page, pdfView: view)
+        overlays[index] = overlay
+        overlay.setKeywords(keywordRects(onPage: index))
+        if let speech, speech.page == index {
+            overlay.setSpeech(phrase: speech.phrase, word: speech.word)
+        } else {
+            overlay.setSpeech(phrase: [], word: nil)
+        }
+        if let preview, preview.page == index {
+            overlay.setPreview(preview.rects, color: preview.color)
+        } else {
+            overlay.setPreview([], color: nil)
+        }
+        DispatchQueue.main.async { [weak self] in self?.applyPendingFlash() }
+        return overlay
+    }
+
+    func pdfView(_ pdfView: PDFView, willEndDisplayingOverlayView overlayView: UIView, for page: PDFPage) {
+        guard let s = session else { return }
+        let index = s.pdf.index(for: page)
+        if overlays[index] === overlayView { overlays[index] = nil }
+    }
+
+    private func keywordRects(onPage index: Int) -> [CGRect] {
+        guard let s = session, s.keywords.markOnPages, let pages = s.logicalPages(index) else { return [] }
+        return pages.flatMap { lp in s.keywordRanges(lp).flatMap { lp.lineRects(for: $0) } }
+    }
+
+    /// Key words were found / toggled: redraw the marks on the visible pages.
+    func refreshKeywordMarks() {
+        for (index, overlay) in overlays { overlay.setKeywords(keywordRects(onPage: index)) }
+    }
+
+    /// Boxes and blinks the given rects (normalized) on a page, once it's on screen.
+    func flash(pageIndex: Int, rects: [CGRect]) {
+        guard !rects.isEmpty else { return }
+        pendingFlash = (pageIndex, rects, Date())
+        // Give the jump a moment to scroll the page into place.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.applyPendingFlash() }
+    }
+
+    private func applyPendingFlash() {
+        guard let f = pendingFlash else { return }
+        guard Date().timeIntervalSince(f.date) < 3 else {
+            pendingFlash = nil
+            return
+        }
+        guard let overlay = overlays[f.page], overlay.window != nil else { return }
+        pendingFlash = nil
+        overlay.flash(f.rects)
     }
 
     // MARK: - Pencil strokes
@@ -260,7 +323,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
             if let pages, let h = st.half, st.length > 6,
                let r = Snapper.range(for: st.hits, referenceWidth: pages[h].region.width), r != st.range {
                 st.range = r
-                showPreview(pages[h], r, on: st.page, geometry: st.geometry, color: s.color)
+                showPreview(pages[h], r, onPage: st.pageIndex, color: s.color)
             }
         } else {
             let ids = s.highlightIDs(onPage: st.pageIndex, hitBy: newPoints)
@@ -331,63 +394,27 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate {
             clearSpeech()
             return
         }
+        let index = position.pdfIndex
+        if let old = speech, old.page != index { overlays[old.page]?.setSpeech(phrase: [], word: nil) }
+        let phraseRects = lp.lineRects(for: phrase)
+        let word = lp.lineRects(for: position.token...position.token).first
+        speech = SpeechState(page: index, phrase: phraseRects, word: word)
+        overlays[index]?.setSpeech(phrase: phraseRects, word: word)
+
+        // Scroll to follow when a new sentence starts.
+        let key = SpeechPhrase(slot: position.slot, lower: phrase.lowerBound, upper: phrase.upperBound)
+        guard key != speechPhrase else { return }
+        speechPhrase = key
         let geometry = PageGeometry(page: page)
-
-        let phraseKey = SpeechPhrase(slot: position.slot, lower: phrase.lowerBound, upper: phrase.upperBound)
-        if phraseKey != speechPhrase {
-            clearSpeech()
-            speechPhrase = phraseKey
-            var union: CGRect?
-            for r in lp.lineRects(for: phrase) {
-                let pr = geometry.pageRect(fromNormalized: r.insetBy(dx: -0.002, dy: r.height * 0.04))
-                speechAnnotations.append(addFill(pr, alpha: 0.16, on: page))
-                union = union.map { $0.union(pr) } ?? pr
-            }
-            if let union { follow(union, on: page) }
+        let union = phraseRects.map { geometry.pageRect(fromNormalized: $0) }.reduce(nil) { (u: CGRect?, r) in
+            u.map { $0.union(r) } ?? r
         }
-
-        let wordKey = SpeechWord(slot: position.slot, token: position.token)
-        guard wordKey != speechWord else { return }
-        clearWord()
-        speechWord = wordKey
-        guard let r = lp.lineRects(for: position.token...position.token).first else { return }
-        let box = r.insetBy(dx: -0.001, dy: r.height * 0.04)
-        wordAnnotations.append(addFill(geometry.pageRect(fromNormalized: box), alpha: 0.30, on: page))
-        // Underline along the bottom of the word (in displayed-page space, so it also
-        // sits right on rotated pages).
-        let thickness = max(box.height * 0.1, 0.0015)
-        let underline = CGRect(x: box.minX, y: box.maxY - thickness, width: box.width, height: thickness)
-        wordAnnotations.append(addFill(geometry.pageRect(fromNormalized: underline), alpha: 0.95, on: page))
-    }
-
-    private struct SpeechWord: Equatable {
-        let slot: SlotKey
-        let token: Int
-    }
-
-    private static let speechColor = UIColor(named: "AccentColor") ?? .systemIndigo
-
-    private func addFill(_ rect: CGRect, alpha: CGFloat, on page: PDFPage) -> PDFAnnotation {
-        let a = PDFAnnotation(bounds: rect, forType: .square, withProperties: nil)
-        a.color = .clear
-        a.interiorColor = Self.speechColor.withAlphaComponent(alpha)
-        let border = PDFBorder()
-        border.lineWidth = 0
-        a.border = border
-        page.addAnnotation(a)
-        return a
-    }
-
-    private func clearWord() {
-        wordAnnotations.forEach { $0.page?.removeAnnotation($0) }
-        wordAnnotations.removeAll()
-        speechWord = nil
+        if let union { follow(union, on: page) }
     }
 
     private func clearSpeech() {
-        clearWord()
-        speechAnnotations.forEach { $0.page?.removeAnnotation($0) }
-        speechAnnotations.removeAll()
+        if let old = speech { overlays[old.page]?.setSpeech(phrase: [], word: nil) }
+        speech = nil
         speechPhrase = nil
     }
 

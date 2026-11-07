@@ -59,6 +59,27 @@ final class NoterSmokeTests: XCTestCase {
         snapshot(app, "5-highlights")
         app.buttons["PDF"].tap()
         sleep(1)
+
+        // Key words: names / events / dates are found, marked on the page, and tapping
+        // one jumps there and blinks it.
+        app.buttons["Key words"].tap()
+        let keyword = app.buttons.matching(NSPredicate(
+            format: "label CONTAINS 'Churchill' OR label CONTAINS 'Second World War' OR label CONTAINS 'London'"))
+            .firstMatch
+        let found = keyword.waitForExistence(timeout: 60)
+        print("NOTER-SMOKE: key words found: \(found)")
+        snapshot(app, "6-keywords")
+        let mark = app.switches["Mark on pages"]
+        if mark.exists { mark.tap() }
+        sleep(1)
+        if found { keyword.tap() }
+        sleep(3)
+        snapshot(app, "7-keyword-jump")
+        assertRunning(app, "after jumping to a key word")
+        app.buttons["Text"].tap()
+        sleep(2)
+        if found { keyword.tap() }
+        sleep(3)
         assertRunning(app, "at the end of the smoke test")
     }
 
