@@ -31,6 +31,7 @@ jobs:
           echo "::group::warnings"
           grep -E "warning:" build.log | sort -u | head -300 || true
           echo "::endgroup::"
+          echo "Swift compile steps: $(grep -cE '^(SwiftCompile|CompileSwift|SwiftDriver)' build.log)"
           grep -E "\*\* BUILD (SUCCEEDED|FAILED) \*\*" build.log || tail -50 build.log
           grep -q "\*\* BUILD SUCCEEDED \*\*" build.log
 
@@ -81,6 +82,15 @@ jobs:
           xcodebuild test -project NoterCI.xcodeproj -scheme NoterCI -destination "id=$UDID" \
             -derivedDataPath build/dd -resultBundlePath smoke/NoterCI.xcresult 2>&1 \
             | tee smoke/uitest.log | grep -E "error:|NOTER-SMOKE|Test Case|Executed|TEST (SUCCEEDED|FAILED)|XCTAssert|failed"
+
+      - name: App log (speech / audio)
+        if: always()
+        run: |
+          xcrun simctl spawn "$UDID" log show --last 15m --style compact \
+            --predicate 'process == "Noter"' 2>/dev/null \
+            | grep -iE "speech|tts|voice|audio|AVSpeech|synth|error|fault" | tail -80 || true
+          echo "--- installed voices"
+          xcrun simctl spawn "$UDID" ls /System/Library/AssetsV2 2>/dev/null | grep -i voice || true
 
       - name: Crash reports
         if: always()

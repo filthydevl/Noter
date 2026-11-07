@@ -41,11 +41,16 @@ final class NoterSmokeTests: XCTestCase {
         let play = app.buttons["Read aloud"]
         XCTAssertTrue(play.waitForExistence(timeout: 10), "Read-aloud button missing")
         play.tap()
-        sleep(6)
+        // Timeline of the transport controls: "Pause reading" / "Stop reading" exist while
+        // the synthesizer is active; both vanish when the queue runs out or speech fails.
+        let pause = app.buttons["Pause reading"]
+        let stop = app.buttons["Stop reading"]
+        for tick in 0..<16 {
+            print("NOTER-SMOKE: t=\(Double(tick) * 0.5)s pause=\(pause.exists) stop=\(stop.exists)")
+            Thread.sleep(forTimeInterval: 0.5)
+        }
         snapshot(app, "4-speaking")
         assertRunning(app, "while reading aloud")
-        let stop = app.buttons["Stop reading"]
-        print("NOTER-SMOKE: stop button visible while speaking: \(stop.exists)")
         if stop.exists { stop.tap() }
 
         // Highlights tab, then back to the PDF.
