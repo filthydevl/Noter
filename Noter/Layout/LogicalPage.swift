@@ -28,6 +28,8 @@ struct LogicalPage {
     let tokenRanges: [NSRange]
     let folio: Folio?
     let indexByKey: [TokenKey: Int]
+    /// Chapter / section headings in `text` (shown as headings in the transcript).
+    let headingRanges: [NSRange]
 
     var slot: SlotKey { SlotKey(pdfIndex: pdfIndex, half: half) }
 

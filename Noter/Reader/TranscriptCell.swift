@@ -122,6 +122,19 @@ final class TranscriptCell: UICollectionViewCell {
         return [.font: font, .foregroundColor: UIColor.label, .paragraphStyle: paragraph]
     }
 
+    static func headingAttributes(_ size: CGFloat) -> [NSAttributedString.Key: Any] {
+        let headingSize = size * 1.3
+        let base = UIFont.systemFont(ofSize: headingSize, weight: .bold)
+        let font = base.fontDescriptor.withDesign(.serif)
+            .flatMap { $0.withSymbolicTraits(.traitBold) }
+            .map { UIFont(descriptor: $0, size: headingSize) } ?? base
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = size * 0.15
+        paragraph.paragraphSpacingBefore = size * 0.6
+        paragraph.paragraphSpacing = size * 0.55
+        return [.font: font, .paragraphStyle: paragraph]
+    }
+
     func configure(page: LogicalPage, header text: String, highlights: [(NSRange, UIColor)],
                    skipped: [NSRange], marks: [NSRange], fontSize: CGFloat) {
         self.page = page
@@ -132,6 +145,11 @@ final class TranscriptCell: UICollectionViewCell {
             ])
         } else {
             let body = NSMutableAttributedString(string: page.text, attributes: Self.attributes(fontSize))
+            // Chapter / section headings.
+            let heading = Self.headingAttributes(fontSize)
+            for r in page.headingRanges where NSMaxRange(r) <= body.length {
+                body.addAttributes(heading, range: r)
+            }
             // Text that read-aloud skips is dimmed.
             for r in skipped where NSMaxRange(r) <= body.length {
                 body.addAttribute(.foregroundColor, value: UIColor.tertiaryLabel, range: r)

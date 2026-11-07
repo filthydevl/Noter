@@ -143,6 +143,14 @@ struct ReaderView: View {
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityLabel("Recognizing text, \(session.ocrDone) of \(session.pageCount) pages")
+            } else if session.ocrUpgradeLeft > 0 {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Refining text · \(session.ocrUpgradeLeft) left")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Improving recognized text, \(session.ocrUpgradeLeft) pages left")
             }
 
             Menu {

@@ -8,12 +8,16 @@ import CoreGraphics
 /// * Every finished page is written to its own file right away; a crash or dead battery
 ///   loses at most the page that was in progress, and work resumes where it stopped.
 /// * Only a small LRU of pages is kept in memory.
+/// * Once every page has text, pages read by an older version of the recognizer are
+///   re-read in the background (from the page you're on), then swapped in.
 @MainActor
 final class OCRStore {
     let docID: UUID
     let pageCount: Int
 
     private(set) var meta: [Int: PageMeta] = [:]
+    /// Recognizer version per page (missing = 1, before versions were recorded).
+    private var versions: [Int: Int] = [:]
     var onPageReady: ((Int) -> Void)?
 
     private var cache: [Int: OCRPage] = [:]
@@ -25,12 +29,19 @@ final class OCRStore {
 
     var doneCount: Int { meta.count }
     var isComplete: Bool { meta.count >= pageCount }
+    /// Pages still waiting to be re-read by the current recognizer.
+    var staleCount: Int { meta.keys.filter { isStale($0) }.count }
+
+    private func isStale(_ index: Int) -> Bool {
+        (versions[index] ?? 1) < OCREngine.version
+    }
 
     init(docID: UUID, pageCount: Int) {
         self.docID = docID
         self.pageCount = pageCount
         try? FileManager.default.createDirectory(at: Storage.ocrFolder(docID), withIntermediateDirectories: true)
         meta = Storage.load([Int: PageMeta].self, from: Storage.ocrIndexURL(docID)) ?? [:]
+        versions = Storage.load([Int: Int].self, from: Storage.ocrVersionsURL(docID)) ?? [:]
         recoverUnindexedPages()
     }
 
@@ -69,7 +80,7 @@ final class OCRStore {
     // MARK: Worker
 
     func start() {
-        guard worker == nil, !isComplete || !waiters.isEmpty else { return }
+        guard worker == nil, !isComplete || !waiters.isEmpty || staleCount > 0 else { return }
         let id = docID
         let url = Storage.pdfURL(id)
         worker = Task.detached(priority: .utility) { [weak self] in
@@ -100,13 +111,20 @@ final class OCRStore {
             let i = (focus + offset) % pageCount
             if meta[i] == nil { return i }
         }
+        // Everything has text: re-read older pages with the improved recognizer.
+        for offset in 0..<pageCount {
+            let i = (focus + offset) % pageCount
+            if isStale(i) { return i }
+        }
         return nil
     }
 
     private func finish(_ index: Int, page: OCRPage, meta pageMeta: PageMeta) {
         meta[index] = pageMeta
+        versions[index] = page.v ?? 1
         insert(index, page)
         Storage.save(meta, to: Storage.ocrIndexURL(docID))
+        Storage.save(versions, to: Storage.ocrVersionsURL(docID))
         if let conts = waiters.removeValue(forKey: index) {
             conts.forEach { $0.resume(returning: page) }
         }
@@ -133,9 +151,13 @@ final class OCRStore {
             guard let n = Int(name.dropFirst().dropLast(5)), n < pageCount, meta[n] == nil,
                   let page = Storage.load(OCRPage.self, from: Storage.ocrPageURL(docID, n)) else { continue }
             meta[n] = PageLayout.meta(for: page)
+            versions[n] = page.v ?? 1
             changed = true
         }
-        if changed { Storage.save(meta, to: Storage.ocrIndexURL(docID)) }
+        if changed {
+            Storage.save(meta, to: Storage.ocrIndexURL(docID))
+            Storage.save(versions, to: Storage.ocrVersionsURL(docID))
+        }
     }
 
     private func insert(_ index: Int, _ page: OCRPage) {

@@ -66,8 +66,10 @@ final class QuestionIndex: ObservableObject {
         enqueue(Array(ocr.meta.keys))
     }
 
+    /// A page was (re-)recognized: scan it (again).
     func pageReady(_ index: Int) {
         guard started else { return }
+        results[index] = nil
         enqueue([index])
     }
 

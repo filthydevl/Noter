@@ -73,6 +73,8 @@ struct OCRPage: Codable {
     /// width / height of the displayed page
     var aspect: CGFloat
     var lines: [OCRLine]
+    /// `OCREngine.version` that produced it (nil: before versions existed).
+    var v: Int?
 }
 
 /// A printed page number found on a book page ("folio").

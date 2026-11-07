@@ -20,9 +20,9 @@ struct SkipOptions: OptionSet, Hashable {
         var id: Int { option.rawValue }
     }
 
+    /// Headers, footers and footnotes aren't listed: they're always left out of the
+    /// transcript now (the bits stay for saved settings).
     static let items: [Item] = [
-        Item(option: .headersFooters, title: "Headers & footers"),
-        Item(option: .footnotes, title: "Footnotes"),
         Item(option: .citations, title: "Citations"),
         Item(option: .parentheses, title: "Parentheses ( )"),
         Item(option: .brackets, title: "Brackets [ ]"),
@@ -37,12 +37,8 @@ enum SkipFilter {
         guard !options.isEmpty, !page.tokens.isEmpty else { return [] }
         var ranges: [NSRange] = []
 
-        for li in skippedLines(page, options: options).sorted() {
-            let t = page.lines[li].tokens
-            guard !t.isEmpty else { continue }
-            ranges.append(page.textRange(for: t.lowerBound...(t.upperBound - 1)))
-        }
-
+        // Running headers / footers and footnotes are already left out of the page
+        // text by PageLayout, so only inline patterns remain here.
         var patterns: [NSRegularExpression] = []
         if options.contains(.parentheses), let parentheses { patterns.append(parentheses) }
         if options.contains(.brackets), let brackets { patterns.append(brackets) }
@@ -55,50 +51,6 @@ enum SkipFilter {
             }
         }
         return merged(ranges)
-    }
-
-    // MARK: Whole lines: running headers, footers, footnotes
-
-    static func skippedLines(_ page: LogicalPage, options: SkipOptions) -> Set<Int> {
-        var out = Set<Int>()
-        let lines = page.lines
-        guard lines.count >= 2 else { return out }
-        let heights = lines.map(\.rect.height).sorted()
-        let medianH = max(heights[heights.count / 2], 0.002)
-
-        if options.contains(.headersFooters) {
-            // A short line alone in the top / bottom margin, set apart from the body.
-            let first = lines[0]
-            if first.rect.midY < 0.10, first.tokens.count <= 12,
-               lines[1].rect.minY - first.rect.maxY > medianH * 0.9 {
-                out.insert(0)
-            }
-            let li = lines.count - 1
-            let last = lines[li]
-            if last.rect.midY > 0.90, last.tokens.count <= 12,
-               last.rect.minY - lines[li - 1].rect.maxY > medianH * 0.9 {
-                out.insert(li)
-            }
-        }
-
-        if options.contains(.footnotes) {
-            // A block of smaller lines at the bottom of the page, set apart from the
-            // body by a gap or starting with a note marker (1, *, †…).
-            var i = lines.count - 1
-            if out.contains(i) { i -= 1 }
-            var block: [Int] = []
-            while i > 0, lines[i].rect.midY > 0.5, lines[i].rect.height < medianH * 0.86 {
-                block.append(i)
-                i -= 1
-            }
-            if let top = block.last, i >= 0, block.count < lines.count / 2 + 1 {
-                let gap = lines[top].rect.minY - lines[i].rect.maxY
-                let firstWord = page.tokens[lines[top].tokens.lowerBound].text
-                let marker = firstWord.first.map { $0.isNumber || "*†‡§".contains($0) } ?? false
-                if gap > medianH * 0.8 || marker { out.formUnion(block) }
-            }
-        }
-        return out
     }
 
     // MARK: Patterns

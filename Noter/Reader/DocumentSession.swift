@@ -31,6 +31,8 @@ final class DocumentSession: ObservableObject {
         }
     }
     @Published private(set) var ocrDone = 0
+    /// Pages still to be re-read by the improved (second-pass) recognizer.
+    @Published private(set) var ocrUpgradeLeft = 0
     @Published private(set) var currentPage = 0
     @Published private(set) var canUndo = false
     @Published private(set) var toast: String?
@@ -82,6 +84,7 @@ final class DocumentSession: ObservableObject {
         if questions.markOnPages { questions.start() }
         ocr.setFocus(currentPage)
         ocrDone = ocr.doneCount
+        ocrUpgradeLeft = ocr.staleCount
         recomputeLabels()
         saveInfo()
         ocr.start()
@@ -148,12 +151,45 @@ final class DocumentSession: ObservableObject {
     private func pageReady(_ index: Int) {
         layoutCache[index] = nil
         ocrDone = ocr.doneCount
+        ocrUpgradeLeft = ocr.staleCount
         info.ocrPagesDone = ocrDone
         saveInfo()
+        reanchorHighlights(onPage: index)
         recomputeLabels()
         transcriptController?.pageBecameReady(index)
+        pdfController?.refreshMarks()
         questions.pageReady(index)
         if ocr.isComplete { HighlightExporter.export(self) }
+    }
+
+    /// A page was (re-)recognized: its words may be numbered differently now, so point
+    /// each highlight on it at the words that sit under its rectangles.
+    private func reanchorHighlights(onPage index: Int) {
+        guard byPage[index]?.isEmpty == false, let page = ocr.page(index) else { return }
+        var changed = false
+        for i in highlights.indices where highlights[i].page == index {
+            let areas = highlights[i].rects.map { $0.insetBy(dx: -0.002, dy: -$0.height * 0.2) }
+            var spans: [TokenSpan] = []
+            for (li, line) in page.lines.enumerated() {
+                for (ti, t) in line.k.enumerated()
+                where areas.contains(where: { $0.contains(CGPoint(x: t.r.midX, y: t.r.midY)) }) {
+                    if var last = spans.last, last.line == li, last.end + 1 == ti {
+                        last.end = ti
+                        spans[spans.count - 1] = last
+                    } else {
+                        spans.append(TokenSpan(line: li, start: ti, end: ti))
+                    }
+                }
+            }
+            if !spans.isEmpty, spans != highlights[i].spans {
+                highlights[i].spans = spans
+                changed = true
+            }
+        }
+        guard changed else { return }
+        rebuildIndex()
+        Storage.save(highlights, to: Storage.highlightsURL(info.id))
+        transcriptController?.refreshHighlights()
     }
 
     func readingStartSlot() -> SlotKey {

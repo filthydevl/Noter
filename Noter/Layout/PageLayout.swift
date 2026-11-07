@@ -29,15 +29,28 @@ enum PageLayout {
         case .spread:
             return findGutter(page)?.x ?? 0.5
         case .auto:
-            guard page.aspect > 1.05 else { return nil }
+            // Portrait pages are single book pages (two-column layouts are handled by
+            // the reading order instead).
+            guard page.aspect > 0.95 else { return nil }
             guard let g = findGutter(page) else { return page.aspect > 1.2 ? 0.5 : nil }
             // Clearly landscape scans of a book are spreads.
             if page.aspect > 1.2 { return g.x }
-            // Borderline shapes need a clean, empty gutter with text on both sides.
+            // Borderline shapes need a clean, empty gutter with a full page of text on
+            // each side — two pages, not two columns of one.
             let total = page.lines.reduce(0) { $0 + $1.k.count }
             let clean = g.crossing <= max(1, total / 50)
-            return clean && g.leftShare > 0.15 && g.leftShare < 0.85 ? g.x : nil
+            return clean && g.leftShare > 0.2 && g.leftShare < 0.8 && bothSidesFull(page, gutter: g.x) ? g.x : nil
         }
+    }
+
+    /// Text on each side of the gutter runs down most of the page.
+    private static func bothSidesFull(_ page: OCRPage, gutter x: CGFloat) -> Bool {
+        let words = page.lines.flatMap { $0.k.map(\.r) }
+        func extent(_ side: [CGRect]) -> CGFloat {
+            guard let top = side.map(\.minY).min(), let bottom = side.map(\.maxY).max() else { return 0 }
+            return bottom - top
+        }
+        return extent(words.filter { $0.maxX < x }) > 0.4 && extent(words.filter { $0.minX > x }) > 0.4
     }
 
     /// Finds the vertical band in the middle of the page crossed by the fewest words
@@ -108,8 +121,12 @@ enum PageLayout {
             }
             sortReadingOrder(&rows)
             let (folio, folioRows) = detectFolio(rows)
-            let body = rows.enumerated().filter { !folioRows.contains($0.offset) }.map(\.element)
-            return assemble(body, pdfIndex: pdfIndex, half: half, halfCount: halves, region: region, folio: folio)
+            var body = rows.enumerated().filter { !folioRows.contains($0.offset) }.map(\.element)
+            // Running headers / footers and footnotes aren't part of the text you read.
+            body = removePageFurniture(body)
+            let headings = detectHeadings(body)
+            return assemble(body, pdfIndex: pdfIndex, half: half, halfCount: halves, region: region, folio: folio,
+                            headings: headings)
         }
     }
 
@@ -121,12 +138,156 @@ enum PageLayout {
         return PageMeta(auto: split(.auto), single: split(.single), spread: split(.spread))
     }
 
+    /// Reading order for one book page: top to bottom, left to right — and when the
+    /// text is set in two columns, the whole left column before the right one (a row
+    /// spanning both columns, like a heading, starts a new band). Never interleaves
+    /// lines from two columns.
     static func sortReadingOrder(_ rows: inout [Row]) {
-        rows.sort { a, b in
-            let overlap = min(a.rect.maxY, b.rect.maxY) - max(a.rect.minY, b.rect.minY)
-            if overlap > 0.5 * min(a.rect.height, b.rect.height) { return a.rect.minX < b.rect.minX }
-            return a.rect.midY < b.rect.midY
+        guard rows.count > 1 else { return }
+        rows = visualLines(rows)
+        guard let split = columnSplit(rows) else { return }
+        var ordered: [Row] = []
+        var left: [Row] = [], right: [Row] = []
+        func flush() {
+            ordered += left
+            ordered += right
+            left.removeAll()
+            right.removeAll()
         }
+        for row in rows {
+            if row.rect.maxX <= split {
+                left.append(row)
+            } else if row.rect.minX >= split {
+                right.append(row)
+            } else {
+                flush()
+                ordered.append(row)
+            }
+        }
+        flush()
+        rows = ordered
+    }
+
+    /// Top to bottom; rows sharing a visual line, left to right. (A stable grouping —
+    /// a plain pairwise comparison isn't transitive and can scramble lines.)
+    private static func visualLines(_ rows: [Row]) -> [Row] {
+        let byY = rows.sorted { $0.rect.midY < $1.rect.midY }
+        var out: [Row] = []
+        var group: [Row] = []
+        for row in byY {
+            if let anchor = group.first {
+                let overlap = min(anchor.rect.maxY, row.rect.maxY) - max(anchor.rect.minY, row.rect.minY)
+                if overlap > 0.5 * min(anchor.rect.height, row.rect.height) {
+                    group.append(row)
+                    continue
+                }
+                out += group.sorted { $0.rect.minX < $1.rect.minX }
+                group.removeAll()
+            }
+            group.append(row)
+        }
+        out += group.sorted { $0.rect.minX < $1.rect.minX }
+        return out
+    }
+
+    /// The x of a clean gap between two text columns, if the page has them.
+    private static func columnSplit(_ rows: [Row]) -> CGFloat? {
+        guard rows.count >= 8,
+              let minX = rows.map(\.rect.minX).min(), let maxX = rows.map(\.rect.maxX).max() else { return nil }
+        let width = maxX - minX
+        guard width > 0.2 else { return nil }
+        var best: (x: CGFloat, crossing: Int)?
+        for step in 0...40 {
+            let x = minX + width * (0.35 + 0.3 * CGFloat(step) / 40)
+            let crossing = rows.filter { $0.rect.minX < x && $0.rect.maxX > x }.count
+            if best == nil || crossing < best!.crossing
+                || (crossing == best!.crossing && abs(x - (minX + width / 2)) < abs(best!.x - (minX + width / 2))) {
+                best = (x, crossing)
+            }
+        }
+        guard let b = best, b.crossing <= max(1, rows.count * 15 / 100) else { return nil }
+        let left = rows.filter { $0.rect.maxX <= b.x }, right = rows.filter { $0.rect.minX >= b.x }
+        func extent(_ side: [Row]) -> CGFloat {
+            guard let top = side.map(\.rect.minY).min(), let bottom = side.map(\.rect.maxY).max() else { return 0 }
+            return bottom - top
+        }
+        guard left.count >= 3, right.count >= 3, extent(left) > 0.3, extent(right) > 0.3 else { return nil }
+        return b.x
+    }
+
+    // MARK: Page furniture
+
+    /// Drops the running header / footer and the footnotes block at the bottom of the
+    /// page, so the transcript (and read-aloud) is just the text.
+    static func removePageFurniture(_ rows: [Row]) -> [Row] {
+        guard rows.count >= 3 else { return rows }
+        let heights = rows.map(\.rect.height).sorted()
+        let medianH = max(heights[heights.count / 2], 0.002)
+        let byY = rows.indices.sorted { rows[$0].rect.midY < rows[$1].rect.midY }
+        var drop = Set<Int>()
+
+        // Running header: a short, ordinary-sized line alone in the top margin.
+        let top = byY[0], second = byY[1]
+        let t = rows[top]
+        if t.rect.midY < 0.09, t.tokens.count <= 10, t.rect.height < medianH * 1.15,
+           rows[second].rect.minY - t.rect.maxY > medianH * 1.2 {
+            drop.insert(top)
+        }
+        // Running footer: same at the bottom.
+        let bottom = byY[byY.count - 1], above = byY[byY.count - 2]
+        let b = rows[bottom]
+        if b.rect.midY > 0.93, b.tokens.count <= 10, b.rect.height < medianH * 1.15,
+           b.rect.minY - rows[above].rect.maxY > medianH * 1.2 {
+            drop.insert(bottom)
+        }
+
+        // Footnotes: a block of smaller lines at the bottom, set apart by a gap or
+        // starting with a note marker (1, *, †…).
+        var block: [Int] = []
+        var k = byY.count - 1
+        if drop.contains(byY[k]) { k -= 1 }
+        while k > 0, rows[byY[k]].rect.midY > 0.5, rows[byY[k]].rect.height < medianH * 0.86 {
+            block.append(byY[k])
+            k -= 1
+        }
+        if let first = block.last, k >= 0, block.count < rows.count / 2 + 1 {
+            let gap = rows[first].rect.minY - rows[byY[k]].rect.maxY
+            let marker = rows[first].tokens.first?.text.first.map { $0.isNumber || "*†‡§".contains($0) } ?? false
+            if gap > medianH * 0.8 || marker { drop.formUnion(block) }
+        }
+        return rows.enumerated().filter { !drop.contains($0.offset) }.map(\.element)
+    }
+
+    // MARK: Headings
+
+    /// Chapter / section headings: rows set in larger type, short ALL-CAPS lines, or
+    /// short centred lines set apart from the text — returned as row indices.
+    static func detectHeadings(_ rows: [Row]) -> Set<Int> {
+        guard rows.count >= 2 else { return [] }
+        let heights = rows.map(\.rect.height).sorted()
+        let medianH = max(heights[heights.count / 2], 0.002)
+        let colMin = rows.map(\.rect.minX).min() ?? 0, colMax = rows.map(\.rect.maxX).max() ?? 1
+        let colW = max(colMax - colMin, 0.01), colMid = (colMin + colMax) / 2
+        var out = Set<Int>()
+        for (i, row) in rows.enumerated() {
+            let words = row.tokens.map(\.text)
+            let joined = words.joined(separator: " ")
+            guard words.count <= 14, joined.count >= 2 else { continue }
+            let gapAbove = i == 0 ? 1 : row.rect.minY - rows[i - 1].rect.maxY
+            let gapBelow = i == rows.count - 1 ? 1 : rows[i + 1].rect.minY - row.rect.maxY
+            let letters = joined.filter(\.isLetter)
+            let caps = letters.count >= 4 && Double(letters.filter(\.isUppercase).count) / Double(letters.count) > 0.8
+            let endsSentence = joined.hasSuffix(".") && !joined.hasSuffix("..")
+            let big = row.rect.height >= medianH * 1.3
+            let capsLine = caps && words.count <= 10 && gapAbove > medianH * 0.8
+            let centred = row.rect.width < colW * 0.6 && abs(row.rect.midX - colMid) < colW * 0.06
+                && gapAbove > medianH * 1.2 && gapBelow > medianH * 0.9 && !endsSentence
+            let chapter = joined.range(of: #"^(chapter|part|book|section)\s+([0-9ivxlc]+|[a-z]+)\b"#,
+                                       options: [.regularExpression, .caseInsensitive]) != nil && words.count <= 8
+            if big || capsLine || centred || chapter { out.insert(i) }
+        }
+        // A heading isn't half the page.
+        return out.count > rows.count / 2 ? [] : out
     }
 
     // MARK: Page numbers
@@ -197,10 +358,11 @@ enum PageLayout {
     // MARK: Transcript
 
     static func assemble(_ rows: [Row], pdfIndex: Int, half: Int, halfCount: Int,
-                         region: CGRect, folio: Folio?) -> LogicalPage {
+                         region: CGRect, folio: Folio?, headings: Set<Int> = []) -> LogicalPage {
         var tokens: [LayoutToken] = []
         var lines: [LayoutLine] = []
         var ranges: [NSRange] = []
+        var headingRanges: [NSRange] = []
         let text = NSMutableString()
 
         let heights = rows.map(\.rect.height).sorted()
@@ -230,17 +392,22 @@ enum PageLayout {
                     let shortPrevious = colMaxX - prev.rect.maxX > colW * 0.2
                     if bigGap || indented || shortPrevious { sep = "\n" }
                 }
-                if joinWithoutSpace { sep = "" }
+                // Headings are paragraphs of their own.
+                if headings.contains(ri) || headings.contains(ri - 1) { sep = "\n" }
+                if joinWithoutSpace && sep != "\n" { sep = "" }
                 text.append(sep)
             }
             joinWithoutSpace = false
 
             let lineStart = tokens.count
+            let rowStart = text.length
+            let rowMedianH = row.tokens.map(\.rect.height).sorted()[row.tokens.count / 2]
+            var needsSpace = false
             for (ti, tok) in row.tokens.enumerated() {
-                if ti > 0 { text.append(" ") }
-                var display = tok.text
+                var display = noteMarkerStripped(tok, rowMedianHeight: rowMedianH, rowMidY: row.rect.midY)
+                if needsSpace && !display.isEmpty { text.append(" ") }
                 // "contin-" + "uing" → "continuing"
-                if ti == row.tokens.count - 1, ri + 1 < rows.count, display.count > 2,
+                if ti == row.tokens.count - 1, ri + 1 < rows.count, display.count > 2, !headings.contains(ri),
                    display.hasSuffix("-") || display.hasSuffix("¬"),
                    display.dropLast().last?.isLetter == true,
                    let next = rows[ri + 1].tokens.first?.text.first, next.isLowercase {
@@ -251,8 +418,12 @@ enum PageLayout {
                 text.append(display)
                 ranges.append(NSRange(location: loc, length: (display as NSString).length))
                 tokens.append(tok)
+                if !display.isEmpty { needsSpace = true }
             }
             lines.append(LayoutLine(rect: row.rect, tokens: lineStart..<tokens.count))
+            if headings.contains(ri), text.length > rowStart {
+                headingRanges.append(NSRange(location: rowStart, length: text.length - rowStart))
+            }
         }
 
         var index: [TokenKey: Int] = [:]
@@ -261,6 +432,20 @@ enum PageLayout {
         return LogicalPage(
             pdfIndex: pdfIndex, half: half, halfCount: halfCount, region: region,
             tokens: tokens, lines: lines, text: text as String, tokenRanges: ranges,
-            folio: folio, indexByKey: index)
+            folio: folio, indexByKey: index, headingRanges: headingRanges)
+    }
+
+    /// Footnote reference numbers don't belong in the text: "war.12" → "war.", and a
+    /// small raised "12" on its own is dropped entirely.
+    static func noteMarkerStripped(_ tok: LayoutToken, rowMedianHeight: CGFloat, rowMidY: CGFloat) -> String {
+        let t = tok.text
+        if t.count <= 3, t.allSatisfy(\.isNumber), tok.rect.height < rowMedianHeight * 0.75,
+           tok.rect.midY < rowMidY {
+            return ""
+        }
+        if let r = t.range(of: #"(?<=\p{Ll}{2}[.,;:)\]”’"]?)\d{1,3}$"#, options: .regularExpression) {
+            return String(t[..<r.lowerBound])
+        }
+        return t
     }
 }
