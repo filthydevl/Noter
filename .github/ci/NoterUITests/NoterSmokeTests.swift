@@ -35,12 +35,14 @@ final class NoterSmokeTests: XCTestCase {
             .matching(NSPredicate(format: "value CONTAINS[c] 'brown fox' OR label CONTAINS[c] 'brown fox'"))
             .firstMatch.exists
         print("NOTER-SMOKE: transcript shows recognized text: \(recognized)")
-        let marker = app.descendants(matching: .any).matching(NSPredicate(
-            format: "value CONTAINS 'London. 7' OR value CONTAINS 'London.7' OR label CONTAINS 'London. 7'"))
+        // Only the Text view's pages (the PDF view exposes the PDF's own text layer).
+        let pages = app.textViews
+        let marker = pages.matching(NSPredicate(format: "value CONTAINS 'London. 7' OR value CONTAINS 'London.7'"))
             .firstMatch.exists
-        let london = app.descendants(matching: .any).matching(NSPredicate(
-            format: "value CONTAINS 'spoke in London.' OR label CONTAINS 'spoke in London.'")).firstMatch.exists
-        print("NOTER-SMOKE: sentence before footnote shown: \(london), footnote marker left in text: \(marker)")
+        let london = pages.matching(NSPredicate(format: "value CONTAINS 'spoke in London.'")).firstMatch.exists
+        let falseQuestion = pages.matching(NSPredicate(format: "value CONTAINS 'London?'")).firstMatch.exists
+        print("NOTER-SMOKE: sentence before footnote shown: \(london), footnote marker left in text: \(marker), "
+              + "footnote misread as '?': \(falseQuestion)")
         assertRunning(app, "after text recognition")
 
         // Reading options: change theme and font, nothing crashes.
@@ -152,6 +154,8 @@ final class NoterSmokeTests: XCTestCase {
             snapshot(app, "9-search")
             if searchFound { hit.tap() }
             sleep(3)
+            if app.buttons["Close search"].exists { app.buttons["Close search"].tap() }
+            sleep(1)
         } else {
             print("NOTER-SMOKE: search field missing")
         }
@@ -169,7 +173,7 @@ final class NoterSmokeTests: XCTestCase {
         // Save PDF with highlights + scribbles: the file is written and the share sheet opens.
         let save = app.buttons["Save PDF"]
         if save.waitForExistence(timeout: 5) {
-            save.tap()
+            save.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             let withInk = app.buttons["PDF with highlights + scribbles"]
             if withInk.waitForExistence(timeout: 5) { withInk.tap() }
             let sheet = app.descendants(matching: .any)

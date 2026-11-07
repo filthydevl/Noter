@@ -612,6 +612,8 @@ enum PageLayout {
             }
         }
 
+        fixMisreadQuestionMarks(text)
+
         var index: [TokenKey: Int] = [:]
         for (i, t) in tokens.enumerated() { index[t.key] = i }
 
@@ -659,6 +661,28 @@ enum PageLayout {
             return String(out[..<r.lowerBound])
         }
         return out
+    }
+
+    /// A full stop followed by a footnote number (or a smudge) is often read as "?".
+    /// A sentence of five words or more ending in "?" that isn't worded like a question
+    /// ("…Churchill spoke in London?") gets its full stop back. Same length, so word
+    /// positions don't move.
+    static func fixMisreadQuestionMarks(_ text: NSMutableString) {
+        let ns = text as NSString
+        var sentenceStart = 0
+        var i = 0
+        while i < ns.length {
+            let c = ns.character(at: i)
+            if c == 0x3F { // "?"
+                let sentence = ns.substring(with: NSRange(location: sentenceStart, length: i + 1 - sentenceStart))
+                if sentence.split(whereSeparator: \.isWhitespace).count >= 5,
+                   !QuestionFinder.looksInterrogative(sentence.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    text.replaceCharacters(in: NSRange(location: i, length: 1), with: ".")
+                }
+            }
+            if c == 0x3F || c == 0x2E || c == 0x21 || c == 0x0A { sentenceStart = i + 1 } // ? . ! newline
+            i += 1
+        }
     }
 
     /// "p." "pp." "No." "vol." "ch." "fig."… — a number after these is a reference, not a
