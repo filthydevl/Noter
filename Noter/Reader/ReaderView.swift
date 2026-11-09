@@ -69,13 +69,14 @@ struct ReaderView: View {
                 .opacity(session.viewMode == .transcript ? 1 : 0)
                 .allowsHitTesting(session.viewMode == .transcript)
         }
-        .overlay(alignment: .leading) {
-            // The player sits right above the tool rail.
-            VStack(alignment: .leading, spacing: 12) {
-                SpeechControlView(speech: session.speech) { session.showReadingPosition() }
-                ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel)
-            }
-            .padding(.leading, 14)
+        .overlay(alignment: .topTrailing) {
+            SpeechControlView(speech: session.speech) { session.showReadingPosition() }
+                .padding(.top, 10)
+                .padding(.trailing, panel == nil ? 14 : 386) // beside an open side panel
+        }
+        .overlay(alignment: .trailing) {
+            ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel)
+                .padding(.trailing, panel == nil ? 14 : 386)
         }
         .overlay(alignment: .bottom) {
             if session.penMode == .scribble && session.viewMode != .transcript {
@@ -278,7 +279,7 @@ private struct UndoButton: View {
     }
 }
 
-/// Floating vertical toolbar on the left: highlighter, eraser, color, auto color switch,
+/// Floating vertical toolbar on the right: highlighter, eraser, color, auto color switch,
 /// highlights, notes, key words, questions (undo is in the bottom-right corner).
 private struct ToolRail: View {
     @ObservedObject var session: DocumentSession
@@ -328,7 +329,7 @@ private struct ToolRail: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(scribbling ? "Ink color" : "Highlight color")
-            .popover(isPresented: $showColors, arrowEdge: .leading) {
+            .popover(isPresented: $showColors, arrowEdge: .trailing) {
                 Group {
                     if scribbling {
                         HStack(spacing: 14) {
@@ -378,7 +379,7 @@ private struct ToolRail: View {
                 railButton("textformat.size", label: "Reading options", selected: showTextOptions) {
                     showTextOptions = true
                 }
-                .popover(isPresented: $showTextOptions, arrowEdge: .leading) {
+                .popover(isPresented: $showTextOptions, arrowEdge: .trailing) {
                     TextOptionsView(session: session)
                         .presentationCompactAdaptation(.popover)
                 }
