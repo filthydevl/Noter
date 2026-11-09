@@ -213,13 +213,6 @@ struct ReaderView: View {
                 .accessibilityLabel("Improving recognized text, \(session.ocrUpgradeLeft) pages left")
             }
 
-            Button {
-                panel = panel == .search ? nil : .search
-            } label: {
-                Image(systemName: "magnifyingglass")
-            }
-            .accessibilityLabel("Search")
-
             Menu {
                 Button {
                     session.savePDF(baked: true) { savedPDF = ShareItem(url: $0) }
@@ -279,8 +272,9 @@ private struct UndoButton: View {
     }
 }
 
-/// Floating vertical toolbar on the right: highlighter, eraser, color, auto color switch,
-/// highlights, notes, key words, questions (undo is in the bottom-right corner).
+/// Floating vertical toolbar on the right: search, highlighter, eraser, the colors, the
+/// color wheel (modes, names, adding colors), auto color switch, highlights, notes, key
+/// words, questions (undo is in the bottom-right corner).
 private struct ToolRail: View {
     @ObservedObject var session: DocumentSession
     @ObservedObject var scribble: ScribbleSettings
@@ -294,6 +288,13 @@ private struct ToolRail: View {
 
     var body: some View {
         VStack(spacing: 4) {
+            // Find a word or sentence in the book.
+            railButton("magnifyingglass", label: "Search", selected: panel == .search) {
+                panel = panel == .search ? nil : .search
+            }
+
+            divider
+
             // Pen: tap to switch highlighter ↔ scribble pen (or back from the eraser).
             railButton(scribbling ? "pencil.tip" : "highlighter",
                        label: scribbling ? "Scribble pen (tap for highlighter)" : "Highlighter (tap for scribble pen)",
@@ -318,14 +319,32 @@ private struct ToolRail: View {
                 session.tool = .erase
             }
 
+            divider
+
+            // The colors, right on the rail: tap one to use it.
+            if scribbling {
+                ForEach(InkColor.allCases) { c in
+                    railSwatch(c.color, selected: c == scribble.color, name: c.name) { scribble.color = c }
+                }
+            } else {
+                ForEach(palette.colors) { c in
+                    railSwatch(c.color, selected: c == session.color, name: palette.name(c) ?? c.name) {
+                        session.color = c
+                    }
+                }
+            }
+
+            // Color wheel: color modes, names, and adding / removing colors.
             Button {
                 showColors.toggle()
             } label: {
                 Circle()
-                    .fill(penColor)
-                    .frame(width: 22, height: 22)
+                    .fill(AngularGradient(colors: [.red, .orange, .yellow, .green, .mint, .cyan, .blue, .purple, .pink, .red],
+                                          center: .center))
+                    .overlay(Circle().fill(.white.opacity(0.9)).frame(width: 7, height: 7))
+                    .frame(width: 24, height: 24)
                     .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
-                    .frame(width: 44, height: 44)
+                    .frame(width: 44, height: 40)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(scribbling ? "Ink color" : "Highlight color")
@@ -428,6 +447,27 @@ private struct ToolRail: View {
                     .font(.subheadline.weight(.medium))
             }
         }
+    }
+
+    /// A color on the rail.
+    private func railSwatch(_ color: Color, selected: Bool, name: String, pick: @escaping () -> Void) -> some View {
+        Button {
+            pick()
+            session.tool = .pen
+        } label: {
+            Circle()
+                .fill(color)
+                .frame(width: 24, height: 24)
+                .overlay(Circle().strokeBorder(Color.primary.opacity(selected ? 0.75 : 0.12),
+                                               lineWidth: selected ? 2.5 : 1))
+                .padding(3)
+                .overlay(Circle().strokeBorder(selected ? color.opacity(0.6) : .clear, lineWidth: 2))
+                .frame(width: 44, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(name)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func swatch(_ color: Color, selected: Bool, name: String, pick: @escaping () -> Void) -> some View {
