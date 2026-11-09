@@ -62,22 +62,20 @@ struct HighlightsListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(items) { h in
-                            VStack(spacing: 6) {
-                                // A circled word's definition comes right after it, with an arrow.
-                                if let word = session.term(of: h) {
-                                    DefinitionArrow(word: Highlight.keywordDisplay(word.text))
+                        ForEach(HighlightBlock.blocks(items)) { block in
+                            switch block {
+                            case .single(let h):
+                                VStack(spacing: 6) {
+                                    // A circled word's definition comes right after it, with an arrow.
+                                    if let word = session.term(of: h) {
+                                        DefinitionArrow(word: Highlight.keywordDisplay(word.text))
+                                    }
+                                    row(h, keywords: keywords, byKey: byKey)
                                 }
-                                HighlightRow(
-                                    highlight: h,
-                                    label: session.pageLabel(for: h),
-                                    tags: h.tagKeys.compactMap { byKey[$0] },
-                                    available: keywords.filter { !(h.isKeyword && $0.id == h.keywordKey) },
-                                    open: { session.open(h) },
-                                    toggleTag: { session.toggleTag($0, on: h.id) },
-                                    delete: { session.removeHighlights([h.id]) },
-                                    note: h.noteText,
-                                    colorName: session.palette.name(h.color))
+                            case .run(let run):
+                                ConnectedIdeas(run: run, name: session.palette.name(run[0].color)) { h in
+                                    row(h, keywords: keywords, byKey: byKey)
+                                }
                             }
                         }
                     }
@@ -90,6 +88,100 @@ struct HighlightsListView: View {
         .background(.regularMaterial)
         .onAppear { HighlightExporter.export(session) }
         .sheet(item: $share) { ShareSheet(url: $0.url) }
+    }
+}
+
+extension HighlightsListView {
+    private func row(_ h: Highlight, keywords: [KeywordEntry], byKey: [String: KeywordEntry]) -> HighlightRow {
+        HighlightRow(
+            highlight: h,
+            label: session.pageLabel(for: h),
+            tags: h.tagKeys.compactMap { byKey[$0] },
+            available: keywords.filter { !(h.isKeyword && $0.id == h.keywordKey) },
+            open: { session.open(h) },
+            toggleTag: { session.toggleTag($0, on: h.id) },
+            delete: { session.removeHighlights([h.id]) },
+            note: h.noteText,
+            colorName: session.palette.name(h.color))
+    }
+}
+
+/// The highlights list in blocks: highlights one after another in the same color are
+/// connected ideas and are shown together; circled words and their definitions stand
+/// on their own.
+enum HighlightBlock: Identifiable {
+    case single(Highlight)
+    case run([Highlight])
+
+    var id: UUID {
+        switch self {
+        case .single(let h): h.id
+        case .run(let hs): hs[0].id
+        }
+    }
+
+    static func blocks(_ items: [Highlight]) -> [HighlightBlock] {
+        var out: [HighlightBlock] = []
+        var run: [Highlight] = []
+        func flush() {
+            if run.count > 1 {
+                out.append(.run(run))
+            } else if let h = run.first {
+                out.append(.single(h))
+            }
+            run = []
+        }
+        for h in items {
+            if h.isTerm || h.isDefinition {
+                flush()
+                out.append(.single(h))
+            } else if let last = run.last, last.color != h.color {
+                flush()
+                run = [h]
+            } else {
+                run.append(h)
+            }
+        }
+        flush()
+        return out
+    }
+}
+
+/// Successive highlights in the same color: one block, each highlight still its own
+/// card, listed with a dash.
+struct ConnectedIdeas<Row: View>: View {
+    let run: [Highlight]
+    let name: String?
+    @ViewBuilder let row: (Highlight) -> Row
+
+    var body: some View {
+        let color = run[0].color.color
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Circle().fill(color).frame(width: 10, height: 10)
+                Text(name ?? "Connected ideas")
+                    .font(.caption.weight(.semibold))
+                Text("· \(run.count) in a row")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.leading, 4)
+            ForEach(run) { h in
+                HStack(alignment: .top, spacing: 6) {
+                    Text("–")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(color)
+                        .padding(.top, 10)
+                        .accessibilityHidden(true)
+                    row(h)
+                }
+            }
+        }
+        .padding(8)
+        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(color.opacity(0.35)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(run.count) connected highlights, \(name ?? run[0].color.name)")
     }
 }
 
