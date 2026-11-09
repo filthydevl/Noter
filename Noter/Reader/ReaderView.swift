@@ -323,11 +323,12 @@ private struct ToolRail: View {
 
             // The colors, right on the rail: tap one to use it.
             if scribbling {
-                ForEach(InkColor.allCases) { c in
+                ForEach(InkColor.allCases.prefix(5)) { c in
                     railSwatch(c.color, selected: c == scribble.color, name: c.name) { scribble.color = c }
                 }
             } else {
-                ForEach(palette.colors) { c in
+                // (More than 7 colors: the rest are under the color wheel.)
+                ForEach(palette.colors.prefix(7)) { c in
                     railSwatch(c.color, selected: c == session.color, name: palette.name(c) ?? c.name) {
                         session.color = c
                     }
