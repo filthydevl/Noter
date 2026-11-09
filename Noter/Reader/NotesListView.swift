@@ -13,7 +13,7 @@ struct NotesListView: View {
         let all = session.groupedHighlights()
         let noted = all.filter { $0.noteText != nil }.count
         let items = onlyWithNotes ? all.filter { $0.noteText != nil } : all
-        let keywords = session.keywordEntries()
+        let keywords = session.keywordEntries(includingRemoved: true)
         let byKey = Dictionary(uniqueKeysWithValues: keywords.map { ($0.id, $0) })
         let _ = session.labelsVersion // refresh when page numbers improve
         VStack(spacing: 0) {
@@ -84,7 +84,9 @@ struct NotesListView: View {
                                 highlight: h,
                                 label: session.pageLabel(for: h),
                                 tags: h.tagKeys.compactMap { byKey[$0] },
-                                available: keywords.filter { !(h.isKeyword && $0.id == h.keywordKey) },
+                                available: keywords.filter {
+                !(h.isKeyword && $0.id == h.keywordKey) && !session.removedKeywords.contains($0.id)
+            },
                                 open: { session.open(h) },
                                 toggleTag: { session.toggleTag($0, on: h.id) },
                                 delete: { session.removeHighlights([h.id]) },

@@ -23,12 +23,21 @@ struct QuestionsListView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if !index.questions.isEmpty {
+                if !index.questions.isEmpty || !index.removed.isEmpty {
                     Menu {
-                        Button {
-                            if let url = PDFExport.questions(session, shown) { share = ShareItem(url: url) }
-                        } label: {
-                            Label("Export PDF", systemImage: "doc.richtext")
+                        if !index.questions.isEmpty {
+                            Button {
+                                if let url = PDFExport.questions(session, shown) { share = ShareItem(url: url) }
+                            } label: {
+                                Label("Export PDF", systemImage: "doc.richtext")
+                            }
+                        }
+                        if !index.removed.isEmpty {
+                            Button {
+                                index.restoreRemoved()
+                            } label: {
+                                Label("Restore \(index.removed.count) removed", systemImage: "arrow.uturn.backward")
+                            }
                         }
                     } label: {
                         PanelIcon(symbol: "square.and.arrow.up")
@@ -78,12 +87,22 @@ struct QuestionsListView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(shown) { q in
-                            Button {
-                                session.open(q.location)
-                            } label: {
-                                QuestionRow(question: q, label: session.label(for: q.location.slot))
+                            HStack(alignment: .top, spacing: 6) {
+                                Button {
+                                    session.open(q.location)
+                                } label: {
+                                    QuestionRow(question: q, label: session.label(for: q.location.slot))
+                                }
+                                .buttonStyle(.plain)
+                                RemoveCellButton(label: "Remove question") { index.remove(q) }
                             }
-                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    index.remove(q)
+                                } label: {
+                                    Label("Remove from Questions", systemImage: "minus.circle")
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal, 14)

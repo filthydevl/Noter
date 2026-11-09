@@ -9,7 +9,7 @@ enum PDFExport {
     /// Highlights with their tags and notes (`onlyWithNotes`: the Notes panel's export).
     static func highlights(_ session: DocumentSession, onlyWithNotes: Bool = false) -> URL? {
         let items = session.groupedHighlights().filter { !onlyWithNotes || $0.noteText != nil }
-        let keywords = Dictionary(uniqueKeysWithValues: session.keywordEntries().map { ($0.id, $0) })
+        let keywords = Dictionary(uniqueKeysWithValues: session.keywordEntries(includingRemoved: true).map { ($0.id, $0) })
         var body = ""
         var lastLabel: String?
         for h in items {

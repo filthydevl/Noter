@@ -21,12 +21,21 @@ struct KeywordsListView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if !entries.isEmpty {
+                if !entries.isEmpty || !session.removedKeywords.isEmpty {
                     Menu {
-                        Button {
-                            if let url = PDFExport.keywords(session) { share = ShareItem(url: url) }
-                        } label: {
-                            Label("Export PDF", systemImage: "doc.richtext")
+                        if !entries.isEmpty {
+                            Button {
+                                if let url = PDFExport.keywords(session) { share = ShareItem(url: url) }
+                            } label: {
+                                Label("Export PDF", systemImage: "doc.richtext")
+                            }
+                        }
+                        if !session.removedKeywords.isEmpty {
+                            Button {
+                                session.restoreRemovedKeywords()
+                            } label: {
+                                Label("Restore \(session.removedKeywords.count) removed", systemImage: "arrow.uturn.backward")
+                            }
                         }
                     } label: {
                         PanelIcon(symbol: "square.and.arrow.up")
@@ -50,7 +59,16 @@ struct KeywordsListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(entries) { KeywordRow(keyword: $0, session: session) }
+                        ForEach(entries) { k in
+                            KeywordRow(keyword: k, session: session)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        session.removeKeyword(k.id)
+                                    } label: {
+                                        Label("Remove from Key words", systemImage: "minus.circle")
+                                    }
+                                }
+                        }
                     }
                     .padding(.horizontal, 14)
                     .padding(.bottom, 20)
@@ -81,6 +99,18 @@ private struct KeywordRow: View {
                 Text("\(keyword.linked.count) linked")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+                // Takes it off this list only; its highlights stay.
+                Button {
+                    session.removeKeyword(keyword.id)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 26)
+                        .background(Color.primary.opacity(0.07), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove key word")
             }
 
             // Where you highlighted it — same page-number style as the highlights panel.

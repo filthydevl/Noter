@@ -135,6 +135,16 @@ final class NoterSmokeTests: XCTestCase {
         sleep(3)
         snapshot(app, "8-question-jump")
         assertRunning(app, "after jumping to a question")
+
+        // Remove a question from the list (the last one, so the jump below still works).
+        let removeButtons = app.buttons.matching(identifier: "Remove question")
+        let before = removeButtons.count
+        if before > 0 {
+            removeButtons.element(boundBy: before - 1).tap()
+            sleep(1)
+        }
+        print("NOTER-SMOKE: questions before removing: \(before), after: \(removeButtons.count)")
+        assertRunning(app, "after removing a question")
         app.buttons["Text"].tap()
         sleep(2)
         if found { question.tap() }

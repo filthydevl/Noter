@@ -71,6 +71,9 @@ final class DocumentSession: ObservableObject {
     let questions: QuestionIndex
     /// Highlight colors, their names, and auto-switch.
     let palette: ColorPalette
+    /// Key words you removed from the Key words list (remembered per document). Their
+    /// highlights stay; they just aren't listed or offered as tags.
+    @Published private(set) var removedKeywords: Set<String> = []
     /// Set right after you circle a word: the next highlight is its definition.
     @Published private(set) var pendingTerm: UUID?
     /// Find in book (the search panel).
@@ -104,6 +107,7 @@ final class DocumentSession: ObservableObject {
         self.speech = SpeechController()
         self.questions = QuestionIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
         self.palette = ColorPalette(docID: info.id)
+        self.removedKeywords = Set(Storage.load([String].self, from: DocumentSession.removedKeywordsURL(info.id)) ?? [])
         let defaults = UserDefaults.standard
         self.color = HighlightColor(rawValue: defaults.string(forKey: "noter.highlightColor") ?? "") ?? .yellow
         let fontSize = defaults.double(forKey: "noter.fontSize")
@@ -600,7 +604,30 @@ final class DocumentSession: ObservableObject {
 
     /// Every word or short phrase you've highlighted, with where you highlighted it and
     /// the highlights you've tagged with it. Alphabetical.
-    func keywordEntries() -> [KeywordEntry] {
+    /// `includingRemoved`: also key words you took off the list (to show existing tags).
+    func keywordEntries(includingRemoved: Bool = false) -> [KeywordEntry] {
+        let all = allKeywordEntries()
+        return includingRemoved ? all : all.filter { !removedKeywords.contains($0.id) }
+    }
+
+    private static func removedKeywordsURL(_ id: UUID) -> URL {
+        Storage.folder(id).appendingPathComponent("removed-keywords.json")
+    }
+
+    /// Takes a key word off the Key words list. Its highlights stay on the pages.
+    func removeKeyword(_ key: String) {
+        removedKeywords.insert(key)
+        Storage.save(Array(removedKeywords).sorted(), to: Self.removedKeywordsURL(info.id))
+        HighlightExporter.export(self)
+    }
+
+    func restoreRemovedKeywords() {
+        removedKeywords.removeAll()
+        Storage.save([String](), to: Self.removedKeywordsURL(info.id))
+        HighlightExporter.export(self)
+    }
+
+    private func allKeywordEntries() -> [KeywordEntry] {
         let sorted = sortedHighlights()
         var order: [String] = []
         var mentions: [String: [Highlight]] = [:]

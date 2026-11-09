@@ -20,6 +20,9 @@ final class QuestionIndex: ObservableObject {
     @Published private(set) var questions: [Question] = []
     @Published private(set) var scannedPages = 0
     @Published private(set) var isScanning = false
+    /// Questions you removed from the list (remembered per document); they aren't marked
+    /// on the pages either.
+    @Published private(set) var removed: Set<String>
     /// Highlight the questions on the pages (PDF and text views).
     @Published var markOnPages: Bool {
         didSet {
@@ -50,6 +53,31 @@ final class QuestionIndex: ObservableObject {
         self.ocr = ocr
         self.mode = mode
         self.markOnPages = UserDefaults.standard.bool(forKey: Self.markKey)
+        self.removed = Set(Storage.load([String].self, from: Self.removedURL(docID)) ?? [])
+    }
+
+    private static func removedURL(_ id: UUID) -> URL {
+        Storage.folder(id).appendingPathComponent("removed-questions.json")
+    }
+
+    /// Identifies a question across re-reads of its page: the PDF page and its words.
+    private static func key(pdfIndex: Int, text: String) -> String {
+        let words = text.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        return "\(pdfIndex)|\(words)"
+    }
+
+    /// Takes a question off the list (and off the pages). Remembered.
+    func remove(_ q: Question) {
+        removed.insert(Self.key(pdfIndex: q.location.slot.pdfIndex, text: q.text))
+        Storage.save(Array(removed).sorted(), to: Self.removedURL(docID))
+        publish()
+    }
+
+    /// Brings back every question you removed.
+    func restoreRemoved() {
+        removed.removeAll()
+        Storage.save([String](), to: Self.removedURL(docID))
+        publish()
     }
 
     /// Question token ranges on a book page.
@@ -148,7 +176,7 @@ final class QuestionIndex: ObservableObject {
         var map: [SlotKey: [ClosedRange<Int>]] = [:]
         for index in results.keys.sorted() {
             for page in results[index] ?? [] {
-                for q in page.items {
+                for q in page.items where !removed.contains(Self.key(pdfIndex: page.slot.pdfIndex, text: q.text)) {
                     let location = TextLocation(slot: page.slot, tokens: q.tokens)
                     list.append(Question(
                         id: "\(page.slot.pdfIndex)-\(page.slot.half)-\(q.tokens.lowerBound)",

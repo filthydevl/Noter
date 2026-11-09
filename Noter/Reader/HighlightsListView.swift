@@ -11,7 +11,7 @@ struct HighlightsListView: View {
 
     var body: some View {
         let items = session.groupedHighlights()
-        let keywords = session.keywordEntries()
+        let keywords = session.keywordEntries(includingRemoved: true)
         let byKey = Dictionary(uniqueKeysWithValues: keywords.map { ($0.id, $0) })
         let _ = session.labelsVersion // refresh when page numbers improve
         VStack(spacing: 0) {
@@ -97,7 +97,9 @@ extension HighlightsListView {
             highlight: h,
             label: session.pageLabel(for: h),
             tags: h.tagKeys.compactMap { byKey[$0] },
-            available: keywords.filter { !(h.isKeyword && $0.id == h.keywordKey) },
+            available: keywords.filter {
+                !(h.isKeyword && $0.id == h.keywordKey) && !session.removedKeywords.contains($0.id)
+            },
             open: { session.open(h) },
             toggleTag: { session.toggleTag($0, on: h.id) },
             delete: { session.removeHighlights([h.id]) },
@@ -182,6 +184,25 @@ struct ConnectedIdeas<Row: View>: View {
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(color.opacity(0.35)))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(run.count) connected highlights, \(name ?? run[0].color.name)")
+    }
+}
+
+/// The small "×" next to a Questions / Key words card: takes it off that list only.
+struct RemoveCellButton: View {
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, height: 26)
+                .background(Color.primary.opacity(0.07), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 10)
+        .accessibilityLabel(label)
     }
 }
 
