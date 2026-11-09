@@ -170,7 +170,7 @@ struct ConnectedIdeas<Row: View>: View {
                 HStack(alignment: .top, spacing: 6) {
                     Text("–")
                         .font(.title3.weight(.bold))
-                        .foregroundStyle(color)
+                        .foregroundStyle(h.displayColor)
                         .padding(.top, 10)
                         .accessibilityHidden(true)
                     row(h)
@@ -263,7 +263,7 @@ struct HighlightRow: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(highlight.color.color)
+                            .fill(highlight.displayColor)
                             .frame(width: 8, height: 8)
                         Text(label)
                             .font(.caption.weight(.semibold))
@@ -281,14 +281,14 @@ struct HighlightRow: View {
                                 .foregroundStyle(.primary)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
-                                .background(highlight.color.color.opacity(0.3), in: Capsule())
+                                .background(highlight.displayColor.opacity(0.3), in: Capsule())
                         } else if let colorName {
                             Text(colorName)
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
-                                .background(highlight.color.color.opacity(0.3), in: Capsule())
+                                .background(highlight.displayColor.opacity(0.3), in: Capsule())
                         }
                         if highlight.isKeyword {
                             Image(systemName: "key")
@@ -298,7 +298,7 @@ struct HighlightRow: View {
                         }
                     }
                     Text(highlight.text)
-                        .underline(highlight.isUnderlined, color: highlight.color.color)
+                        .underline(highlight.isUnderlined, color: highlight.displayColor)
                         .font(.system(.callout, design: .serif))
                         .foregroundStyle(.primary)
                         .lineLimit(8)

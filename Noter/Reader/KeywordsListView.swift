@@ -115,7 +115,7 @@ private struct KeywordRow: View {
                 } label: {
                     HStack(alignment: .top, spacing: 8) {
                         RoundedRectangle(cornerRadius: 1.5)
-                            .fill(h.color.color)
+                            .fill(h.displayColor)
                             .frame(width: 3)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(h.text)

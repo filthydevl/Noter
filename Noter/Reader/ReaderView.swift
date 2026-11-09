@@ -378,6 +378,11 @@ private struct ToolRail: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 260)
+            Text(palette.autoSwitch ? "A new color after every highlight."
+                 : "Same color = same idea; each new highlight in it gets a new shade.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 290, alignment: .leading)
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(58), spacing: 8), count: 5), spacing: 10) {
                 ForEach(palette.colors) { c in
                     VStack(spacing: 4) {

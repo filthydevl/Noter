@@ -17,7 +17,8 @@ struct ColorsListView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Colors")
                         .font(.title3.weight(.semibold))
-                    Text(palette.autoSwitch ? "A new color after every highlight" : "You pick the color")
+                    Text(palette.autoSwitch ? "A new color after every highlight"
+                         : "You pick the color · a new shade for each highlight in it")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

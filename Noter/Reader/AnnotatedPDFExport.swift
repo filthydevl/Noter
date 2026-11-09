@@ -59,7 +59,7 @@ enum AnnotatedPDFExport {
                     let bounds = geometry.pageRect(fromNormalized: r.insetBy(dx: -0.002, dy: r.height * 0.04))
                     let a = PDFAnnotation(bounds: bounds, forType: h.isUnderlined ? .underline : .highlight,
                                           withProperties: nil)
-                    a.color = h.color.uiColor.withAlphaComponent(h.isUnderlined ? 1 : 0.5)
+                    a.color = h.uiColor.withAlphaComponent(h.isUnderlined ? 1 : 0.5)
                     // Corners relative to the annotation: upper-left, upper-right, lower-left, lower-right.
                     a.quadrilateralPoints = [
                         CGPoint(x: 0, y: bounds.height), CGPoint(x: bounds.width, y: bounds.height),
@@ -75,7 +75,7 @@ enum AnnotatedPDFExport {
                 let a = PDFAnnotation(bounds: CGRect(x: b.maxX + 2, y: b.maxY - 14, width: 16, height: 16),
                                       forType: .text, withProperties: nil)
                 a.contents = note
-                a.color = h.color.uiColor
+                a.color = h.uiColor
                 a.userName = "Noter"
                 page.addAnnotation(a)
             }
@@ -121,10 +121,10 @@ enum AnnotatedPDFExport {
                         if h.isUnderlined {
                             let bar = max(r.height * 0.12, 1)
                             r = CGRect(x: r.minX, y: r.maxY - bar, width: r.width, height: bar)
-                            c.setFillColor(h.color.uiColor.cgColor)
+                            c.setFillColor(h.uiColor.cgColor)
                         } else {
                             c.setBlendMode(.multiply)
-                            c.setFillColor(h.color.uiColor.withAlphaComponent(0.5).cgColor)
+                            c.setFillColor(h.uiColor.withAlphaComponent(0.5).cgColor)
                         }
                         c.addPath(UIBezierPath(roundedRect: r, cornerRadius: min(r.height * 0.2, 2)).cgPath)
                         c.fillPath()

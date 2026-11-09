@@ -208,6 +208,9 @@ struct Highlight: Codable, Identifiable, Equatable {
     /// underlined with the highlighter (no word to define was waiting).
     var role: String?
     var termID: UUID?
+    /// Which variation of its color (manual colors: each new highlight in the same color
+    /// gets the next shade, so separate points of one idea stay apart). Nil: the color.
+    var shade: Int?
 
     var isTerm: Bool { role == "term" }
     var isDefinition: Bool { role == "definition" }

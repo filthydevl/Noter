@@ -237,7 +237,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     private func highlightItems(onPage index: Int) -> [(rect: CGRect, color: UIColor, underline: Bool)] {
         guard let s = session else { return [] }
         return s.highlights(onPage: index).flatMap { h in
-            h.rects.map { (rect: $0, color: h.color.uiColor, underline: h.isUnderlined) }
+            h.rects.map { (rect: $0, color: h.uiColor, underline: h.isUnderlined) }
         }
     }
 

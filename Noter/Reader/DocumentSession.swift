@@ -405,8 +405,13 @@ final class DocumentSession: ObservableObject {
             h.role = "definition"
             h.termID = term
             pendingTerm = nil
-        } else if underline {
-            h.role = "underline"
+        } else {
+            if underline { h.role = "underline" }
+            // Manual colors: same color = same idea; a new shade for each new point.
+            if !palette.autoSwitch {
+                let last = highlights.last { $0.color == h.color && !$0.isTerm && !$0.isDefinition }
+                h.shade = last.map { (($0.shade ?? 0) + 1) % HighlightColor.shadeCount } ?? 0
+            }
         }
         let duplicate = highlights(onPage: lp.pdfIndex).contains {
             lp.range(of: $0) == range && $0.color == h.color && $0.role == h.role
@@ -468,7 +473,7 @@ final class DocumentSession: ObservableObject {
     func transcriptHighlightRanges(_ lp: LogicalPage) -> [TextHighlight] {
         highlights(onPage: lp.pdfIndex).compactMap { h in
             guard let r = lp.range(of: h) else { return nil }
-            return TextHighlight(range: lp.textRange(for: r), color: h.color.uiColor, underline: h.isUnderlined)
+            return TextHighlight(range: lp.textRange(for: r), color: h.uiColor, underline: h.isUnderlined)
         }
     }
 
@@ -731,7 +736,45 @@ final class DocumentSession: ObservableObject {
     }
 }
 
+extension Highlight {
+    /// The highlight's color in its shade.
+    var uiColor: UIColor { color.uiColor(shade: shade) }
+    var displayColor: Color { Color(uiColor: uiColor) }
+    var hex: String {
+        guard let shade, shade % HighlightColor.shadeCount != 0 else { return color.hex }
+        return color.uiColor(shade: shade).hexString6
+    }
+}
+
+extension UIColor {
+    /// "#RRGGBB"
+    var hexString6: String {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        getRed(&r, green: &g, blue: &b, alpha: &a)
+        func c(_ x: CGFloat) -> Int { Int((min(max(x, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", c(r), c(g), c(b))
+    }
+}
+
 extension HighlightColor {
+    /// Variations of each color: the color, deeper, lighter, and slightly warmer.
+    static let shadeCount = 4
+
+    func uiColor(shade: Int?) -> UIColor {
+        let base = uiColor
+        guard let shade, shade % Self.shadeCount != 0 else { return base }
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard base.getHue(&h, saturation: &s, brightness: &b, alpha: &a) else { return base }
+        switch shade % Self.shadeCount {
+        case 1: return UIColor(hue: h, saturation: min(s * 1.15, 1), brightness: b * 0.78, alpha: a)
+        case 2: return UIColor(hue: h, saturation: s * 0.5, brightness: min(b * 1.08 + 0.06, 1), alpha: a)
+        default:
+            let warmer = (h + (h > 0.5 ? -0.035 : 0.035)).truncatingRemainder(dividingBy: 1)
+            return UIColor(hue: warmer < 0 ? warmer + 1 : warmer, saturation: min(s * 1.05, 1),
+                           brightness: b * 0.9, alpha: a)
+        }
+    }
+
     var uiColor: UIColor {
         switch rawValue {
         case "yellow": UIColor(red: 1.00, green: 0.84, blue: 0.10, alpha: 1)

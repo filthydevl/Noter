@@ -18,7 +18,7 @@ enum PDFExport {
                 body += "<h2>\(esc(label))</h2>"
                 lastLabel = label
             }
-            body += "<div class='quote' style='border-left-color:\(h.color.hex)'>"
+            body += "<div class='quote' style='border-left-color:\(h.hex)'>"
             if let word = session.term(of: h) {
                 body += "<div class='meta'>↓ Definition of “\(esc(Highlight.keywordDisplay(word.text)))”</div>"
                 body += "<u>\(esc(h.text))</u>"
@@ -59,7 +59,7 @@ enum PDFExport {
                 body += "<div class='none'>No highlights tagged yet.</div>"
             } else {
                 for h in k.linked {
-                    body += "<div class='quote' style='border-left-color:\(h.color.hex)'>\(esc(h.text))"
+                    body += "<div class='quote' style='border-left-color:\(h.hex)'>\(esc(h.text))"
                         + "<div class='meta'>\(esc(session.pageLabel(for: h)))</div></div>"
                 }
             }
