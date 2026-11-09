@@ -180,6 +180,23 @@ struct HighlightColor: RawRepresentable, Codable, Hashable, Identifiable {
     var name: String { isCustom ? "Custom" : rawValue.capitalized }
 }
 
+/// How a highlight is drawn.
+enum HighlightStyle {
+    /// Highlighter fill.
+    case fill
+    /// A line under the words (a circled word's definition).
+    case underline
+    /// Highlighted, with a circle around the word (a circled word).
+    case circle
+}
+
+extension CGRect {
+    /// The ellipse a circled word is drawn in: the word roughly fits inside.
+    var circledWordEllipse: CGRect {
+        insetBy(dx: -max(width * 0.16, height * 0.35), dy: -height * 0.32)
+    }
+}
+
 /// Contiguous run of tokens on one raw OCR line (inclusive bounds).
 struct TokenSpan: Codable, Hashable {
     var line: Int
@@ -216,6 +233,8 @@ struct Highlight: Codable, Identifiable, Equatable {
     var isDefinition: Bool { role == "definition" }
     /// Drawn as an underline instead of a fill.
     var isUnderlined: Bool { role == "definition" || role == "underline" }
+
+    var style: HighlightStyle { isTerm ? .circle : (isUnderlined ? .underline : .fill) }
 
     var tokenKeys: [TokenKey] {
         spans.flatMap { s in

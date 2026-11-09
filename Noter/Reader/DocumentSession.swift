@@ -477,7 +477,7 @@ final class DocumentSession: ObservableObject {
     func transcriptHighlightRanges(_ lp: LogicalPage) -> [TextHighlight] {
         highlights(onPage: lp.pdfIndex).compactMap { h in
             guard let r = lp.range(of: h) else { return nil }
-            return TextHighlight(range: lp.textRange(for: r), color: h.uiColor, underline: h.isUnderlined)
+            return TextHighlight(range: lp.textRange(for: r), color: h.uiColor, style: h.style)
         }
     }
 

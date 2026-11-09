@@ -1,10 +1,11 @@
 import UIKit
 
-/// A highlight in the Text view: filled, or underlined (a circled word's definition).
+/// A highlight in the Text view: filled, circled (a circled word) or underlined (its
+/// definition).
 struct TextHighlight {
     let range: NSRange
     let color: UIColor
-    var underline = false
+    var style: HighlightStyle = .fill
 }
 
 /// One book page of the transcript.
@@ -229,12 +230,26 @@ final class TranscriptCell: UICollectionViewCell {
                 let shape = CAShapeLayer()
                 shape.frame = highlightLayer.bounds
                 let rects = textRects(for: h.range)
-                if h.underline {
+                switch h.style {
+                case .underline:
                     shape.fillColor = h.color.withAlphaComponent(0.9).cgColor
                     shape.path = path(rects.map { r in
                         CGRect(x: r.minX, y: r.maxY - 2.5, width: r.width, height: 2.5)
                     }, radius: 1)
-                } else {
+                case .circle:
+                    // Highlighted as usual, plus a circle around it.
+                    shape.fillColor = h.color.withAlphaComponent(0.42).cgColor
+                    shape.path = path(rects, radius: 3)
+                    let ring = CAShapeLayer()
+                    ring.frame = highlightLayer.bounds
+                    let p = UIBezierPath()
+                    for r in rects { p.append(UIBezierPath(ovalIn: r.circledWordEllipse)) }
+                    ring.path = p.cgPath
+                    ring.fillColor = nil
+                    ring.strokeColor = h.color.withAlphaComponent(0.9).cgColor
+                    ring.lineWidth = 2
+                    highlightLayer.addSublayer(ring)
+                case .fill:
                     shape.fillColor = h.color.withAlphaComponent(0.42).cgColor
                     shape.path = path(rects, radius: 3)
                 }

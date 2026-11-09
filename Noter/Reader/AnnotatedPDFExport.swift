@@ -56,6 +56,17 @@ enum AnnotatedPDFExport {
             let geometry = PageGeometry(page: page)
             if ink == nil {
                 for r in h.rects {
+                    if h.style == .circle {
+                        // A circled word: a circle annotation around its highlight.
+                        let bounds = geometry.pageRect(fromNormalized: r.circledWordEllipse)
+                        let a = PDFAnnotation(bounds: bounds, forType: .circle, withProperties: nil)
+                        a.color = h.uiColor
+                        let border = PDFBorder()
+                        border.lineWidth = max(bounds.height * 0.05, 1)
+                        a.border = border
+                        a.userName = "Noter"
+                        page.addAnnotation(a)
+                    }
                     let bounds = geometry.pageRect(fromNormalized: r.insetBy(dx: -0.002, dy: r.height * 0.04))
                     let a = PDFAnnotation(bounds: bounds, forType: h.isUnderlined ? .underline : .highlight,
                                           withProperties: nil)
@@ -111,13 +122,20 @@ enum AnnotatedPDFExport {
                 c.restoreGState()
 
                 // Highlights, multiplied onto the page like a real highlighter; a circled
-                // word's definition as an underline.
+                // word as a circle around it, its definition as an underline.
                 for h in highlights[index] ?? [] {
                     for n in h.rects {
                         var r = CGRect(x: n.minX * size.width, y: n.minY * size.height,
                                        width: n.width * size.width, height: n.height * size.height)
                             .insetBy(dx: -size.width * 0.002, dy: n.height * size.height * 0.04)
                         c.saveGState()
+                        if h.style == .circle {
+                            // The circle around a circled word; its highlight is filled next.
+                            let e = r.circledWordEllipse
+                            c.setStrokeColor(h.uiColor.cgColor)
+                            c.setLineWidth(max(e.height * 0.05, 1))
+                            c.strokeEllipse(in: e)
+                        }
                         if h.isUnderlined {
                             let bar = max(r.height * 0.12, 1)
                             r = CGRect(x: r.minX, y: r.maxY - bar, width: r.width, height: bar)
