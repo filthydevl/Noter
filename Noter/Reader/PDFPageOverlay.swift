@@ -35,6 +35,13 @@ final class PDFPageOverlay: UIView {
 
     /// The page's scribble layer (above the tints, so ink is on top).
     private(set) var ink: PageInkView?
+    /// Scribbling: the ink layer takes the pencil. Otherwise touches go through to the
+    /// PDF, except on the ✓ button.
+    var inkActive = false
+    /// The ✓ next to a circled word whose definition you're underlining.
+    private let confirmButton = UIButton(type: .system)
+    private var confirmRect: CGRect?
+    var onConfirm: (() -> Void)?
 
     static let accent = UIColor(named: "AccentColor") ?? .systemIndigo
     /// The questions highlighter.
@@ -45,8 +52,23 @@ final class PDFPageOverlay: UIView {
         self.pdfView = pdfView
         self.geometry = PageGeometry(page: page)
         super.init(frame: .zero)
-        isUserInteractionEnabled = false
+        isUserInteractionEnabled = true
         backgroundColor = .clear
+
+        var config = UIButton.Configuration.filled()
+        config.image = UIImage(systemName: "checkmark", withConfiguration:
+            UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))
+        config.baseBackgroundColor = HighlightColor.maroon.uiColor
+        config.baseForegroundColor = .white
+        config.cornerStyle = .capsule
+        confirmButton.configuration = config
+        confirmButton.layer.shadowColor = UIColor.black.cgColor
+        confirmButton.layer.shadowOpacity = 0.25
+        confirmButton.layer.shadowRadius = 4
+        confirmButton.layer.shadowOffset = CGSize(width: 0, height: 2)
+        confirmButton.accessibilityLabel = "Save definition"
+        confirmButton.isHidden = true
+        confirmButton.addAction(UIAction { [weak self] _ in self?.onConfirm?() }, for: .primaryActionTriggered)
 
         markLayer.fillColor = Self.markColor.withAlphaComponent(0.16).cgColor
         markUnderlineLayer.fillColor = Self.markColor.withAlphaComponent(0.7).cgColor
@@ -71,7 +93,22 @@ final class PDFPageOverlay: UIView {
         ink?.removeFromSuperview()
         ink = view
         addSubview(view)
+        addSubview(confirmButton) // above the ink
         setNeedsLayout()
+    }
+
+    /// Shows the ✓ next to the circled word at `rect` (normalized), or hides it.
+    func setConfirm(_ rect: CGRect?) {
+        confirmRect = rect
+        if confirmButton.superview == nil { addSubview(confirmButton) }
+        setNeedsLayout()
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if !confirmButton.isHidden, confirmButton.frame.insetBy(dx: -10, dy: -10).contains(point) {
+            return confirmButton
+        }
+        return inkActive ? super.hitTest(point, with: event) : nil
     }
 
     func setHighlights(_ items: [(rect: CGRect, color: UIColor, style: HighlightStyle)]) {
@@ -115,6 +152,22 @@ final class PDFPageOverlay: UIView {
         super.layoutSubviews()
         ink?.frame = bounds
         redraw()
+        layoutConfirm()
+    }
+
+    /// Just right of the circled word (left of it if there's no room), centred on it.
+    private func layoutConfirm() {
+        guard let n = confirmRect, let r = viewRect(n.circledWordEllipse) else {
+            confirmButton.isHidden = true
+            return
+        }
+        let size: CGFloat = 40
+        var x = r.maxX + 8
+        if x + size > bounds.maxX { x = r.minX - 8 - size }
+        let y = min(max(r.midY - size / 2, bounds.minY), bounds.maxY - size)
+        confirmButton.frame = CGRect(x: max(x, bounds.minX), y: y, width: size, height: size)
+        confirmButton.isHidden = false
+        bringSubviewToFront(confirmButton)
     }
 
     override func didMoveToWindow() {

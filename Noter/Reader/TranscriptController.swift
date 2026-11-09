@@ -15,6 +15,8 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
     private var didInitialScroll = false
     private var initialScrollScheduled = false
     private var speechIndexPath: IndexPath?
+    /// The circled word waiting for its definition (its ✓ is shown next to it).
+    private var confirmTerm: Highlight?
     /// Widest the column of text may get (reading options).
     private var maxTextWidth: CGFloat = 740
 
@@ -105,6 +107,8 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
                            marks: s.questionTextRanges(lp), fontSize: s.transcriptFontSize,
                            appearance: s.textAppearance)
             if let p = s.speechPosition, p.slot == lp.slot { cell.setSpeech(token: p.token) }
+            cell.onConfirm = { [weak s] in s?.confirmDefinition() }
+            cell.setConfirm(confirmRange(in: lp))
         } else {
             cell.configurePlaceholder(header: "PDF page \(indexPath.section + 1)", fontSize: s.transcriptFontSize,
                                       appearance: s.textAppearance)
@@ -135,6 +139,20 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
                 collectionView.contentOffset.y = attrs.frame.minY - anchorOffset
             }
         }
+    }
+
+    /// Shows the ✓ next to a circled word waiting for its definition (nil hides it).
+    func showConfirm(_ term: Highlight?) {
+        confirmTerm = term
+        for cell in collectionView.visibleCells {
+            guard let cell = cell as? TranscriptCell, let lp = cell.page else { continue }
+            cell.setConfirm(confirmRange(in: lp))
+        }
+    }
+
+    private func confirmRange(in lp: LogicalPage) -> NSRange? {
+        guard let t = confirmTerm, t.page == lp.pdfIndex, let r = lp.range(of: t) else { return nil }
+        return lp.textRange(for: r)
     }
 
     func refreshHighlights() {

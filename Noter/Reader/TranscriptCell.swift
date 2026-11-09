@@ -33,6 +33,10 @@ final class TranscriptCell: UICollectionViewCell {
     private var speechToken: Int?
     private var previewRange: NSRange?
     private var previewColor: UIColor?
+    /// The ✓ next to a circled word whose definition you're underlining.
+    private let confirmButton = UIButton(type: .system)
+    private var confirmRange: NSRange?
+    var onConfirm: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -72,6 +76,22 @@ final class TranscriptCell: UICollectionViewCell {
             v.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(v)
         }
+
+        var config = UIButton.Configuration.filled()
+        config.image = UIImage(systemName: "checkmark", withConfiguration:
+            UIImage.SymbolConfiguration(pointSize: 16, weight: .bold))
+        config.baseBackgroundColor = HighlightColor.maroon.uiColor
+        config.baseForegroundColor = .white
+        config.cornerStyle = .capsule
+        confirmButton.configuration = config
+        confirmButton.layer.shadowColor = UIColor.black.cgColor
+        confirmButton.layer.shadowOpacity = 0.25
+        confirmButton.layer.shadowRadius = 4
+        confirmButton.layer.shadowOffset = CGSize(width: 0, height: 2)
+        confirmButton.accessibilityLabel = "Save definition"
+        confirmButton.isHidden = true
+        confirmButton.addAction(UIAction { [weak self] _ in self?.onConfirm?() }, for: .primaryActionTriggered)
+        contentView.addSubview(confirmButton)
         let bottom = textView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -28)
         bottom.priority = .init(999)
         NSLayoutConstraint.activate([
@@ -95,6 +115,8 @@ final class TranscriptCell: UICollectionViewCell {
         flashRange = nil
         speechToken = nil
         previewRange = nil
+        confirmRange = nil
+        confirmButton.isHidden = true
         withoutAnimation {
             highlightLayer.sublayers = nil
             markLayer.path = nil
@@ -122,6 +144,27 @@ final class TranscriptCell: UICollectionViewCell {
         redrawFlash()
         redrawPreview()
         _ = drawSpeech()
+        layoutConfirm()
+    }
+
+    /// Shows the ✓ next to the circled word (a range of the page text), or hides it.
+    func setConfirm(_ range: NSRange?) {
+        confirmRange = range
+        setNeedsLayout()
+    }
+
+    private func layoutConfirm() {
+        guard let range = confirmRange, let r = rect(for: range) else {
+            confirmButton.isHidden = true
+            return
+        }
+        let e = textView.convert(r.circledWordEllipse, to: contentView)
+        let size: CGFloat = 38
+        var x = e.maxX + 8
+        if x + size > contentView.bounds.maxX { x = e.minX - 8 - size }
+        confirmButton.frame = CGRect(x: max(x, 0), y: e.midY - size / 2, width: size, height: size)
+        confirmButton.isHidden = false
+        contentView.bringSubviewToFront(confirmButton)
     }
 
     // MARK: Content

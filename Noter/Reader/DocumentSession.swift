@@ -75,7 +75,12 @@ final class DocumentSession: ObservableObject {
     /// highlights stay; they just aren't listed or offered as tags.
     @Published private(set) var removedKeywords: Set<String> = []
     /// Set right after you circle a word: the next highlight is its definition.
-    @Published private(set) var pendingTerm: UUID?
+    @Published private(set) var pendingTerm: UUID? {
+        didSet { if oldValue != pendingTerm { updateConfirm() } }
+    }
+    /// The underlines made so far for the circled word's definition (saved as one
+    /// definition when you tap ✓).
+    @Published private(set) var definitionParts: [UUID] = []
     /// Find in book (the search panel).
     private(set) lazy var search = BookSearch(session: self)
     weak var pdfController: PDFReaderController?
@@ -405,10 +410,10 @@ final class DocumentSession: ObservableObject {
             id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: range), rects: lp.lineRects(for: range),
             text: lp.string(for: range), color: color, created: Date())
         if let term = pendingTerm, let word = highlights.first(where: { $0.id == term }) {
+            // Part of the circled word's definition: keep collecting until ✓.
             h.color = word.color
             h.role = "definition"
             h.termID = term
-            pendingTerm = nil
         } else {
             if underline { h.role = "underline" }
             // Manual colors: same color = same idea; a new shade for each new point.
@@ -425,7 +430,7 @@ final class DocumentSession: ObservableObject {
         highlights.append(h)
         highlightsChanged()
         if h.isDefinition {
-            showToast("Definition saved")
+            definitionParts.append(h.id)
         } else if palette.autoSwitch {
             color = palette.next(after: color)
         }
@@ -435,13 +440,51 @@ final class DocumentSession: ObservableObject {
     /// highlight will be its definition.
     func addTerm(on lp: LogicalPage, range: ClosedRange<Int>) {
         guard !lp.tokens.isEmpty, range.upperBound < lp.tokens.count, range.lowerBound >= 0 else { return }
+        // Circling another word while underlining: the definition so far is saved first.
+        if pendingTerm != nil { confirmDefinition() }
         let h = Highlight(
             id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: range), rects: lp.lineRects(for: range),
             text: lp.string(for: range), color: .maroon, created: Date(), role: "term")
         pushUndo()
         highlights.append(h)
         highlightsChanged()
+        definitionParts = []
         pendingTerm = h.id
+    }
+
+    /// ✓: everything underlined since circling the word becomes its definition — one
+    /// definition per page, its lines in reading order.
+    func confirmDefinition() {
+        guard let term = pendingTerm else { return }
+        let parts = sortedHighlights().filter { definitionParts.contains($0.id) && $0.termID == term }
+        var merged: [Highlight] = []
+        for (_, group) in Dictionary(grouping: parts, by: \.page).sorted(by: { $0.key < $1.key }) {
+            guard var first = group.first else { continue }
+            for p in group.dropFirst() {
+                first.spans += p.spans
+                first.rects += p.rects
+                first.text += " " + p.text
+                if first.note == nil { first.note = p.note }
+            }
+            merged.append(first)
+        }
+        let partIDs = Set(parts.map(\.id))
+        definitionParts = []
+        pendingTerm = nil
+        guard !parts.isEmpty else { return }
+        if merged.count < parts.count {
+            highlights.removeAll { partIDs.contains($0.id) }
+            highlights += merged
+            highlightsChanged()
+        }
+        showToast("Definition saved")
+    }
+
+    /// Lets the controllers show / hide the ✓ next to the circled word.
+    private func updateConfirm() {
+        let term = pendingTerm.flatMap { id in highlights.first { $0.id == id } }
+        pdfController?.showConfirm(term)
+        transcriptController?.showConfirm(term)
     }
 
     /// The word whose definition the next highlight will be.
@@ -449,15 +492,27 @@ final class DocumentSession: ObservableObject {
         pendingTerm.flatMap { id in highlights.first { $0.id == id } }.map { Highlight.keywordDisplay($0.text) }
     }
 
+    /// ✕: stop without a definition (what you underlined for it is discarded).
     func cancelPendingTerm() {
+        let parts = Set(definitionParts)
+        definitionParts = []
         pendingTerm = nil
+        if highlights.contains(where: { parts.contains($0.id) }) {
+            pushUndo()
+            highlights.removeAll { parts.contains($0.id) }
+            highlightsChanged()
+        }
     }
 
     func removeHighlights(_ ids: Set<UUID>, registerUndo: Bool = true) {
         guard !ids.isEmpty else { return }
         if registerUndo { pushUndo() }
         highlights.removeAll { ids.contains($0.id) }
-        if let term = pendingTerm, ids.contains(term) { pendingTerm = nil }
+        definitionParts.removeAll { ids.contains($0) }
+        if let term = pendingTerm, ids.contains(term) {
+            definitionParts = []
+            pendingTerm = nil
+        }
         highlightsChanged()
     }
 
@@ -523,6 +578,13 @@ final class DocumentSession: ObservableObject {
         }
         highlights = previous
         canUndo = !undoStack.isEmpty
+        // A definition in progress follows the undo too.
+        let ids = Set(highlights.map(\.id))
+        definitionParts.removeAll { !ids.contains($0) }
+        if let term = pendingTerm, !ids.contains(term) {
+            definitionParts = []
+            pendingTerm = nil
+        }
         highlightsChanged()
     }
 

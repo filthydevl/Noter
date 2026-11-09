@@ -33,6 +33,8 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     private var speech: SpeechState?
     private var preview: (page: Int, rects: [CGRect], color: UIColor)?
     private var pendingFlash: (page: Int, rects: [CGRect], date: Date)?
+    /// The circled word whose definition is being underlined (its ✓ is shown next to it).
+    private var confirm: (page: Int, rect: CGRect)?
 
     private struct SpeechState {
         let page: Int
@@ -228,6 +230,17 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
 
     // MARK: - Highlights
 
+    /// Shows the ✓ next to a circled word waiting for its definition (nil hides it).
+    func showConfirm(_ term: Highlight?) {
+        if let term, let first = term.rects.first {
+            let rect = term.rects.dropFirst().reduce(first) { $0.union($1) }
+            confirm = (term.page, rect)
+        } else {
+            confirm = nil
+        }
+        for (index, overlay) in overlays { overlay.setConfirm(confirm?.page == index ? confirm?.rect : nil) }
+    }
+
     /// Highlights changed: redraw them on the pages on screen (the others draw theirs
     /// when they appear).
     func syncHighlights() {
@@ -268,6 +281,8 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
             ink.onMessage = { [weak s] in s?.showToast($0) }
             overlay.attachInk(ink)
         }
+        overlay.onConfirm = { [weak s] in s?.confirmDefinition() }
+        overlay.setConfirm(confirm?.page == index ? confirm?.rect : nil)
         applyScribble(to: overlay)
         overlay.setHighlights(highlightItems(onPage: index))
         overlay.setMarks(markRects(onPage: index))
@@ -315,7 +330,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     private func applyScribble(to overlay: PDFPageOverlay) {
         guard let s = session else { return }
         let scribbling = s.penMode == .scribble
-        overlay.isUserInteractionEnabled = scribbling
+        overlay.inkActive = scribbling
         let tool: PKTool
         if s.tool == .erase {
             tool = PKEraserTool(s.scribble.eraser.pk)

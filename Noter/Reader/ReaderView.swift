@@ -96,17 +96,39 @@ struct ReaderView: View {
             }
         }
         .overlay(alignment: .top) {
-            // Just circled a word: the next highlight is its definition.
+            // Just circled a word: underline its definition (as many lines as you like),
+            // then ✓ saves it.
             if let word = session.pendingTermText {
+                let parts = session.definitionParts.count
                 HStack(spacing: 10) {
                     Image(systemName: "arrow.turn.down.right")
                         .foregroundStyle(HighlightColor.maroon.color)
-                    Text("Underline the definition of “\(word)”")
+                    Text(parts == 0 ? "Underline the definition of “\(word)”"
+                         : "Definition of “\(word)” · \(parts) part\(parts == 1 ? "" : "s") — keep going or tap ✓")
                         .font(.subheadline.weight(.medium))
                         .lineLimit(1)
-                    Button("Skip") { session.cancelPendingTerm() }
-                        .font(.subheadline.weight(.semibold))
-                        .accessibilityLabel("Skip the definition")
+                    Button {
+                        session.confirmDefinition()
+                    } label: {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(HighlightColor.maroon.color, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Save definition")
+                    Button {
+                        session.cancelPendingTerm()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 30, height: 30)
+                            .background(Color.primary.opacity(0.08), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(parts == 0 ? "Skip the definition" : "Discard the definition")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
