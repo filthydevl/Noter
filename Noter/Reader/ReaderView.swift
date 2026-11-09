@@ -80,6 +80,7 @@ struct ReaderView: View {
         .overlay(alignment: .bottom) {
             if session.penMode == .scribble && session.viewMode != .transcript {
                 ScribbleToolbar(session: session, settings: session.scribble)
+                    .padding(.horizontal, 74) // room for the undo button in the corner
                     .padding(.bottom, 18)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -115,6 +116,12 @@ struct ReaderView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            UndoButton(session: session)
+                .padding(.trailing, panel == nil ? 18 : 390)
+                .padding(.bottom, 18)
+        }
+        .animation(.snappy(duration: 0.28), value: panel)
         .animation(.snappy(duration: 0.25), value: session.pendingTerm)
         .animation(.snappy(duration: 0.25), value: session.penMode)
         .overlay(alignment: .trailing) {
@@ -246,8 +253,33 @@ struct ReaderView: View {
     }
 }
 
-/// Floating vertical toolbar on the left: highlighter, eraser, color, undo, highlights,
-/// key words, questions.
+/// Undo in the bottom-right corner: your last highlight change, or your last ink
+/// change while scribbling.
+private struct UndoButton: View {
+    @ObservedObject var session: DocumentSession
+
+    var body: some View {
+        let scribbling = session.penMode == .scribble && session.viewMode != .transcript
+        let enabled = scribbling || session.canUndo
+        Button {
+            if scribbling { session.inkUndo.undo() } else { session.undo() }
+        } label: {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 19, weight: .semibold))
+                .frame(width: 52, height: 52)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+        .accessibilityLabel("Undo")
+    }
+}
+
+/// Floating vertical toolbar on the left: highlighter, eraser, color, auto color switch,
+/// highlights, notes, key words, questions (undo is in the bottom-right corner).
 private struct ToolRail: View {
     @ObservedObject var session: DocumentSession
     @ObservedObject var scribble: ScribbleSettings
@@ -323,16 +355,6 @@ private struct ToolRail: View {
                     session.showToast(palette.autoSwitch ? "Auto color switch: a new color for every highlight"
                                       : "Manual colors")
                 }
-            }
-
-            divider
-
-            if scribbling {
-                railButton("arrow.uturn.backward", label: "Undo") { session.inkUndo.undo() }
-            } else {
-                railButton("arrow.uturn.backward", label: "Undo") { session.undo() }
-                    .disabled(!session.canUndo)
-                    .opacity(session.canUndo ? 1 : 0.35)
             }
 
             divider
