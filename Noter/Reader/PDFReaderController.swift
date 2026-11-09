@@ -237,7 +237,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     private func highlightItems(onPage index: Int) -> [(rect: CGRect, color: UIColor, underline: Bool)] {
         guard let s = session else { return [] }
         return s.highlights(onPage: index).flatMap { h in
-            h.rects.map { (rect: $0, color: h.color.uiColor, underline: h.isDefinition) }
+            h.rects.map { (rect: $0, color: h.color.uiColor, underline: h.isUnderlined) }
         }
     }
 
@@ -266,7 +266,6 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
             ink.settings = s.scribble
             ink.onActivity = { [weak s] in s?.noteUserActivity() }
             ink.onMessage = { [weak s] in s?.showToast($0) }
-            ink.onStrokesChanged = { [weak s] in s?.inkStrokesChanged(page: index, strokes: $0) }
             overlay.attachInk(ink)
         }
         applyScribble(to: overlay)
@@ -474,13 +473,24 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         clearPreview()
     }
 
-    /// A finished highlighter stroke: a loop drawn around a word (up to 4 words) marks
-    /// it as a word to define; anything else highlights the words it went over.
+    /// A finished highlighter stroke:
+    /// * a tight loop around one word or a short phrase on one line marks it as a word to
+    ///   define (a loop around more — a paragraph — just highlights what's inside);
+    /// * a line drawn just under words underlines them (a definition, if a circled word
+    ///   is waiting for one);
+    /// * anything else highlights the words it went over.
     @MainActor
     private static func apply(_ points: [CGPoint], _ pages: [LogicalPage], _ s: DocumentSession) {
-        if let m = InkMarkDetector.detect(points, in: pages), m.kind == .circle, m.range.count <= 4 {
-            s.addTerm(on: m.page, range: m.range)
-            return
+        guard !pages.isEmpty else { return }
+        // The book page the stroke is on (the half of a two-page spread).
+        let midX = points.map(\.x).reduce(0, +) / CGFloat(max(points.count, 1))
+        let lp = pages.first { $0.region.minX <= midX && midX <= $0.region.maxX } ?? pages[0]
+        let tokens = lp.tokens.enumerated().map { (index: $0.offset, rect: $0.element.rect) }
+        switch StrokeShapeDetector.action(points, tokens: tokens) {
+        case .term(let r): s.addTerm(on: lp, range: r); return
+        case .highlight(let r): s.addHighlight(on: lp, range: r); return
+        case .underline(let r): s.addHighlight(on: lp, range: r, underline: true); return
+        case .none: break
         }
         if let sel = PageHitTester.selection(for: points, in: pages) {
             s.addHighlight(on: sel.page, range: sel.range)

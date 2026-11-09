@@ -27,6 +27,8 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         var erased = false
         var length: CGFloat = 0
         var last: CGPoint?
+        /// The stroke in the cell's text view coordinates (for circles / underlines).
+        var points: [CGPoint] = []
     }
     private var stroke: Stroke?
 
@@ -316,6 +318,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             if let last = st.last { st.length += hypot(p.x - last.x, p.y - last.y) }
             st.last = p
             inkPath.addLine(to: p)
+            st.points.append(cell.textView.convert(p, from: collectionView))
             if let hit = cell.hit(at: cell.textView.convert(p, from: collectionView)) {
                 st.hits.append(hit)
                 touched.append(hit.token)
@@ -350,11 +353,31 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         }
         stroke = nil
         let cell = collectionView.cellForItem(at: st.indexPath) as? TranscriptCell
-        if s.tool == .pen, st.length > 6,
-           let r = st.range ?? Snapper.range(for: st.hits, referenceWidth: cell?.textWidth ?? 600) {
+        defer { cell?.showPreview(nil, color: nil) }
+        guard s.tool == .pen, st.length > 6 else { return }
+        // A circle around a word / phrase, a loop around a paragraph, or an underline.
+        if let cell, let shape = Self.shapeAction(st.points, cell) {
+            switch shape {
+            case .term(let r): s.addTerm(on: st.page, range: r)
+            case .highlight(let r): s.addHighlight(on: st.page, range: r)
+            case .underline(let r): s.addHighlight(on: st.page, range: r, underline: true)
+            case .none: break
+            }
+            return
+        }
+        if let r = st.range ?? Snapper.range(for: st.hits, referenceWidth: cell?.textWidth ?? 600) {
             s.addHighlight(on: st.page, range: r)
         }
-        cell?.showPreview(nil, color: nil)
+    }
+
+    /// What a highlighter stroke's shape means here, if it's a circle or an underline.
+    private static func shapeAction(_ points: [CGPoint], _ cell: TranscriptCell) -> StrokeShapeDetector.Action? {
+        let xs = points.map(\.x), ys = points.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { return nil }
+        let area = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY).insetBy(dx: -40, dy: -60)
+        let action = StrokeShapeDetector.action(points, tokens: cell.tokenRects(in: area))
+        if case .none = action { return nil }
+        return action
     }
 
     private func cancelStroke() {

@@ -99,7 +99,7 @@ struct ReaderView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "arrow.turn.down.right")
                         .foregroundStyle(HighlightColor.maroon.color)
-                    Text("Highlight the definition of “\(word)”")
+                    Text("Underline the definition of “\(word)”")
                         .font(.subheadline.weight(.medium))
                         .lineLimit(1)
                     Button("Skip") { session.cancelPendingTerm() }

@@ -9,10 +9,6 @@ import PDFKit
 final class DocumentSession: ObservableObject {
     @Published var info: DocumentInfo
     @Published private(set) var highlights: [Highlight] = []
-    /// Words you circled or underlined with the scribble pen (key word mentions).
-    @Published private(set) var inkMarks: [Highlight] = []
-    /// Scribble strokes already looked at, per page.
-    private var inkAnalyzed: [Int: Set<Date>] = [:]
     @Published var viewMode: ViewMode {
         didSet {
             guard oldValue != viewMode else { return }
@@ -117,7 +113,6 @@ final class DocumentSession: ObservableObject {
         self.lastReadingMode = startMode
         self.currentPage = max(0, min(info.lastPage, pdf.pageCount - 1))
         self.highlights = Storage.load([Highlight].self, from: Storage.highlightsURL(info.id)) ?? []
-        self.inkMarks = Storage.load([Highlight].self, from: DocumentSession.inkMarksURL(info.id)) ?? []
 
         rebuildIndex()
         speech.session = self
@@ -399,7 +394,8 @@ final class DocumentSession: ObservableObject {
     /// merged, so one word can be a note of its own inside a longer highlight); the very
     /// same words in the same color twice are ignored. Right after you circle a word,
     /// the next highlight becomes its definition (an underline linked to the word).
-    func addHighlight(on lp: LogicalPage, range: ClosedRange<Int>) {
+    /// `underline`: you drew a line under the words.
+    func addHighlight(on lp: LogicalPage, range: ClosedRange<Int>, underline: Bool = false) {
         guard !lp.tokens.isEmpty, range.upperBound < lp.tokens.count, range.lowerBound >= 0 else { return }
         var h = Highlight(
             id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: range), rects: lp.lineRects(for: range),
@@ -409,6 +405,8 @@ final class DocumentSession: ObservableObject {
             h.role = "definition"
             h.termID = term
             pendingTerm = nil
+        } else if underline {
+            h.role = "underline"
         }
         let duplicate = highlights(onPage: lp.pdfIndex).contains {
             lp.range(of: $0) == range && $0.color == h.color && $0.role == h.role
@@ -470,7 +468,7 @@ final class DocumentSession: ObservableObject {
     func transcriptHighlightRanges(_ lp: LogicalPage) -> [TextHighlight] {
         highlights(onPage: lp.pdfIndex).compactMap { h in
             guard let r = lp.range(of: h) else { return nil }
-            return TextHighlight(range: lp.textRange(for: r), color: h.color.uiColor, underline: h.isDefinition)
+            return TextHighlight(range: lp.textRange(for: r), color: h.color.uiColor, underline: h.isUnderlined)
         }
     }
 
@@ -601,7 +599,7 @@ final class DocumentSession: ObservableObject {
         let sorted = sortedHighlights()
         var order: [String] = []
         var mentions: [String: [Highlight]] = [:]
-        for h in bookOrder(highlights + inkMarks) where h.isKeyword {
+        for h in sorted where h.isKeyword {
             let key = h.keywordKey
             guard !key.isEmpty else { continue }
             if mentions[key] == nil { order.append(key) }
@@ -628,56 +626,6 @@ final class DocumentSession: ObservableObject {
         pushUndo()
         highlights[i].tags = tags.isEmpty ? nil : tags
         highlightsChanged()
-    }
-
-    // MARK: - Circled / underlined words (scribble pen → key words)
-
-    private static func inkMarksURL(_ id: UUID) -> URL {
-        Storage.folder(id).appendingPathComponent("inkmarks.json")
-    }
-
-    /// The scribbles on a page changed: words newly circled or underlined become key
-    /// word mentions; mentions whose stroke was erased go away.
-    func inkStrokesChanged(page: Int, strokes: [InkStrokeInfo]) {
-        let dates = Set(strokes.map(\.date))
-        var changed = false
-        let before = inkMarks.count
-        inkMarks.removeAll { $0.page == page && $0.inkStroke.map { !dates.contains($0) } == true }
-        changed = inkMarks.count != before
-        var analyzed = inkAnalyzed[page, default: []].intersection(dates)
-        // Not recognized yet: look again once the page has text.
-        if let pages = logicalPages(page) {
-            let known = Set(inkMarks.filter { $0.page == page }.compactMap(\.inkStroke))
-            for s in strokes where !analyzed.contains(s.date) && !known.contains(s.date) {
-                analyzed.insert(s.date)
-                guard let m = InkMarkDetector.detect(s.points, in: pages) else { continue }
-                let lp = m.page
-                inkMarks.append(Highlight(
-                    id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: m.range), rects: lp.lineRects(for: m.range),
-                    text: lp.string(for: m.range), color: highlightColor(like: s.color), created: Date(),
-                    inkMark: m.kind.rawValue, inkStroke: s.date))
-                changed = true
-                showToast("“\(Highlight.keywordDisplay(lp.string(for: m.range)))” added to key words")
-            }
-        }
-        inkAnalyzed[page] = analyzed
-        guard changed else { return }
-        Storage.save(inkMarks, to: Self.inkMarksURL(info.id))
-        HighlightExporter.export(self)
-    }
-
-    /// The highlight color closest to an ink color (black / gray ink: your highlight color).
-    private func highlightColor(like ink: UIColor) -> HighlightColor {
-        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
-        ink.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
-        guard saturation > 0.25, brightness > 0.25 else { return color }
-        switch hue {
-        case ..<0.05, 0.85...: return .pink
-        case ..<0.11: return .orange
-        case ..<0.2: return .yellow
-        case ..<0.47: return .green
-        default: return .blue
-        }
     }
 
     // MARK: - Save PDF

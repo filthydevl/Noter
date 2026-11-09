@@ -275,6 +275,13 @@ struct HighlightRow: View {
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
                                 .background(HighlightColor.maroon.color.opacity(0.12), in: Capsule())
+                        } else if highlight.role == "underline" {
+                            Text(colorName.map { "Underline · \($0)" } ?? "Underline")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(highlight.color.color.opacity(0.3), in: Capsule())
                         } else if let colorName {
                             Text(colorName)
                                 .font(.caption2.weight(.semibold))
@@ -291,7 +298,7 @@ struct HighlightRow: View {
                         }
                     }
                     Text(highlight.text)
-                        .underline(highlight.isDefinition, color: HighlightColor.maroon.color)
+                        .underline(highlight.isUnderlined, color: highlight.color.color)
                         .font(.system(.callout, design: .serif))
                         .foregroundStyle(.primary)
                         .lineLimit(8)

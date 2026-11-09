@@ -57,9 +57,9 @@ enum AnnotatedPDFExport {
             if ink == nil {
                 for r in h.rects {
                     let bounds = geometry.pageRect(fromNormalized: r.insetBy(dx: -0.002, dy: r.height * 0.04))
-                    let a = PDFAnnotation(bounds: bounds, forType: h.isDefinition ? .underline : .highlight,
+                    let a = PDFAnnotation(bounds: bounds, forType: h.isUnderlined ? .underline : .highlight,
                                           withProperties: nil)
-                    a.color = h.color.uiColor.withAlphaComponent(h.isDefinition ? 1 : 0.5)
+                    a.color = h.color.uiColor.withAlphaComponent(h.isUnderlined ? 1 : 0.5)
                     // Corners relative to the annotation: upper-left, upper-right, lower-left, lower-right.
                     a.quadrilateralPoints = [
                         CGPoint(x: 0, y: bounds.height), CGPoint(x: bounds.width, y: bounds.height),
@@ -118,7 +118,7 @@ enum AnnotatedPDFExport {
                                        width: n.width * size.width, height: n.height * size.height)
                             .insetBy(dx: -size.width * 0.002, dy: n.height * size.height * 0.04)
                         c.saveGState()
-                        if h.isDefinition {
+                        if h.isUnderlined {
                             let bar = max(r.height * 0.12, 1)
                             r = CGRect(x: r.minX, y: r.maxY - bar, width: r.width, height: bar)
                             c.setFillColor(h.color.uiColor.cgColor)

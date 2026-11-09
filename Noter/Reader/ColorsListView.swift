@@ -86,7 +86,7 @@ struct ColorsListView: View {
                         ColorRow(color: .maroon, initialName: palette.name(.maroon) ?? "", count: counts[.maroon] ?? 0,
                                  selected: false, removable: false, placeholder: "Word",
                                  pick: {}, rename: { palette.setName($0, for: .maroon) }, remove: {})
-                        Text("Circle a word with the highlighter: it's highlighted in this color and your next highlight becomes its definition (underlined).")
+                        Text("Circle a word or short phrase with the highlighter (PDF or Text view): it’s highlighted in this color, and the next thing you underline (or highlight) becomes its definition.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

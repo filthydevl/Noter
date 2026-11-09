@@ -203,19 +203,16 @@ struct Highlight: Codable, Identifiable, Equatable {
     var tags: [String]?
     /// Your note / comment on this highlight (the Notes panel).
     var note: String?
-    /// Set for a word you circled or underlined with the scribble pen ("circle" /
-    /// "underline"): it's a key word mention, not a highlight on the page.
-    var inkMark: String?
-    /// The scribble stroke that marked it (its creation time), so erasing the stroke
-    /// removes the mention.
-    var inkStroke: Date?
-    /// "term": a word you circled with the highlighter. "definition": the highlight you
-    /// made right after, drawn as an underline and linked to the word by `termID`.
+    /// "term": a word you circled with the highlighter. "definition": the highlight
+    /// made right after it, linked to the word by `termID`. "underline": words you
+    /// underlined with the highlighter (no word to define was waiting).
     var role: String?
     var termID: UUID?
 
     var isTerm: Bool { role == "term" }
     var isDefinition: Bool { role == "definition" }
+    /// Drawn as an underline instead of a fill.
+    var isUnderlined: Bool { role == "definition" || role == "underline" }
 
     var tokenKeys: [TokenKey] {
         spans.flatMap { s in

@@ -282,6 +282,23 @@ final class TranscriptCell: UICollectionViewCell {
         CATransaction.commit()
     }
 
+    /// The words in an area (text view coordinates) with their boxes, for reading the
+    /// shape of a highlighter stroke (circle / underline).
+    func tokenRects(in area: CGRect) -> [(index: Int, rect: CGRect)] {
+        guard let page, !page.tokenRanges.isEmpty else { return [] }
+        let lm = textView.layoutManager
+        guard lm.numberOfGlyphs > 0 else { return [] }
+        let glyphs = lm.glyphRange(forBoundingRect: area, in: textView.textContainer)
+        let chars = lm.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        guard chars.length > 0, let lo = page.tokenIndex(atUTF16: chars.location),
+              let hi = page.tokenIndex(atUTF16: NSMaxRange(chars) - 1), lo <= hi else { return [] }
+        return (lo...hi).compactMap { i in
+            let r = page.tokenRanges[i]
+            guard r.length > 0, let rect = rect(for: r) else { return nil }
+            return (index: i, rect: rect)
+        }
+    }
+
     /// The first word on the wrapped line at `y` (text view coordinates), for keeping the
     /// PDF and Text views on the same spot.
     func token(atLineY y: CGFloat) -> Int? {
