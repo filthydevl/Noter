@@ -476,8 +476,8 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     /// A finished highlighter stroke:
     /// * a tight loop around one word or a short phrase on one line marks it as a word to
     ///   define (a loop around more — a paragraph — just highlights what's inside);
-    /// * a line drawn just under words underlines them (a definition, if a circled word
-    ///   is waiting for one);
+    /// * right after circling a word, a line drawn just under words underlines them as
+    ///   its definition;
     /// * anything else highlights the words it went over.
     @MainActor
     private static func apply(_ points: [CGPoint], _ pages: [LogicalPage], _ s: DocumentSession) {
@@ -489,8 +489,12 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         switch StrokeShapeDetector.action(points, tokens: tokens) {
         case .term(let r): s.addTerm(on: lp, range: r); return
         case .highlight(let r): s.addHighlight(on: lp, range: r); return
-        case .underline(let r): s.addHighlight(on: lp, range: r, underline: true); return
-        case .none: break
+        // A line under words only means something right after circling a word: it's
+        // that word's definition. Otherwise it's an ordinary highlight stroke.
+        case .underline(let r) where s.pendingTerm != nil:
+            s.addHighlight(on: lp, range: r, underline: true)
+            return
+        case .underline, .none: break
         }
         if let sel = PageHitTester.selection(for: points, in: pages) {
             s.addHighlight(on: sel.page, range: sel.range)

@@ -356,14 +356,21 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         defer { cell?.showPreview(nil, color: nil) }
         guard s.tool == .pen, st.length > 6 else { return }
         // A circle around a word / phrase, a loop around a paragraph, or an underline.
+        // (A line under words only counts right after circling a word: its definition.)
         if let cell, let shape = Self.shapeAction(st.points, cell) {
             switch shape {
-            case .term(let r): s.addTerm(on: st.page, range: r)
-            case .highlight(let r): s.addHighlight(on: st.page, range: r)
-            case .underline(let r): s.addHighlight(on: st.page, range: r, underline: true)
-            case .none: break
+            case .term(let r):
+                s.addTerm(on: st.page, range: r)
+                return
+            case .highlight(let r):
+                s.addHighlight(on: st.page, range: r)
+                return
+            case .underline(let r) where s.pendingTerm != nil:
+                s.addHighlight(on: st.page, range: r, underline: true)
+                return
+            case .underline, .none:
+                break
             }
-            return
         }
         if let r = st.range ?? Snapper.range(for: st.hits, referenceWidth: cell?.textWidth ?? 600) {
             s.addHighlight(on: st.page, range: r)
