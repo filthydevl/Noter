@@ -10,7 +10,7 @@ struct NotesListView: View {
     @State private var share: ShareItem?
 
     var body: some View {
-        let all = session.sortedHighlights()
+        let all = session.groupedHighlights()
         let noted = all.filter { $0.noteText != nil }.count
         let items = onlyWithNotes ? all.filter { $0.noteText != nil } : all
         let keywords = session.keywordEntries()
@@ -76,6 +76,10 @@ struct NotesListView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(items) { h in
+                            VStack(spacing: 6) {
+                            if let word = session.term(of: h) {
+                                DefinitionArrow(word: Highlight.keywordDisplay(word.text))
+                            }
                             HighlightRow(
                                 highlight: h,
                                 label: session.pageLabel(for: h),
@@ -84,7 +88,9 @@ struct NotesListView: View {
                                 open: { session.open(h) },
                                 toggleTag: { session.toggleTag($0, on: h.id) },
                                 delete: { session.removeHighlights([h.id]) },
-                                editNote: { session.setNote($0, on: h.id) })
+                                editNote: { session.setNote($0, on: h.id) },
+                                colorName: session.palette.name(h.color))
+                            }
                         }
                     }
                     .padding(.horizontal, 14)

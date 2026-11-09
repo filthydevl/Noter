@@ -6,7 +6,7 @@ import Foundation
 enum HighlightExporter {
     @MainActor
     static func export(_ session: DocumentSession) {
-        let items = session.sortedHighlights()
+        let items = session.groupedHighlights()
         let url = Storage.exportURL(for: session.info)
         if items.isEmpty {
             try? FileManager.default.removeItem(at: url)
@@ -25,6 +25,13 @@ enum HighlightExporter {
             if label != lastLabel {
                 md += "\n## \(label)\n\n"
                 lastLabel = label
+            }
+            if let word = session.term(of: h) {
+                md += "↓ _Definition of “\(Highlight.keywordDisplay(word.text))”_\n\n"
+            } else if h.isTerm {
+                md += "**Word:** \(Highlight.keywordDisplay(h.text))\n\n"
+            } else if let name = session.palette.name(h.color) {
+                md += "_\(name)_\n\n"
             }
             let quoted = h.text
                 .split(separator: "\n", omittingEmptySubsequences: true)

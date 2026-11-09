@@ -8,7 +8,7 @@ import SwiftUI
 enum PDFExport {
     /// Highlights with their tags and notes (`onlyWithNotes`: the Notes panel's export).
     static func highlights(_ session: DocumentSession, onlyWithNotes: Bool = false) -> URL? {
-        let items = session.sortedHighlights().filter { !onlyWithNotes || $0.noteText != nil }
+        let items = session.groupedHighlights().filter { !onlyWithNotes || $0.noteText != nil }
         let keywords = Dictionary(uniqueKeysWithValues: session.keywordEntries().map { ($0.id, $0) })
         var body = ""
         var lastLabel: String?
@@ -18,7 +18,18 @@ enum PDFExport {
                 body += "<h2>\(esc(label))</h2>"
                 lastLabel = label
             }
-            body += "<div class='quote' style='border-left-color:\(h.color.hex)'>\(esc(h.text))"
+            body += "<div class='quote' style='border-left-color:\(h.color.hex)'>"
+            if let word = session.term(of: h) {
+                body += "<div class='meta'>↓ Definition of “\(esc(Highlight.keywordDisplay(word.text)))”</div>"
+                body += "<u>\(esc(h.text))</u>"
+            } else if h.isTerm {
+                body += "<b>\(esc(h.text))</b>"
+            } else {
+                if let name = session.palette.name(h.color) {
+                    body += "<div class='meta'>\(esc(name))</div>"
+                }
+                body += esc(h.text)
+            }
             let tags = h.tagKeys.compactMap { keywords[$0] }
             if !tags.isEmpty {
                 body += "<div class='tags'>" + tags.map(tag).joined(separator: " ") + "</div>"

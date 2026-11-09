@@ -49,7 +49,7 @@ final class SessionHolder: ObservableObject {
 
 /// The slide-in panel on the right.
 enum SidePanel {
-    case highlights, notes, keywords, questions, search
+    case highlights, notes, keywords, questions, search, colors
 }
 
 struct ReaderView: View {
@@ -73,7 +73,7 @@ struct ReaderView: View {
             // The player sits right above the tool rail.
             VStack(alignment: .leading, spacing: 12) {
                 SpeechControlView(speech: session.speech) { session.showReadingPosition() }
-                ToolRail(session: session, scribble: session.scribble, panel: $panel)
+                ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel)
             }
             .padding(.leading, 14)
         }
@@ -93,6 +93,29 @@ struct ReaderView: View {
                     .transition(.opacity)
             }
         }
+        .overlay(alignment: .top) {
+            // Just circled a word: the next highlight is its definition.
+            if let word = session.pendingTermText {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.turn.down.right")
+                        .foregroundStyle(HighlightColor.maroon.color)
+                    Text("Highlight the definition of “\(word)”")
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                    Button("Skip") { session.cancelPendingTerm() }
+                        .font(.subheadline.weight(.semibold))
+                        .accessibilityLabel("Skip the definition")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(HighlightColor.maroon.color.opacity(0.5)))
+                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                .padding(.top, 10)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: session.pendingTerm)
         .animation(.snappy(duration: 0.25), value: session.penMode)
         .overlay(alignment: .trailing) {
             if let panel {
@@ -138,6 +161,8 @@ struct ReaderView: View {
             QuestionsListView(session: session, index: session.questions) { self.panel = nil }
         case .search:
             SearchListView(session: session, search: session.search) { self.panel = nil }
+        case .colors:
+            ColorsListView(session: session, palette: session.palette) { self.panel = nil }
         }
     }
 
@@ -189,16 +214,16 @@ struct ReaderView: View {
 
             Menu {
                 Button {
-                    session.savePDF(includeScribbles: false) { savedPDF = ShareItem(url: $0) }
+                    session.savePDF(baked: true) { savedPDF = ShareItem(url: $0) }
                 } label: {
-                    Label("PDF with highlights", systemImage: "highlighter")
+                    Label("Save PDF — highlights + scribbles", systemImage: "square.and.arrow.down")
                 }
                 Button {
-                    session.savePDF(includeScribbles: true) { savedPDF = ShareItem(url: $0) }
+                    session.savePDF(baked: false) { savedPDF = ShareItem(url: $0) }
                 } label: {
-                    Label("PDF with highlights + scribbles", systemImage: "pencil.tip")
+                    Label("Editable highlights only", systemImage: "highlighter")
                 }
-                Text("Highlights stay real PDF highlights (notes become their comments). Scribbles are baked onto the pages only if you choose so.")
+                Text("Save PDF prints your highlights and scribbles onto the pages. “Editable” keeps highlights as PDF highlights other apps can change, without scribbles. Notes become sticky notes.")
             } label: {
                 if session.isSavingPDF {
                     ProgressView().controlSize(.small)
@@ -226,6 +251,7 @@ struct ReaderView: View {
 private struct ToolRail: View {
     @ObservedObject var session: DocumentSession
     @ObservedObject var scribble: ScribbleSettings
+    @ObservedObject var palette: ColorPalette
     @Binding var panel: SidePanel?
     @State private var showColors = false
     @State private var showTextOptions = false
@@ -281,17 +307,22 @@ private struct ToolRail: View {
                             }
                         }
                     } else {
-                        HStack(spacing: 14) {
-                            ForEach(HighlightColor.allCases) { c in
-                                swatch(c.color, selected: c == session.color, name: c.name) {
-                                    session.color = c
-                                }
-                            }
-                        }
+                        highlightColors
                     }
                 }
                 .padding(16)
                 .presentationCompactAdaptation(.popover)
+            }
+
+            // Auto-switch: a new color after every highlight (each idea stands out).
+            if !scribbling {
+                railButton("arrow.triangle.2.circlepath", label: palette.autoSwitch
+                           ? "Auto color switch on (tap for manual)" : "Auto color switch off (tap to turn on)",
+                           selected: palette.autoSwitch) {
+                    palette.autoSwitch.toggle()
+                    session.showToast(palette.autoSwitch ? "Auto color switch: a new color for every highlight"
+                                      : "Manual colors")
+                }
             }
 
             divider
@@ -335,6 +366,40 @@ private struct ToolRail: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
         .shadow(color: .black.opacity(0.1), radius: 12, y: 4)
+    }
+
+    /// Highlight colors with your names for them, the auto / manual switch, and the way
+    /// to name and add colors.
+    private var highlightColors: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Picker("Color mode", selection: $palette.autoSwitch) {
+                Text("Auto switch").tag(true)
+                Text("Manual").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 260)
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(58), spacing: 8), count: 5), spacing: 10) {
+                ForEach(palette.colors) { c in
+                    VStack(spacing: 4) {
+                        swatch(c.color, selected: c == session.color, name: palette.name(c) ?? c.name) {
+                            session.color = c
+                        }
+                        Text(palette.name(c) ?? " ")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .frame(width: 58)
+                    }
+                }
+            }
+            Button {
+                showColors = false
+                panel = .colors
+            } label: {
+                Label("Name & add colors…", systemImage: "paintpalette")
+                    .font(.subheadline.weight(.medium))
+            }
+        }
     }
 
     private func swatch(_ color: Color, selected: Bool, name: String, pick: @escaping () -> Void) -> some View {

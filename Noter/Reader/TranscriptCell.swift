@@ -1,5 +1,12 @@
 import UIKit
 
+/// A highlight in the Text view: filled, or underlined (a circled word's definition).
+struct TextHighlight {
+    let range: NSRange
+    let color: UIColor
+    var underline = false
+}
+
 /// One book page of the transcript.
 final class TranscriptCell: UICollectionViewCell {
     static let reuseID = "TranscriptCell"
@@ -19,7 +26,7 @@ final class TranscriptCell: UICollectionViewCell {
     private let flashLayer = CAShapeLayer()
 
     private(set) var page: LogicalPage?
-    private var highlights: [(NSRange, UIColor)] = []
+    private var highlights: [TextHighlight] = []
     private var marks: [NSRange] = []
     private var flashRange: NSRange?
     private var speechToken: Int?
@@ -118,7 +125,7 @@ final class TranscriptCell: UICollectionViewCell {
 
     // MARK: Content
 
-    func configure(page: LogicalPage, header text: String, highlights: [(NSRange, UIColor)],
+    func configure(page: LogicalPage, header text: String, highlights: [TextHighlight],
                    skipped: [NSRange], marks: [NSRange], fontSize: CGFloat, appearance: TextAppearance) {
         self.page = page
         header.text = text
@@ -209,7 +216,7 @@ final class TranscriptCell: UICollectionViewCell {
         }
     }
 
-    func applyHighlights(_ highlights: [(NSRange, UIColor)]) {
+    func applyHighlights(_ highlights: [TextHighlight]) {
         self.highlights = highlights
         redrawHighlights()
     }
@@ -218,11 +225,19 @@ final class TranscriptCell: UICollectionViewCell {
         withoutAnimation {
             highlightLayer.sublayers = nil
             guard let page, !page.text.isEmpty else { return }
-            for (range, color) in highlights {
+            for h in highlights {
                 let shape = CAShapeLayer()
                 shape.frame = highlightLayer.bounds
-                shape.fillColor = color.withAlphaComponent(0.42).cgColor
-                shape.path = path(textRects(for: range), radius: 3)
+                let rects = textRects(for: h.range)
+                if h.underline {
+                    shape.fillColor = h.color.withAlphaComponent(0.9).cgColor
+                    shape.path = path(rects.map { r in
+                        CGRect(x: r.minX, y: r.maxY - 2.5, width: r.width, height: 2.5)
+                    }, radius: 1)
+                } else {
+                    shape.fillColor = h.color.withAlphaComponent(0.42).cgColor
+                    shape.path = path(rects, radius: 3)
+                }
                 highlightLayer.addSublayer(shape)
             }
         }

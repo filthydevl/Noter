@@ -234,9 +234,11 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         for (index, overlay) in overlays { overlay.setHighlights(highlightItems(onPage: index)) }
     }
 
-    private func highlightItems(onPage index: Int) -> [(rect: CGRect, color: UIColor)] {
+    private func highlightItems(onPage index: Int) -> [(rect: CGRect, color: UIColor, underline: Bool)] {
         guard let s = session else { return [] }
-        return s.highlights(onPage: index).flatMap { h in h.rects.map { (rect: $0, color: h.color.uiColor) } }
+        return s.highlights(onPage: index).flatMap { h in
+            h.rects.map { (rect: $0, color: h.color.uiColor, underline: h.isDefinition) }
+        }
     }
 
     private func showPreview(_ lp: LogicalPage, _ r: ClosedRange<Int>, onPage index: Int, color: HighlightColor) {
@@ -458,21 +460,31 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
             return
         }
         if let pages = s.logicalPages(st.pageIndex) {
-            if let sel = PageHitTester.selection(for: st.normPoints, in: pages) {
-                s.addHighlight(on: sel.page, range: sel.range)
-            }
+            Self.apply(st.normPoints, pages, s)
         } else {
             // The page hasn't been read yet: read it now, then apply the stroke.
             s.showToast("Reading this page…")
             let points = st.normPoints
             let index = st.pageIndex
             Task { @MainActor [weak s] in
-                guard let s, await s.ocr.ensure(index) != nil, let pages = s.logicalPages(index),
-                      let sel = PageHitTester.selection(for: points, in: pages) else { return }
-                s.addHighlight(on: sel.page, range: sel.range)
+                guard let s, await s.ocr.ensure(index) != nil, let pages = s.logicalPages(index) else { return }
+                Self.apply(points, pages, s)
             }
         }
         clearPreview()
+    }
+
+    /// A finished highlighter stroke: a loop drawn around a word (up to 4 words) marks
+    /// it as a word to define; anything else highlights the words it went over.
+    @MainActor
+    private static func apply(_ points: [CGPoint], _ pages: [LogicalPage], _ s: DocumentSession) {
+        if let m = InkMarkDetector.detect(points, in: pages), m.kind == .circle, m.range.count <= 4 {
+            s.addTerm(on: m.page, range: m.range)
+            return
+        }
+        if let sel = PageHitTester.selection(for: points, in: pages) {
+            s.addHighlight(on: sel.page, range: sel.range)
+        }
     }
 
     private func cancelStroke() {

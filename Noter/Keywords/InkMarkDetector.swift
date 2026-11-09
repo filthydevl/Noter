@@ -39,12 +39,24 @@ enum InkMarkDetector {
             let y = ys.sorted()[ys.count / 2]
             return underlined(minX: minX, maxX: maxX, y: y, in: pages)
         }
-        // Circle: a loop that comes back near where it started (or goes all the way round).
+        // Circle: a loop that comes back near where it started (or goes all the way
+        // round) and encloses an area — a back-and-forth scribble over a line doesn't.
         let size = max(w, h)
-        if w >= 0.012, h >= 0.006, length >= (w + h) * 1.2, ends <= size * 0.35 || length >= (w + h) * 1.9 {
+        if w >= 0.012, h >= 0.006, length >= (w + h) * 1.2, ends <= size * 0.35 || length >= (w + h) * 1.9,
+           area(points) >= w * h * 0.35 {
             return circled(points, in: pages)
         }
         return nil
+    }
+
+    /// Area enclosed by the stroke (closed from its end back to its start).
+    private static func area(_ p: [CGPoint]) -> CGFloat {
+        var sum: CGFloat = 0
+        for i in p.indices {
+            let a = p[i], b = p[(i + 1) % p.count]
+            sum += a.x * b.y - b.x * a.y
+        }
+        return abs(sum) / 2
     }
 
     /// Words sitting right above the line, on the nearest text line.

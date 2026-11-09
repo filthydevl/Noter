@@ -13,7 +13,7 @@ final class PDFPageOverlay: UIView {
     private let page: PDFPage
     private let geometry: PageGeometry
 
-    private var highlightItems: [(rect: CGRect, color: UIColor)] = []
+    private var highlightItems: [(rect: CGRect, color: UIColor, underline: Bool)] = []
     private var markRects: [CGRect] = []
     private var phraseRects: [CGRect] = []
     private var wordRect: CGRect?
@@ -74,7 +74,7 @@ final class PDFPageOverlay: UIView {
         setNeedsLayout()
     }
 
-    func setHighlights(_ items: [(rect: CGRect, color: UIColor)]) {
+    func setHighlights(_ items: [(rect: CGRect, color: UIColor, underline: Bool)]) {
         highlightItems = items
         redraw()
     }
@@ -158,10 +158,15 @@ final class PDFPageOverlay: UIView {
 
         // Highlights: hug the words — a touch wider than the text, slightly shorter than
         // the OCR box, so highlights on neighbouring lines never touch.
+        // A circled word's definition is underlined instead of filled.
         var byColor: [String: (color: UIColor, rects: [CGRect])] = [:]
         for item in highlightItems {
-            guard let r = viewRect(item.rect.insetBy(dx: -0.002, dy: item.rect.height * 0.04)) else { continue }
-            let key = item.color.hexString
+            guard var r = viewRect(item.rect.insetBy(dx: -0.002, dy: item.rect.height * 0.04)) else { continue }
+            if item.underline {
+                let h = max(r.height * 0.12, 1.5)
+                r = CGRect(x: r.minX, y: r.maxY - h, width: r.width, height: h)
+            }
+            let key = item.color.hexString + (item.underline ? "-u" : "")
             byColor[key, default: (color: item.color, rects: [])].rects.append(r)
         }
         for (key, l) in highlightLayers where byColor[key] == nil {
@@ -178,7 +183,7 @@ final class PDFPageOverlay: UIView {
                 highlightLayers[key] = l
             }
             l.frame = bounds
-            l.fillColor = entry.color.withAlphaComponent(0.5).cgColor
+            l.fillColor = entry.color.withAlphaComponent(key.hasSuffix("-u") ? 0.95 : 0.5).cgColor
             l.path = path(entry.rects, radius: 1.5)
         }
 

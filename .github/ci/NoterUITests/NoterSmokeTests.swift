@@ -168,6 +168,36 @@ final class NoterSmokeTests: XCTestCase {
         }
         assertRunning(app, "after searching")
 
+        // Colors: name a color, add one from the wheel, auto switch on.
+        let colorButton = app.buttons["Highlight color"]
+        if colorButton.waitForExistence(timeout: 5) {
+            colorButton.tap()
+            let nameColors = app.buttons["Name & add colors…"]
+            if nameColors.waitForExistence(timeout: 5) {
+                nameColors.tap()
+                let field = app.textFields.matching(NSPredicate(format: "placeholderValue BEGINSWITH 'Name it'"))
+                    .firstMatch
+                if field.waitForExistence(timeout: 5) {
+                    field.tap()
+                    field.typeText("Ideas")
+                }
+                if app.buttons["Add color"].exists { app.buttons["Add color"].tap() }
+                sleep(1)
+                snapshot(app, "9b-colors")
+                print("NOTER-SMOKE: colors panel shown: \(app.staticTexts["Colors"].exists), "
+                      + "named: \(app.textFields.matching(NSPredicate(format: "value == 'Ideas'")).firstMatch.exists)")
+                if app.buttons["Close colors"].exists { app.buttons["Close colors"].tap() }
+                sleep(1)
+            } else {
+                print("NOTER-SMOKE: name colors button missing")
+            }
+        }
+        let auto = app.buttons["Auto color switch off (tap to turn on)"]
+        print("NOTER-SMOKE: auto color switch button: \(auto.exists)")
+        if auto.exists { auto.tap() }
+        sleep(1)
+        assertRunning(app, "after the colors panel")
+
         // Notes panel (no highlights in this test: its empty state).
         app.buttons["Notes"].tap()
         sleep(1)
@@ -181,7 +211,7 @@ final class NoterSmokeTests: XCTestCase {
         let save = app.buttons["Save PDF"]
         if save.waitForExistence(timeout: 5) {
             save.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            let withInk = app.buttons["PDF with highlights + scribbles"]
+            let withInk = app.buttons["Save PDF — highlights + scribbles"]
             if withInk.waitForExistence(timeout: 5) { withInk.tap() }
             let sheet = app.descendants(matching: .any)
                 .matching(NSPredicate(format: "label == 'Save to Files' OR identifier == 'ActivityListView'")).firstMatch

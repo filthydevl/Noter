@@ -73,6 +73,10 @@ final class DocumentSession: ObservableObject {
     let ocr: OCRStore
     let speech: SpeechController
     let questions: QuestionIndex
+    /// Highlight colors, their names, and auto-switch.
+    let palette: ColorPalette
+    /// Set right after you circle a word: the next highlight is its definition.
+    @Published private(set) var pendingTerm: UUID?
     /// Find in book (the search panel).
     private(set) lazy var search = BookSearch(session: self)
     weak var pdfController: PDFReaderController?
@@ -103,6 +107,7 @@ final class DocumentSession: ObservableObject {
         self.ocr = ocr
         self.speech = SpeechController()
         self.questions = QuestionIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
+        self.palette = ColorPalette(docID: info.id)
         let defaults = UserDefaults.standard
         self.color = HighlightColor(rawValue: defaults.string(forKey: "noter.highlightColor") ?? "") ?? .yellow
         let fontSize = defaults.double(forKey: "noter.fontSize")
@@ -390,49 +395,62 @@ final class DocumentSession: ObservableObject {
         }
     }
 
-    /// Adds a highlight for a word range, merging with any highlight it overlaps
-    /// (or touches, if the colors match) so repeated strokes never stack up.
+    /// Adds a highlight for a word range. Every stroke is its own highlight (nothing is
+    /// merged, so one word can be a note of its own inside a longer highlight); the very
+    /// same words in the same color twice are ignored. Right after you circle a word,
+    /// the next highlight becomes its definition (an underline linked to the word).
     func addHighlight(on lp: LogicalPage, range: ClosedRange<Int>) {
         guard !lp.tokens.isEmpty, range.upperBound < lp.tokens.count, range.lowerBound >= 0 else { return }
-        var lo = range.lowerBound, hi = range.upperBound
-        var absorbed = Set<UUID>()
-        var changed = true
-        while changed {
-            changed = false
-            for h in highlights(onPage: lp.pdfIndex) where !absorbed.contains(h.id) {
-                guard let r = lp.range(of: h) else { continue }
-                let overlaps = r.lowerBound <= hi && r.upperBound >= lo
-                let touches = h.color == color && r.lowerBound <= hi + 1 && r.upperBound >= lo - 1
-                if overlaps || touches {
-                    lo = min(lo, r.lowerBound)
-                    hi = max(hi, r.upperBound)
-                    absorbed.insert(h.id)
-                    changed = true
-                }
-            }
+        var h = Highlight(
+            id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: range), rects: lp.lineRects(for: range),
+            text: lp.string(for: range), color: color, created: Date())
+        if let term = pendingTerm, let word = highlights.first(where: { $0.id == term }) {
+            h.color = word.color
+            h.role = "definition"
+            h.termID = term
+            pendingTerm = nil
         }
-        let merged = lo...hi
-        // Keep the key word tags and notes of any highlight this one swallows.
-        var tags: [String] = []
-        var notes: [String] = []
-        for old in highlights where absorbed.contains(old.id) {
-            for t in old.tagKeys where !tags.contains(t) { tags.append(t) }
-            if let n = old.noteText { notes.append(n) }
+        let duplicate = highlights(onPage: lp.pdfIndex).contains {
+            lp.range(of: $0) == range && $0.color == h.color && $0.role == h.role
         }
-        let h = Highlight(
-            id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: merged), rects: lp.lineRects(for: merged),
-            text: lp.string(for: merged), color: color, created: Date(), tags: tags.isEmpty ? nil : tags,
-            note: notes.isEmpty ? nil : notes.joined(separator: "\n\n"))
+        guard !duplicate else { return }
         pushUndo()
-        highlights.removeAll { absorbed.contains($0.id) }
         highlights.append(h)
         highlightsChanged()
+        if h.isDefinition {
+            showToast("Definition saved")
+        } else if palette.autoSwitch {
+            color = palette.next(after: color)
+        }
+    }
+
+    /// You circled a word with the highlighter: it's highlighted in maroon, and your next
+    /// highlight will be its definition.
+    func addTerm(on lp: LogicalPage, range: ClosedRange<Int>) {
+        guard !lp.tokens.isEmpty, range.upperBound < lp.tokens.count, range.lowerBound >= 0 else { return }
+        let h = Highlight(
+            id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: range), rects: lp.lineRects(for: range),
+            text: lp.string(for: range), color: .maroon, created: Date(), role: "term")
+        pushUndo()
+        highlights.append(h)
+        highlightsChanged()
+        pendingTerm = h.id
+    }
+
+    /// The word whose definition the next highlight will be.
+    var pendingTermText: String? {
+        pendingTerm.flatMap { id in highlights.first { $0.id == id } }.map { Highlight.keywordDisplay($0.text) }
+    }
+
+    func cancelPendingTerm() {
+        pendingTerm = nil
     }
 
     func removeHighlights(_ ids: Set<UUID>, registerUndo: Bool = true) {
         guard !ids.isEmpty else { return }
         if registerUndo { pushUndo() }
         highlights.removeAll { ids.contains($0.id) }
+        if let term = pendingTerm, ids.contains(term) { pendingTerm = nil }
         highlightsChanged()
     }
 
@@ -449,11 +467,35 @@ final class DocumentSession: ObservableObject {
         return ids
     }
 
-    func transcriptHighlightRanges(_ lp: LogicalPage) -> [(NSRange, UIColor)] {
+    func transcriptHighlightRanges(_ lp: LogicalPage) -> [TextHighlight] {
         highlights(onPage: lp.pdfIndex).compactMap { h in
             guard let r = lp.range(of: h) else { return nil }
-            return (lp.textRange(for: r), h.color.uiColor)
+            return TextHighlight(range: lp.textRange(for: r), color: h.color.uiColor, underline: h.isDefinition)
         }
+    }
+
+    /// Highlights in book order, each circled word followed by its definition(s) — the
+    /// way the highlights list and the exports show them.
+    func groupedHighlights() -> [Highlight] {
+        let sorted = sortedHighlights()
+        let ids = Set(sorted.map(\.id))
+        var definitions: [UUID: [Highlight]] = [:]
+        for h in sorted where h.isDefinition {
+            if let t = h.termID, ids.contains(t) { definitions[t, default: []].append(h) }
+        }
+        var out: [Highlight] = []
+        for h in sorted {
+            if h.isDefinition, let t = h.termID, ids.contains(t) { continue } // shown under its word
+            out.append(h)
+            if h.isTerm { out += definitions[h.id] ?? [] }
+        }
+        return out
+    }
+
+    /// The circled word a definition belongs to.
+    func term(of h: Highlight) -> Highlight? {
+        guard h.isDefinition, let t = h.termID else { return nil }
+        return highlights.first { $0.id == t }
     }
 
     /// Parts of a book page that read-aloud skips (dimmed in the text view).
@@ -640,13 +682,14 @@ final class DocumentSession: ObservableObject {
 
     // MARK: - Save PDF
 
-    /// A copy of the PDF with your highlights (and notes as their comments) built in;
-    /// scribbles too if `includeScribbles`. Calls back with the file to share / save.
-    func savePDF(includeScribbles: Bool, done: @escaping (URL) -> Void) {
+    /// A copy of the PDF with your work in it. `baked`: highlights and scribbles printed
+    /// onto the pages. Otherwise: editable highlight annotations, no scribbles. Notes
+    /// become sticky notes either way. Calls back with the file to share / save.
+    func savePDF(baked: Bool, done: @escaping (URL) -> Void) {
         guard !isSavingPDF else { return }
         isSavingPDF = true
         let info = self.info, items = highlights
-        let ink = includeScribbles ? AnnotatedPDFExport.inkImages(self) : nil
+        let ink = baked ? AnnotatedPDFExport.inkImages(self) : nil
         Task.detached(priority: .userInitiated) { [weak self] in
             let url = AnnotatedPDFExport.export(info: info, highlights: items, ink: ink)
             await MainActor.run {
@@ -742,12 +785,14 @@ final class DocumentSession: ObservableObject {
 
 extension HighlightColor {
     var uiColor: UIColor {
-        switch self {
-        case .yellow: UIColor(red: 1.00, green: 0.84, blue: 0.10, alpha: 1)
-        case .green: UIColor(red: 0.40, green: 0.85, blue: 0.40, alpha: 1)
-        case .blue: UIColor(red: 0.40, green: 0.72, blue: 1.00, alpha: 1)
-        case .pink: UIColor(red: 1.00, green: 0.50, blue: 0.72, alpha: 1)
-        case .orange: UIColor(red: 1.00, green: 0.62, blue: 0.20, alpha: 1)
+        switch rawValue {
+        case "yellow": UIColor(red: 1.00, green: 0.84, blue: 0.10, alpha: 1)
+        case "green": UIColor(red: 0.40, green: 0.85, blue: 0.40, alpha: 1)
+        case "blue": UIColor(red: 0.40, green: 0.72, blue: 1.00, alpha: 1)
+        case "pink": UIColor(red: 1.00, green: 0.50, blue: 0.72, alpha: 1)
+        case "orange": UIColor(red: 1.00, green: 0.62, blue: 0.20, alpha: 1)
+        case "maroon": UIColor(red: 0.62, green: 0.12, blue: 0.20, alpha: 1)
+        default: UIColor(hex: rawValue) ?? UIColor(red: 1.00, green: 0.84, blue: 0.10, alpha: 1)
         }
     }
 
@@ -755,12 +800,14 @@ extension HighlightColor {
 
     /// For the PDF exports.
     var hex: String {
-        switch self {
-        case .yellow: "#FFD61A"
-        case .green: "#66D966"
-        case .blue: "#66B8FF"
-        case .pink: "#FF80B8"
-        case .orange: "#FF9E33"
+        switch rawValue {
+        case "yellow": "#FFD61A"
+        case "green": "#66D966"
+        case "blue": "#66B8FF"
+        case "pink": "#FF80B8"
+        case "orange": "#FF9E33"
+        case "maroon": "#9E1F33"
+        default: rawValue
         }
     }
 }

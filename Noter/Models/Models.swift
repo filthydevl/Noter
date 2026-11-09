@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import CoreGraphics
 
 // MARK: - Library / document
@@ -144,10 +145,39 @@ struct TokenKey: Codable, Hashable {
 
 // MARK: - Highlights
 
-enum HighlightColor: String, Codable, CaseIterable, Identifiable {
-    case yellow, green, blue, pink, orange
+/// A highlight color: one of the built-in ones ("yellow"…) or one you added from the
+/// color wheel ("#RRGGBB"). Stored as that string, so older highlights still load.
+struct HighlightColor: RawRepresentable, Codable, Hashable, Identifiable {
+    let rawValue: String
+
+    init?(rawValue: String) {
+        guard !rawValue.isEmpty else { return nil }
+        self.rawValue = rawValue
+    }
+
+    private init(_ raw: String) { rawValue = raw }
+
+    static let yellow = HighlightColor("yellow")
+    static let green = HighlightColor("green")
+    static let blue = HighlightColor("blue")
+    static let pink = HighlightColor("pink")
+    static let orange = HighlightColor("orange")
+    /// Circled words (and the underline of their definition).
+    static let maroon = HighlightColor("maroon")
+
+    static let builtIns: [HighlightColor] = [.yellow, .green, .blue, .pink, .orange]
+
+    /// A color from the color wheel.
+    init(_ color: UIColor) {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        func c(_ x: CGFloat) -> Int { Int((min(max(x, 0), 1) * 255).rounded()) }
+        rawValue = String(format: "#%02X%02X%02X", c(r), c(g), c(b))
+    }
+
     var id: String { rawValue }
-    var name: String { rawValue.capitalized }
+    var isCustom: Bool { rawValue.hasPrefix("#") }
+    var name: String { isCustom ? "Custom" : rawValue.capitalized }
 }
 
 /// Contiguous run of tokens on one raw OCR line (inclusive bounds).
@@ -179,6 +209,13 @@ struct Highlight: Codable, Identifiable, Equatable {
     /// The scribble stroke that marked it (its creation time), so erasing the stroke
     /// removes the mention.
     var inkStroke: Date?
+    /// "term": a word you circled with the highlighter. "definition": the highlight you
+    /// made right after, drawn as an underline and linked to the word by `termID`.
+    var role: String?
+    var termID: UUID?
+
+    var isTerm: Bool { role == "term" }
+    var isDefinition: Bool { role == "definition" }
 
     var tokenKeys: [TokenKey] {
         spans.flatMap { s in

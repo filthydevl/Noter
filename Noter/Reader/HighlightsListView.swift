@@ -10,7 +10,7 @@ struct HighlightsListView: View {
     @State private var share: ShareItem?
 
     var body: some View {
-        let items = session.sortedHighlights()
+        let items = session.groupedHighlights()
         let keywords = session.keywordEntries()
         let byKey = Dictionary(uniqueKeysWithValues: keywords.map { ($0.id, $0) })
         let _ = session.labelsVersion // refresh when page numbers improve
@@ -63,15 +63,22 @@ struct HighlightsListView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(items) { h in
-                            HighlightRow(
-                                highlight: h,
-                                label: session.pageLabel(for: h),
-                                tags: h.tagKeys.compactMap { byKey[$0] },
-                                available: keywords.filter { !(h.isKeyword && $0.id == h.keywordKey) },
-                                open: { session.open(h) },
-                                toggleTag: { session.toggleTag($0, on: h.id) },
-                                delete: { session.removeHighlights([h.id]) },
-                                note: h.noteText)
+                            VStack(spacing: 6) {
+                                // A circled word's definition comes right after it, with an arrow.
+                                if let word = session.term(of: h) {
+                                    DefinitionArrow(word: Highlight.keywordDisplay(word.text))
+                                }
+                                HighlightRow(
+                                    highlight: h,
+                                    label: session.pageLabel(for: h),
+                                    tags: h.tagKeys.compactMap { byKey[$0] },
+                                    available: keywords.filter { !(h.isKeyword && $0.id == h.keywordKey) },
+                                    open: { session.open(h) },
+                                    toggleTag: { session.toggleTag($0, on: h.id) },
+                                    delete: { session.removeHighlights([h.id]) },
+                                    note: h.noteText,
+                                    colorName: session.palette.name(h.color))
+                            }
                         }
                     }
                     .padding(.horizontal, 14)
@@ -128,6 +135,8 @@ struct HighlightRow: View {
     var note: String? = nil
     /// Editable note (Notes panel).
     var editNote: ((String) -> Void)? = nil
+    /// Your name for the highlight's color ("Ideas"…).
+    var colorName: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -167,6 +176,21 @@ struct HighlightRow: View {
                         Text(label)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
+                        if highlight.isTerm || highlight.isDefinition {
+                            Text(highlight.isTerm ? "Word" : "Definition")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(HighlightColor.maroon.color)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(HighlightColor.maroon.color.opacity(0.12), in: Capsule())
+                        } else if let colorName {
+                            Text(colorName)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(highlight.color.color.opacity(0.3), in: Capsule())
+                        }
                         if highlight.isKeyword {
                             Image(systemName: "key")
                                 .font(.caption2.weight(.semibold))
@@ -175,6 +199,7 @@ struct HighlightRow: View {
                         }
                     }
                     Text(highlight.text)
+                        .underline(highlight.isDefinition, color: HighlightColor.maroon.color)
                         .font(.system(.callout, design: .serif))
                         .foregroundStyle(.primary)
                         .lineLimit(8)
@@ -227,6 +252,24 @@ struct HighlightRow: View {
             }
             .frame(maxWidth: 120, alignment: .trailing)
         }
+    }
+}
+
+/// Points from a circled word's card to its definition's card.
+struct DefinitionArrow: View {
+    let word: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 13, weight: .bold))
+            Text("definition of “\(word)”")
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(HighlightColor.maroon.color)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 
