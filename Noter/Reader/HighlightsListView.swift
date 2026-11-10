@@ -82,6 +82,7 @@ struct HighlightsListView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 20)
                 }
+                .defaultScrollAnchor(.bottom)
             }
         }
         .frame(maxHeight: .infinity)
@@ -248,6 +249,8 @@ struct HighlightRow: View {
     var note: String? = nil
     /// Editable note (Notes panel).
     var editNote: ((String) -> Void)? = nil
+    /// The note field gained / lost focus (Notes panel).
+    var noteFocused: ((Bool) -> Void)? = nil
     /// Your name for the highlight's color ("Ideas"…).
     var colorName: String? = nil
 
@@ -255,7 +258,7 @@ struct HighlightRow: View {
         VStack(alignment: .leading, spacing: 10) {
             card
             if let editNote {
-                NoteEditor(initial: highlight.note ?? "", commit: editNote)
+                NoteEditor(initial: highlight.note ?? "", commit: editNote, focused: noteFocused)
             } else if let note {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "text.bubble")
@@ -397,8 +400,11 @@ struct DefinitionArrow: View {
 struct NoteEditor: View {
     let initial: String
     let commit: (String) -> Void
+    /// Tells the list when you start typing here, so it can scroll the card into view.
+    var focused: ((Bool) -> Void)? = nil
     @State private var text = ""
     @State private var loaded = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -409,6 +415,7 @@ struct NoteEditor: View {
             TextField("Add a note or comment…", text: $text, axis: .vertical)
                 .font(.subheadline)
                 .lineLimit(1...14)
+                .focused($isFocused)
                 .accessibilityLabel("Note")
         }
         .padding(10)
@@ -422,5 +429,6 @@ struct NoteEditor: View {
         .onChange(of: text) { _, new in
             if loaded { commit(new) }
         }
+        .onChange(of: isFocused) { _, f in focused?(f) }
     }
 }

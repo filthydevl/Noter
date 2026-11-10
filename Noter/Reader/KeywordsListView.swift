@@ -73,6 +73,7 @@ struct KeywordsListView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 20)
                 }
+                .defaultScrollAnchor(.bottom)
             }
         }
         .frame(maxHeight: .infinity)

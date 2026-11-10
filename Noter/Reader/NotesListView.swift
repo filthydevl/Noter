@@ -7,6 +7,8 @@ struct NotesListView: View {
     @ObservedObject var session: DocumentSession
     var onClose: () -> Void
     @State private var onlyWithNotes = false
+    /// The card whose note you just started typing in.
+    @State private var editing: UUID?
     @State private var share: ShareItem?
 
     var body: some View {
@@ -73,30 +75,44 @@ struct NotesListView: View {
                         : "Write a note under any highlight in “All highlights”."))
                     .frame(maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(items) { h in
-                            VStack(spacing: 6) {
-                            if let word = session.term(of: h) {
-                                DefinitionArrow(word: Highlight.keywordDisplay(word.text))
-                            }
-                            HighlightRow(
-                                highlight: h,
-                                label: session.pageLabel(for: h),
-                                tags: h.tagKeys.compactMap { byKey[$0] },
-                                available: keywords.filter {
-                !(h.isKeyword && $0.id == h.keywordKey) && !session.removedKeywords.contains($0.id)
-            },
-                                open: { session.open(h) },
-                                toggleTag: { session.toggleTag($0, on: h.id) },
-                                delete: { session.removeHighlights([h.id]) },
-                                editNote: { session.setNote($0, on: h.id) },
-                                colorName: session.palette.name(h.color))
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(items) { h in
+                                VStack(spacing: 6) {
+                                    if let word = session.term(of: h) {
+                                        DefinitionArrow(word: Highlight.keywordDisplay(word.text))
+                                    }
+                                    HighlightRow(
+                                        highlight: h,
+                                        label: session.pageLabel(for: h),
+                                        tags: h.tagKeys.compactMap { byKey[$0] },
+                                        available: keywords.filter {
+                                            !(h.isKeyword && $0.id == h.keywordKey)
+                                                && !session.removedKeywords.contains($0.id)
+                                        },
+                                        open: { session.open(h) },
+                                        toggleTag: { session.toggleTag($0, on: h.id) },
+                                        delete: { session.removeHighlights([h.id]) },
+                                        editNote: { session.setNote($0, on: h.id) },
+                                        noteFocused: { if $0 { editing = h.id } },
+                                        colorName: session.palette.name(h.color))
+                                }
+                                .id(h.id)
                             }
                         }
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 20)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 20)
+                    .defaultScrollAnchor(.bottom)
+                    // You tapped a note: once the keyboard is up, bring that card into view.
+                    .onChange(of: editing) { _, id in
+                        guard let id else { return }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .bottom) }
+                            editing = nil
+                        }
+                    }
                 }
                 .scrollDismissesKeyboard(.interactively)
             }

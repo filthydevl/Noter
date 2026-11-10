@@ -151,6 +151,7 @@ struct ReaderView: View {
             if let panel {
                 sidePanel(panel)
                     .frame(width: 360)
+                    .avoidingKeyboard()
                     .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                     .shadow(color: .black.opacity(0.18), radius: 24, y: 8)
                     .padding(12)
