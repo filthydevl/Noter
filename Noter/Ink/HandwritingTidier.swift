@@ -58,9 +58,19 @@ enum HandwritingTidier {
                 return PKStroke(ink: PKInk(s.ink.inkType, color: .black), path: s.path, transform: s.transform,
                                 mask: s.mask)
             }
-            let area = rect.insetBy(dx: -8, dy: -8)
-            let scale = min(max(140 / max(rect.height, 1), 1), 6)
-            let ink = PKDrawing(strokes: black).image(from: area, scale: scale)
+            // Scale by the writing's line height (not the whole group's), so a paragraph
+            // reads as well as a word: about 70 px per line, at most ~4000 px a side.
+            let lineHeight = max(members.map { rects[$0].height }.sorted()[members.count / 2], 4)
+            let area = rect.insetBy(dx: -max(lineHeight, 12), dy: -max(lineHeight * 0.6, 12))
+            var scale = min(max(70 / lineHeight, 1), 6)
+            scale = min(scale, 4000 / max(area.width, area.height, 1))
+            // Light appearance: in Dark Mode PencilKit would draw this black ink white —
+            // white on white, which reads as nothing.
+            var ink = UIImage()
+            UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+                ink = PKDrawing(strokes: black).image(from: area, scale: scale)
+            }
+            guard ink.size.width > 0, ink.size.height > 0 else { return nil }
             let format = UIGraphicsImageRendererFormat()
             format.scale = ink.scale
             format.opaque = true
@@ -75,29 +85,42 @@ enum HandwritingTidier {
         }
     }
 
-    /// Any thread: read each group; keep the ones that clearly say something.
-    static func recognize(_ groups: [Group]) -> [Result] {
+    /// Any thread: read each group; keep the ones that say something. `strict` (auto-tidy
+    /// while you write) only keeps confident readings, so drawings aren't turned into
+    /// words; tapping Tidy takes anything that reads as words.
+    static func recognize(_ groups: [Group], strict: Bool) -> [Result] {
         groups.compactMap { g -> Result? in
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-            request.automaticallyDetectsLanguage = true
-            let handler = VNImageRequestHandler(cgImage: g.image, options: [:])
-            do { try handler.perform([request]) } catch { return nil }
-            // Top to bottom (Vision's origin is bottom-left).
-            let observations = (request.results ?? []).sorted { $0.boundingBox.maxY > $1.boundingBox.maxY }
-            var lines: [String] = []
-            var confidence: Float = 0
-            for o in observations {
-                guard let c = o.topCandidates(1).first, c.confidence >= 0.3 else { continue }
-                lines.append(c.string)
-                confidence += c.confidence
-            }
-            guard !lines.isEmpty else { return nil }
-            confidence /= Float(lines.count)
-            let text = lines.joined(separator: "\n")
-            guard text.filter(\.isLetter).count >= 2, confidence >= 0.45 else { return nil }
+            // Vision scores handwriting coarsely (about 0.3 / 0.5 / 1), so 0.3 is a real reading.
+            let lines = read(g.image, correcting: true) ?? read(g.image, correcting: false)
+            guard let lines, !lines.isEmpty else { return nil }
+            let confidence = lines.map { $0.1 }.reduce(0, +) / Float(lines.count)
+            let text = lines.map { $0.0 }.joined(separator: "\n")
+            let visible = text.filter { !$0.isWhitespace }
+            let letters = visible.filter { $0.isLetter || $0.isNumber }
+            guard letters.count >= (strict ? 2 : 1),
+                  Double(letters.count) >= Double(visible.count) * 0.5,
+                  confidence >= (strict ? 0.45 : 0.25) else { return nil }
             return Result(indices: g.indices, rect: g.rect, color: g.color, text: text, lines: lines.count)
         }
+    }
+
+    /// The lines Vision reads in an image, top to bottom, with their confidence.
+    private static func read(_ image: CGImage, correcting: Bool) -> [(String, Float)]? {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = correcting
+        // English is the language Vision reads handwriting best in.
+        request.recognitionLanguages = ["en-US"]
+        request.minimumTextHeight = 0
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        do { try handler.perform([request]) } catch { return nil }
+        // Top to bottom (Vision's origin is bottom-left).
+        let observations = (request.results ?? []).sorted { $0.boundingBox.maxY > $1.boundingBox.maxY }
+        let lines = observations.compactMap { o -> (String, Float)? in
+            guard let c = o.topCandidates(1).first, c.confidence >= 0.2,
+                  !c.string.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+            return (c.string, c.confidence)
+        }
+        return lines.isEmpty ? nil : lines
     }
 }

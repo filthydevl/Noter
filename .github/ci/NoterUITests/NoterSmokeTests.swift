@@ -100,6 +100,7 @@ final class NoterSmokeTests: XCTestCase {
             pen.tap()
             let tidy = app.buttons["Tidy handwriting on this page"]
             print("NOTER-SMOKE: scribble toolbar shown: \(tidy.waitForExistence(timeout: 5))")
+            print("NOTER-SMOKE: shapes button shown: \(app.buttons["Shapes"].exists)")
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.5)).tap()
             sleep(1)
             let hint = app.descendants(matching: .any)["Scribble is on"].exists

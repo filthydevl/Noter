@@ -339,7 +339,9 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         } else {
             tool = s.scribble.inkTool
         }
-        overlay.ink?.setActive(scribbling, tool: tool, ruler: s.scribble.ruler)
+        let shape = s.tool == .pen && !s.scribble.lasso ? s.scribble.shape : nil
+        overlay.ink?.setActive(scribbling, tool: tool, ruler: s.scribble.ruler, shape: shape,
+                               erasing: s.tool == .erase)
     }
 
     func saveAllInk() {
@@ -352,12 +354,37 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         return s.pdf.index(for: page)
     }
 
+    /// Tidies the handwriting on every page on screen (not just PDFKit's "current"
+    /// page, which can be the other one of two you're looking at).
     func tidyCurrentPage() {
-        guard let index = visiblePageIndex, let ink = overlays[index]?.ink else {
-            session?.showToast("Scroll to a page with handwriting")
+        let onScreen = overlays.values.filter {
+            $0.window != nil && $0.convert($0.bounds, to: pdfView).intersects(pdfView.bounds)
+        }
+        let visible = onScreen.compactMap(\.ink).filter(\.hasStrokes)
+        guard !visible.isEmpty else {
+            session?.showToast("No handwriting on this page")
             return
         }
-        ink.tidy(all: true)
+        var remaining = visible.count
+        var tidied = 0, busy = false
+        for ink in visible {
+            ink.tidy(all: true) { [weak self] outcome in
+                switch outcome {
+                case .tidied(let n): tidied += n
+                case .busy: busy = true
+                case .nothing, .unreadable: break
+                }
+                remaining -= 1
+                guard remaining == 0 else { return }
+                if tidied > 0 {
+                    self?.session?.showToast("Tidied \(tidied) bit\(tidied == 1 ? "" : "s") of handwriting")
+                } else if busy {
+                    self?.session?.showToast("Still writing — tap Tidy again in a moment")
+                } else {
+                    self?.session?.showToast("Couldn't read the handwriting — try writing a little larger")
+                }
+            }
+        }
     }
 
     func clearCurrentPage() {

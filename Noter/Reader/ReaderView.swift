@@ -70,9 +70,14 @@ struct ReaderView: View {
                 .allowsHitTesting(session.viewMode == .transcript)
         }
         .overlay(alignment: .topTrailing) {
-            SpeechControlView(speech: session.speech) { session.showReadingPosition() }
-                .padding(.top, 10)
-                .padding(.trailing, panel == nil ? 14 : 386) // beside an open side panel
+            VStack(alignment: .trailing, spacing: 10) {
+                SpeechControlView(speech: session.speech) { session.showReadingPosition() }
+                // Under the player, left of the tool rail so they never overlap.
+                UndoRedoControls(session: session)
+                    .padding(.trailing, 62)
+            }
+            .padding(.top, 10)
+            .padding(.trailing, panel == nil ? 14 : 386) // beside an open side panel
         }
         .overlay(alignment: .trailing) {
             ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel)
@@ -139,11 +144,6 @@ struct ReaderView: View {
                 .padding(.top, 10)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            UndoButton(session: session)
-                .padding(.trailing, panel == nil ? 18 : 390)
-                .padding(.bottom, 18)
         }
         .animation(.snappy(duration: 0.28), value: panel)
         .animation(.snappy(duration: 0.25), value: session.pendingTerm)
@@ -271,20 +271,67 @@ struct ReaderView: View {
     }
 }
 
-/// Undo in the bottom-right corner: your last highlight change, or your last ink
-/// change while scribbling.
-private struct UndoButton: View {
+/// Undo under the player: your last highlight change, or your last ink / shape change
+/// while scribbling. Redo shows up beside it only after an undo, and goes away by
+/// itself a few seconds later, once there's nothing left to redo, or when you change
+/// something new.
+private struct UndoRedoControls: View {
     @ObservedObject var session: DocumentSession
+    /// Bumped when the ink undo manager changes (it isn't observable).
+    @State private var inkTick = 0
+    @State private var redoOffered = false
+    @State private var hideTask: Task<Void, Never>?
+
+    private var scribbling: Bool { session.penMode == .scribble && session.viewMode != .transcript }
 
     var body: some View {
-        let scribbling = session.penMode == .scribble && session.viewMode != .transcript
-        let enabled = scribbling || session.canUndo
-        Button {
-            if scribbling { session.inkUndo.undo() } else { session.undo() }
-        } label: {
-            Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: 19, weight: .semibold))
-                .frame(width: 52, height: 52)
+        let _ = inkTick
+        let canUndo = scribbling ? session.inkUndo.canUndo : session.canUndo
+        let canRedo = scribbling ? session.inkUndo.canRedo : session.canRedo
+        let showRedo = redoOffered && canRedo
+        HStack(spacing: 10) {
+            button("arrow.uturn.backward", "Undo", enabled: canUndo) {
+                if scribbling { session.inkUndo.undo() } else { session.undo() }
+                offerRedo()
+            }
+            // Its slot is kept, so Undo never moves under your finger.
+            button("arrow.uturn.forward", "Redo", enabled: true) {
+                if scribbling { session.inkUndo.redo() } else { session.redo() }
+                offerRedo()
+            }
+            .opacity(showRedo ? 1 : 0)
+            .scaleEffect(showRedo ? 1 : 0.5)
+            .allowsHitTesting(showRedo)
+            .accessibilityHidden(!showRedo)
+        }
+        .animation(.snappy(duration: 0.22), value: showRedo)
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidCloseUndoGroup)) { inkChanged($0) }
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { inkChanged($0) }
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { inkChanged($0) }
+        .onChange(of: session.penMode) { _, _ in redoOffered = false }
+    }
+
+    private func inkChanged(_ note: Notification) {
+        guard (note.object as? UndoManager) === session.inkUndo else { return }
+        inkTick &+= 1
+    }
+
+    private func offerRedo() {
+        redoOffered = true
+        hideTask?.cancel()
+        hideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            redoOffered = false
+        }
+    }
+
+    private func button(_ symbol: String, _ label: String, enabled: Bool,
+                        action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 46, height: 46)
                 .background(.regularMaterial, in: Circle())
                 .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
                 .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
@@ -292,7 +339,7 @@ private struct UndoButton: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.45)
-        .accessibilityLabel("Undo")
+        .accessibilityLabel(label)
     }
 }
 

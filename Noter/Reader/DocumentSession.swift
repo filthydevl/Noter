@@ -59,6 +59,7 @@ final class DocumentSession: ObservableObject {
     @Published private(set) var ocrUpgradeLeft = 0
     @Published private(set) var currentPage = 0
     @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
     @Published private(set) var toast: String?
     @Published private(set) var speechPosition: SpeechPosition?
     @Published private(set) var labelsVersion = 0
@@ -93,6 +94,7 @@ final class DocumentSession: ObservableObject {
     private var layoutCache: [Int: [LogicalPage]] = [:]
     private var labels: [SlotKey: String] = [:]
     private var undoStack: [[Highlight]] = []
+    private var redoStack: [[Highlight]] = []
     private var lastUserActivity = Date.distantPast
     private var toastTask: Task<Void, Never>?
     /// Bookkeeping after OCR pages finish is batched (see `pageReady`).
@@ -577,14 +579,28 @@ final class DocumentSession: ObservableObject {
     }
 
     func undo() {
-        guard var previous = undoStack.popLast() else { return }
+        guard let previous = undoStack.popLast() else { return }
+        redoStack.append(highlights)
+        restore(previous)
+    }
+
+    /// Puts back what the last undo took away (until you change something new).
+    func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(highlights)
+        restore(next)
+    }
+
+    private func restore(_ state: [Highlight]) {
+        var state = state
         // Undo is for highlights and tags; notes keep what you last typed.
         let notes = Dictionary(uniqueKeysWithValues: highlights.map { ($0.id, $0.note) })
-        for i in previous.indices {
-            if let n = notes[previous[i].id] { previous[i].note = n }
+        for i in state.indices {
+            if let n = notes[state[i].id] { state[i].note = n }
         }
-        highlights = previous
+        highlights = state
         canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
         // A definition in progress follows the undo too.
         let ids = Set(highlights.map(\.id))
         definitionParts.removeAll { !ids.contains($0) }
@@ -792,6 +808,8 @@ final class DocumentSession: ObservableObject {
         undoStack.append(highlights)
         if undoStack.count > 100 { undoStack.removeFirst() }
         canUndo = true
+        redoStack = []
+        canRedo = false
     }
 
     private func rebuildIndex() {

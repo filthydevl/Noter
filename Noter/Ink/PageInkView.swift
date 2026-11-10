@@ -19,6 +19,7 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
     /// The displayed page's size in points.
     private let pageSize: CGSize
     private let canvas = InkCanvas()
+    private let shapeView = ShapeOverlayView()
     private let undo: UndoManager
     private var texts: [InkText] = []
     private var labels: [UUID: InkTextLabel] = [:]
@@ -54,9 +55,19 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
         canvas.isUserInteractionEnabled = false
         addSubview(canvas)
 
+        shapeView.pageSize = pageSize
+        shapeView.style = { [weak self] in
+            guard let settings = self?.settings else { return (colorHex: "#1A1A1AFF", width: 3) }
+            return (colorHex: settings.color.uiColor.withAlphaComponent(settings.opacity).hexString,
+                    width: max(settings.width * 0.7, 1.5))
+        }
+        shapeView.onCommit = { [weak self] before, after in self?.shapesChanged(after, undoFrom: before) }
+        addSubview(shapeView)
+
         let ink = InkStore.load(docID, page: pageIndex)
         pending = ink.drawing.flatMap { try? PKDrawing(data: $0) } ?? PKDrawing()
         texts = ink.texts
+        shapeView.setShapes(ink.shapes ?? [])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -71,6 +82,7 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
     override func layoutSubviews() {
         super.layoutSubviews()
         canvas.frame = bounds
+        shapeView.frame = bounds
         guard bounds.width > 1, bounds.height > 1 else { return }
         if let drawing = pending {
             setDrawing(drawing.transformed(using: toView))
@@ -98,11 +110,32 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
 
     // MARK: Tools
 
-    func setActive(_ active: Bool, tool: PKTool, ruler: Bool) {
-        canvas.isUserInteractionEnabled = active
+    /// `shape`: drawing shapes instead of ink. `erasing`: the eraser also erases shapes.
+    func setActive(_ active: Bool, tool: PKTool, ruler: Bool, shape: ShapeKind?, erasing: Bool) {
+        canvas.isUserInteractionEnabled = active && shape == nil
         canvas.tool = tool
-        canvas.isRulerActive = active && ruler
+        canvas.isRulerActive = active && ruler && shape == nil
+        if !active {
+            shapeView.mode = .off
+        } else if let shape {
+            shapeView.mode = .draw(shape)
+        } else {
+            shapeView.mode = erasing ? .erase : .off
+        }
         for l in labels.values { l.isUserInteractionEnabled = active }
+    }
+
+    /// A shape was drawn, moved, reshaped or deleted.
+    private func shapesChanged(_ new: [InkShape], undoFrom old: [InkShape]) {
+        undo.registerUndo(withTarget: self) { view in
+            MainActor.assumeIsolated {
+                view.shapeView.setShapes(old)
+                view.shapesChanged(old, undoFrom: new)
+            }
+        }
+        undo.setActionName("Shape")
+        onActivity?()
+        saveNow()
     }
 
     // MARK: Drawing changes
@@ -133,45 +166,55 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
         saveWork?.cancel()
         guard pending == nil else { return } // never loaded into the canvas: nothing changed
         let drawing = pageDrawing
-        InkStore.save(PageInk(drawing: drawing.strokes.isEmpty ? nil : drawing.dataRepresentation(), texts: texts),
+        let shapes = shapeView.shapes
+        InkStore.save(PageInk(drawing: drawing.strokes.isEmpty ? nil : drawing.dataRepresentation(), texts: texts,
+                              shapes: shapes.isEmpty ? nil : shapes),
                       docID, page: pageIndex)
     }
 
     // MARK: Tidy handwriting
 
-    /// Turns handwriting into neat lettering: everything on the page (`all`), or just
-    /// what you wrote since the last tidy.
-    func tidy(all: Bool) {
+    enum TidyOutcome {
+        case nothing, unreadable, busy
+        case tidied(Int)
+    }
+
+    /// Whether there's handwriting (ink strokes) on this page.
+    var hasStrokes: Bool { pending == nil && !canvas.drawing.strokes.isEmpty }
+
+    /// Turns handwriting into neat lettering: everything on the page (`all`, when you
+    /// tap Tidy), or just what you wrote since the last tidy (auto-tidy, stricter so
+    /// drawings aren't mistaken for words).
+    func tidy(all: Bool, done: ((TidyOutcome) -> Void)? = nil) {
         tidyWork?.cancel()
-        guard pending == nil, let settings else { return }
+        guard pending == nil else { done?(.nothing); return }
         let strokes = pageDrawing.strokes
         let start = all ? 0 : min(considered, strokes.count)
         considered = strokes.count
-        guard start < strokes.count else {
-            if all { onMessage?("No handwriting on this page") }
-            return
-        }
+        guard start < strokes.count else { done?(.nothing); return }
         let groups = HandwritingTidier.prepare(Array(strokes[start...]), baseIndex: start)
+        guard !groups.isEmpty else { done?(.unreadable); return }
         let expected = strokes.count
-        let style = settings.tidyStyle
+        let style = settings?.tidyStyle ?? .handwriting
         Task.detached(priority: .userInitiated) { [weak self] in
-            let results = HandwritingTidier.recognize(groups)
-            await self?.apply(results, expectedStrokes: expected, start: start, style: style, all: all)
+            let results = HandwritingTidier.recognize(groups, strict: !all)
+            await MainActor.run {
+                guard let self else { return }
+                let outcome = self.apply(results, expectedStrokes: expected, start: start, style: style)
+                done?(outcome)
+            }
         }
     }
 
-    private func apply(_ results: [HandwritingTidier.Result], expectedStrokes: Int, start: Int, style: TidyStyle,
-                       all: Bool) {
+    private func apply(_ results: [HandwritingTidier.Result], expectedStrokes: Int, start: Int,
+                       style: TidyStyle) -> TidyOutcome {
         // You kept writing (or erased) meanwhile: look at these strokes again after the
         // next pause.
         guard canvas.drawing.strokes.count == expectedStrokes else {
             considered = min(considered, start)
-            return
+            return .busy
         }
-        guard !results.isEmpty else {
-            if all { onMessage?("Couldn't read any handwriting here") }
-            return
-        }
+        guard !results.isEmpty else { return .unreadable }
         let before = (pageDrawing, texts)
         let strokes = pageDrawing.strokes
         var removed = Set<Int>()
@@ -187,7 +230,7 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
         let kept = strokes.enumerated().filter { !removed.contains($0.offset) }.map(\.element)
         replace(drawing: PKDrawing(strokes: kept), texts: texts + added, undoFrom: before, name: "Tidy Handwriting")
         considered = kept.count
-        if all { onMessage?("Tidied \(added.count) bit\(added.count == 1 ? "" : "s") of handwriting") }
+        return .tidied(added.count)
     }
 
     /// Swaps in a new page state (page points) and registers undo back to `before`.
@@ -209,8 +252,13 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
 
     /// Erases everything on this page (undoable).
     func clear() {
-        guard pending == nil, !(canvas.drawing.strokes.isEmpty && texts.isEmpty) else { return }
+        let shapes = shapeView.shapes
+        guard pending == nil, !(canvas.drawing.strokes.isEmpty && texts.isEmpty && shapes.isEmpty) else { return }
         replace(drawing: PKDrawing(), texts: [], undoFrom: (pageDrawing, texts), name: "Clear Page")
+        if !shapes.isEmpty {
+            shapeView.setShapes([])
+            shapesChanged([], undoFrom: shapes)
+        }
     }
 
     private func restoreHandwriting(_ id: UUID) {

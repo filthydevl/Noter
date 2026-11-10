@@ -259,9 +259,12 @@ struct Highlight: Codable, Identifiable, Equatable {
     }
 
     /// A highlight of just a word or short phrase counts as a key word.
+    /// Short highlights (up to 3 words) become key words; a word you circled always does.
     var isKeyword: Bool {
         let words = text.split(whereSeparator: \.isWhitespace)
-        return !words.isEmpty && words.count <= 5 && text.count <= 50
+            .filter { $0.contains(where: { $0.isLetter || $0.isNumber }) } // not a lone "–"
+        guard !words.isEmpty else { return false }
+        return isTerm || (words.count <= 3 && text.count <= 40)
     }
 
     /// Groups highlights of the same word / phrase ("Churchill’s" and "churchill").

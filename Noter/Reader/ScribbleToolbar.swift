@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Shown at the bottom while the scribble pen is on: pen type, size, opacity, lasso,
-/// ruler, undo / redo, and tidying handwriting into neat lettering.
+/// shapes, ruler, and tidying handwriting into neat lettering. (Undo / redo float under
+/// the player.)
 struct ScribbleToolbar: View {
     @ObservedObject var session: DocumentSession
     @ObservedObject var settings: ScribbleSettings
@@ -23,7 +24,34 @@ struct ScribbleToolbar: View {
     private func pick(_ kind: InkKind) {
         settings.kind = kind
         settings.lasso = false
+        settings.shape = nil
         session.tool = .pen
+    }
+
+    private func pick(_ shape: ShapeKind) {
+        settings.lasso = false
+        settings.shape = shape
+        session.tool = .pen
+    }
+
+    private var drawingShapes: Bool { settings.shape != nil && session.tool == .pen && !settings.lasso }
+
+    /// Rectangle, oval, triangle, line, arrow: drag one out with the Pencil, then drag
+    /// its handles to reshape it.
+    private var shapes: some View {
+        Menu {
+            Picker("Shape", selection: Binding(get: { settings.shape }, set: { if let s = $0 { pick(s) } })) {
+                ForEach(ShapeKind.allCases) { Label($0.title, systemImage: $0.symbol).tag(Optional($0)) }
+            }
+        } label: {
+            Image(systemName: drawingShapes ? settings.shape!.symbol : "square.on.circle")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(drawingShapes ? Color.accentColor : Color.primary)
+                .frame(width: 40, height: 34)
+                .background(drawingShapes ? Color.accentColor.opacity(0.15) : .clear,
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .accessibilityLabel(drawingShapes ? "Shape: \(settings.shape!.title)" : "Shapes")
     }
 
     @ViewBuilder
@@ -36,7 +64,8 @@ struct ScribbleToolbar: View {
             } label: {
                 Image(systemName: settings.kind.symbol)
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(session.tool == .pen && !settings.lasso ? Color.accentColor : Color.primary)
+                    .foregroundStyle(session.tool == .pen && !settings.lasso && settings.shape == nil
+                                     ? Color.accentColor : Color.primary)
                     .frame(width: 44, height: 36)
                     .background(Color.primary.opacity(0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
@@ -44,7 +73,7 @@ struct ScribbleToolbar: View {
         } else {
             ForEach(InkKind.allCases) { kind in
                 tool(kind.symbol, kind.title,
-                     selected: session.tool == .pen && !settings.lasso && settings.kind == kind) {
+                     selected: session.tool == .pen && !settings.lasso && settings.shape == nil && settings.kind == kind) {
                     pick(kind)
                 }
             }
@@ -54,8 +83,10 @@ struct ScribbleToolbar: View {
     private func bar(compact: Bool) -> some View {
         HStack(spacing: 6) {
             penTypes(compact: compact)
+            shapes
             tool("lasso", "Lasso (select and move ink)", selected: settings.lasso && session.tool == .pen) {
                 settings.lasso.toggle()
+                settings.shape = nil
                 session.tool = .pen
             }
             tool("ruler", "Ruler", selected: settings.ruler) { settings.ruler.toggle() }
@@ -78,11 +109,6 @@ struct ScribbleToolbar: View {
             Slider(value: $settings.opacity, in: 0.15...1)
                 .frame(width: compact ? 64 : 80)
                 .accessibilityLabel("Opacity")
-
-            separator
-
-            tool("arrow.uturn.backward", "Undo") { session.inkUndo.undo() }
-            tool("arrow.uturn.forward", "Redo") { session.inkUndo.redo() }
 
             separator
 

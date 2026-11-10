@@ -97,6 +97,8 @@ final class ScribbleSettings: ObservableObject {
     @Published var eraser: EraserKind { didSet { save(); onChange?() } }
     @Published var lasso = false { didSet { onChange?() } }
     @Published var ruler = false { didSet { onChange?() } }
+    /// A shape tool instead of the pen (not remembered: you come back to the pen).
+    @Published var shape: ShapeKind? { didSet { onChange?() } }
     /// Turn handwriting into neat lettering a moment after you stop writing.
     @Published var autoTidy: Bool { didSet { save() } }
     @Published var tidyStyle: TidyStyle { didSet { save() } }

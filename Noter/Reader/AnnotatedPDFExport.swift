@@ -14,6 +14,7 @@ enum AnnotatedPDFExport {
     struct PageInkImage {
         let image: UIImage?
         let texts: [InkText]
+        let shapes: [InkShape]
     }
 
     /// Main thread: the latest ink of every page that has any, as images.
@@ -34,7 +35,10 @@ enum AnnotatedPDFExport {
                     image = drawing.image(from: CGRect(origin: .zero, size: size), scale: 3)
                 }
             }
-            if image != nil || !ink.texts.isEmpty { out[index] = PageInkImage(image: image, texts: ink.texts) }
+            let shapes = ink.shapes ?? []
+            if image != nil || !ink.texts.isEmpty || !shapes.isEmpty {
+                out[index] = PageInkImage(image: image, texts: ink.texts, shapes: shapes)
+            }
         }
         return out
     }
@@ -152,6 +156,7 @@ enum AnnotatedPDFExport {
 
                 guard let pageInk = ink[index] else { continue }
                 pageInk.image?.draw(in: rect)
+                for shape in pageInk.shapes { shape.draw(in: c, size: size, unit: 1) } // vector, stays sharp
                 for t in pageInk.texts {
                     let frame = CGRect(x: t.rect.minX * size.width, y: t.rect.minY * size.height,
                                        width: t.rect.width * size.width, height: t.rect.height * size.height)
