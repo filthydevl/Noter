@@ -186,6 +186,90 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         ready = true
     }
 
+    /// Zooms in on a spot (normalized rects on a page) and centers it on screen: the
+    /// highlight's lines fill most of the width, without it running off the screen.
+    func focus(page index: Int, rects: [CGRect], retry: Bool = true) {
+        guard let s = session, let page = s.pdf.page(at: index), let first = rects.first else {
+            goTo(page: index, rect: nil)
+            return
+        }
+        let union = rects.dropFirst().reduce(first) { $0.union($1) }
+        let pr = PageGeometry(page: page).pageRect(fromNormalized: union)
+        let size = Self.displayedSize(page)
+        let view = visibleArea
+        guard view.width > 10, view.height > 10, size.width > 1 else {
+            // The PDF view is only just appearing: jump now, zoom once it has a size.
+            goTo(page: index, rect: first)
+            if retry {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self?.focus(page: index, rects: rects, retry: false)
+                }
+            }
+            return
+        }
+        // The highlight's size on the page, in page points (rotation applied).
+        let width = union.width * size.width, height = union.height * size.height
+        let fitWidth = view.width / size.width
+        var scale = view.width * 0.86 / max(width, size.width * 0.4)
+        scale = min(scale, view.height * 0.55 / max(height, 1))
+        scale = min(max(scale, fitWidth), fitWidth * 3, pdfView.maxScaleFactor)
+        pdfView.scaleFactor = scale
+        pdfView.layoutIfNeeded()
+        pdfView.go(to: pr, on: page)
+        pdfView.layoutIfNeeded()
+        center(pr, on: page, animated: true)
+    }
+
+    /// Fits the whole page you're on to the screen.
+    func fitPage() {
+        guard let page = pdfView.currentPage else { return }
+        let size = Self.displayedSize(page)
+        let view = visibleArea
+        guard size.width > 1, size.height > 1, view.width > 10, view.height > 10 else { return }
+        let scale = min(view.width / size.width, view.height / size.height) * 0.97
+        pdfView.minScaleFactor = min(pdfView.minScaleFactor, scale)
+        pdfView.scaleFactor = min(scale, pdfView.maxScaleFactor)
+        pdfView.layoutIfNeeded()
+        pdfView.go(to: page)
+        pdfView.layoutIfNeeded()
+        center(page.bounds(for: pdfView.displayBox), on: page, animated: true)
+    }
+
+    /// Scrolls so a rect (page coordinates) sits in the middle of the screen.
+    private func center(_ pageRect: CGRect, on page: PDFPage, animated: Bool) {
+        guard let sv = scrollView else { return }
+        let r = pdfView.convert(pdfView.convert(pageRect, from: page), to: sv)
+        let inset = sv.adjustedContentInset
+        let visible = sv.bounds.inset(by: inset)
+        var offset = CGPoint(x: r.midX - inset.left - max(visible.width - coveredRight, 100) / 2,
+                             y: r.midY - inset.top - visible.height / 2)
+        let maxX = max(-inset.left, sv.contentSize.width - sv.bounds.width + inset.right)
+        let maxY = max(-inset.top, sv.contentSize.height - sv.bounds.height + inset.bottom)
+        offset.x = min(max(offset.x, -inset.left), maxX)
+        offset.y = min(max(offset.y, -inset.top), maxY)
+        sv.setContentOffset(offset, animated: animated)
+    }
+
+    /// Width on the right covered by the tool rail and an open side panel.
+    var coveredRight: CGFloat = 70
+
+    /// The part of the PDF view you can see past the bars, the rail and a panel.
+    private var visibleArea: CGRect {
+        var r = pdfView.bounds.inset(by: pdfView.safeAreaInsets)
+        r.size.width = max(r.width - coveredRight, 0)
+        return r
+    }
+
+    /// PDFKit's scroll view, inside the PDF view.
+    private var scrollView: UIScrollView? {
+        func find(_ v: UIView) -> UIScrollView? {
+            if let s = v as? UIScrollView { return s }
+            for sub in v.subviews { if let s = find(sub) { return s } }
+            return nil
+        }
+        return find(pdfView)
+    }
+
     /// The word at the top of the screen (left page first on a two-page spread).
     func topAnchor() -> TextAnchor? {
         guard let s = session else { return nil }
@@ -406,8 +490,8 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     func flash(pageIndex: Int, rects: [CGRect]) {
         guard !rects.isEmpty else { return }
         pendingFlash = (pageIndex, rects, Date())
-        // Give the jump a moment to scroll the page into place.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.applyPendingFlash() }
+        // Give the jump a moment to zoom and scroll the page into place.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in self?.applyPendingFlash() }
     }
 
     private func applyPendingFlash() {

@@ -76,9 +76,7 @@ final class PDFPageOverlay: UIView {
         phraseLayer.fillColor = Self.accent.withAlphaComponent(0.16).cgColor
         wordLayer.fillColor = Self.accent.withAlphaComponent(0.30).cgColor
         underlineLayer.fillColor = Self.accent.withAlphaComponent(0.95).cgColor
-        flashLayer.fillColor = Self.accent.withAlphaComponent(0.10).cgColor
-        flashLayer.strokeColor = Self.accent.cgColor
-        flashLayer.opacity = 0
+        UIColor.styleFlash(flashLayer)
         highlightContainer.compositingFilter = "multiplyBlendMode"
         layer.addSublayer(highlightContainer)
         for l in [markLayer, markUnderlineLayer, phraseLayer, wordLayer, underlineLayer, previewLayer, flashLayer] {
@@ -281,7 +279,23 @@ final class PDFPageOverlay: UIView {
         let boxes = flashRects.compactMap { viewRect($0) }.map { r in
             r.insetBy(dx: -max(r.height * 0.25, 3), dy: -max(r.height * 0.18, 2))
         }
-        flashLayer.lineWidth = max((boxes.first?.height ?? 10) * 0.08, 1.5)
+        flashLayer.lineWidth = max((boxes.first?.height ?? 10) * 0.1, 2.5)
         flashLayer.path = path(boxes, radius: max((boxes.first?.height ?? 10) * 0.25, 4))
+    }
+}
+
+extension UIColor {
+    /// The box that blinks around the spot you jumped to: bright neon orange.
+    static let neonFlash = UIColor(red: 1, green: 0.42, blue: 0, alpha: 1)
+
+    /// Neon orange outline with a glow and a light orange tint inside.
+    static func styleFlash(_ layer: CAShapeLayer) {
+        layer.fillColor = neonFlash.withAlphaComponent(0.16).cgColor
+        layer.strokeColor = neonFlash.cgColor
+        layer.shadowColor = neonFlash.cgColor
+        layer.shadowRadius = 6
+        layer.shadowOpacity = 0.9
+        layer.shadowOffset = .zero
+        layer.opacity = 0
     }
 }

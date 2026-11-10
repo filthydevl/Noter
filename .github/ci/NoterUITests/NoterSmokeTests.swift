@@ -156,6 +156,11 @@ final class NoterSmokeTests: XCTestCase {
         print("NOTER-SMOKE: page slider shown: \(app.sliders["Page"].exists)")
         app.buttons["PDF"].tap()
         sleep(2)
+        let fit = app.buttons["Fit page"]
+        print("NOTER-SMOKE: fit page button shown: \(fit.exists)")
+        if fit.exists { fit.tap(); sleep(1) }
+        snapshot(app, "8b-fit-page")
+        assertRunning(app, "after fit page")
         app.buttons["Text"].tap()
         sleep(2)
         assertRunning(app, "after switching views")

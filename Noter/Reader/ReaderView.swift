@@ -93,10 +93,10 @@ struct ReaderView: View {
         }
         .overlay(alignment: .bottom) {
             if showScrubber {
-                // Long and low; clear of the undo button in the corner (and of an open panel).
+                // Long and low; clear of an open panel.
                 PageScrubber(session: session, outline: session.outline)
                     .padding(.leading, 20)
-                    .padding(.trailing, panel == nil ? 82 : 454)
+                    .padding(.trailing, panel == nil ? 20 : 392)
                     .padding(.bottom, 6)
                     .transition(.opacity)
             }
@@ -146,6 +146,8 @@ struct ReaderView: View {
             }
         }
         .animation(.snappy(duration: 0.28), value: panel)
+        // Jumping to a highlight centers it in the part of the page you can see.
+        .onChange(of: panel) { _, p in session.pdfController?.coveredRight = p == nil ? 70 : 456 }
         .animation(.snappy(duration: 0.25), value: session.pendingTerm)
         .animation(.snappy(duration: 0.25), value: session.penMode)
         .overlay(alignment: .trailing) {

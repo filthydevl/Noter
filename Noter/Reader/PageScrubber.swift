@@ -14,78 +14,95 @@ struct PageScrubber: View {
     var body: some View {
         let page = dragging.map { Int($0.rounded()) } ?? session.currentPage
         HStack(spacing: 10) {
-            GeometryReader { g in
-                let w = g.size.width
-                ZStack(alignment: .leading) {
-                    // Track and progress.
-                    Capsule().fill(Color.primary.opacity(0.14)).frame(height: 4)
-                    Capsule().fill(Color.accentColor).frame(width: max(x(page, w), 4), height: 4)
+            HStack(spacing: 10) {
+                GeometryReader { g in
+                    let w = g.size.width
+                    ZStack(alignment: .leading) {
+                        // Track and progress.
+                        Capsule().fill(Color.primary.opacity(0.14)).frame(height: 4)
+                        Capsule().fill(Color.accentColor).frame(width: max(x(page, w), 4), height: 4)
 
-                    // Parts, only while dragging.
-                    if dragging != nil {
-                        ForEach(outline.entries) { e in
-                            Capsule()
-                                .fill(Color.primary.opacity(0.55))
-                                .frame(width: 2, height: 12)
-                                .offset(x: x(e.pdfIndex, w) - 1)
-                        }
-                        partLabels(w)
-                    }
-
-                    // Thumb.
-                    Circle()
-                        .fill(Color.accentColor)
-                        .overlay(Circle().strokeBorder(.white, lineWidth: 2))
-                        .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
-                        .frame(width: dragging == nil ? 14 : 20, height: dragging == nil ? 14 : 20)
-                        .offset(x: x(page, w) - (dragging == nil ? 7 : 10))
-                }
-                .frame(height: g.size.height)
-                .overlay(alignment: .topLeading) {
-                    if dragging != nil { bubble(page, w) }
-                }
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { v in
-                            let f = min(max(v.location.x / max(w, 1), 0), 1)
-                            let p = f * Double(count - 1)
-                            dragging = p
-                            let i = Int(p.rounded())
-                            if i != lastSent {
-                                lastSent = i
-                                session.goToPage(i)
+                        // Parts, only while dragging.
+                        if dragging != nil {
+                            ForEach(outline.entries) { e in
+                                Capsule()
+                                    .fill(Color.primary.opacity(0.55))
+                                    .frame(width: 2, height: 12)
+                                    .offset(x: x(e.pdfIndex, w) - 1)
                             }
+                            partLabels(w)
                         }
-                        .onEnded { _ in
-                            dragging = nil
-                            lastSent = nil
-                        })
-            }
-            .frame(height: 22)
-            .animation(.easeOut(duration: 0.15), value: dragging == nil)
 
-            Text(shortTitle(page))
-                .font(.caption2.weight(.semibold).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
+                        // Thumb.
+                        Circle()
+                            .fill(Color.accentColor)
+                            .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+                            .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                            .frame(width: dragging == nil ? 14 : 20, height: dragging == nil ? 14 : 20)
+                            .offset(x: x(page, w) - (dragging == nil ? 7 : 10))
+                    }
+                    .frame(height: g.size.height)
+                    .overlay(alignment: .topLeading) {
+                        if dragging != nil { bubble(page, w) }
+                    }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { v in
+                                let f = min(max(v.location.x / max(w, 1), 0), 1)
+                                let p = f * Double(count - 1)
+                                dragging = p
+                                let i = Int(p.rounded())
+                                if i != lastSent {
+                                    lastSent = i
+                                    session.goToPage(i)
+                                }
+                            }
+                            .onEnded { _ in
+                                dragging = nil
+                                lastSent = nil
+                            })
+                }
+                .frame(height: 22)
+                .animation(.easeOut(duration: 0.15), value: dragging == nil)
+
+                Text(shortTitle(page))
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Page")
+            .accessibilityValue(longTitle(page))
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: session.goToPage(session.currentPage + 1)
+                case .decrement: session.goToPage(session.currentPage - 1)
+                @unknown default: break
+                }
+            }
+            // Fit the whole page on screen (PDF view).
+            if session.viewMode == .pdf {
+                Button {
+                    session.pdfController?.fitPage()
+                } label: {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 30, height: 26)
+                        .background(Color.accentColor.opacity(0.14), in: Capsule())
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Fit page")
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
         .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
-        .accessibilityElement()
-        .accessibilityLabel("Page")
-        .accessibilityValue(longTitle(page))
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment: session.goToPage(session.currentPage + 1)
-            case .decrement: session.goToPage(session.currentPage - 1)
-            @unknown default: break
-            }
-        }
     }
 
     // MARK: Pieces

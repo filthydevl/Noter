@@ -657,7 +657,7 @@ final class DocumentSession: ObservableObject {
         viewMode = mode
         noteUserActivity() // don't let read-along scroll away from it
         if mode == .pdf {
-            pdfController?.goTo(page: h.page, rect: h.rects.first)
+            pdfController?.focus(page: h.page, rects: h.rects)
             pdfController?.flash(pageIndex: h.page, rects: h.rects)
         } else {
             let slot = SlotKey(pdfIndex: h.page, half: half(of: h))
@@ -678,7 +678,7 @@ final class DocumentSession: ObservableObject {
         guard let lp = logicalPage(slot), location.tokens.upperBound < lp.tokens.count else { return }
         if mode == .pdf {
             let rects = lp.lineRects(for: location.tokens)
-            pdfController?.goTo(page: slot.pdfIndex, rect: rects.first)
+            pdfController?.focus(page: slot.pdfIndex, rects: rects)
             pdfController?.flash(pageIndex: slot.pdfIndex, rects: rects)
         } else {
             transcriptController?.scroll(toPage: slot.pdfIndex, half: slot.half)

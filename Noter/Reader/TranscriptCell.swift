@@ -65,10 +65,8 @@ final class TranscriptCell: UICollectionViewCell {
         previewLayer.fillColor = UIColor.clear.cgColor
         markLayer.fillColor = UIColor.systemPurple.withAlphaComponent(0.16).cgColor
         markUnderlineLayer.fillColor = UIColor.systemPurple.withAlphaComponent(0.7).cgColor
-        flashLayer.fillColor = Self.speechColor.withAlphaComponent(0.10).cgColor
-        flashLayer.strokeColor = Self.speechColor.cgColor
-        flashLayer.lineWidth = 2
-        flashLayer.opacity = 0
+        UIColor.styleFlash(flashLayer)
+        flashLayer.lineWidth = 3
         for (i, layer) in [highlightLayer, markLayer, markUnderlineLayer, speechPhraseLayer, speechWordLayer,
                            speechUnderlineLayer, previewLayer, flashLayer].enumerated() {
             textView.layer.insertSublayer(layer, at: UInt32(i))
