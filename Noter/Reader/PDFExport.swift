@@ -30,7 +30,7 @@ enum PDFExport {
                 }
                 body += esc(h.text)
             }
-            let tags = h.tagKeys.compactMap { keywords[$0] }
+            let tags = session.tagKeys(of: h).compactMap { keywords[$0] }
             if !tags.isEmpty {
                 body += "<div class='tags'>" + tags.map(tag).joined(separator: " ") + "</div>"
             }

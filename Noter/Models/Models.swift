@@ -226,6 +226,8 @@ struct Highlight: Codable, Identifiable, Equatable {
     /// Key words (their `keywordKey`) this highlight is tagged with. Optional so
     /// highlights saved before tags existed still load.
     var tags: [String]?
+    /// Key words this highlight was automatically tagged with that you took off.
+    var untagged: [String]?
     /// Your note / comment on this highlight (the Notes panel).
     var note: String?
     /// "term": a word you circled with the highlighter. "definition": the highlight
@@ -264,8 +266,17 @@ struct Highlight: Codable, Identifiable, Equatable {
         let words = text.split(whereSeparator: \.isWhitespace)
             .filter { $0.contains(where: { $0.isLetter || $0.isNumber }) } // not a lone "–"
         guard !words.isEmpty else { return false }
-        return isTerm || (words.count <= 3 && text.count <= 40)
+        if isTerm { return true }
+        // "the", "of" on their own aren't key words.
+        if words.count == 1, Highlight.fillerWords.contains(words[0].lowercased()) { return false }
+        return words.count <= 3 && text.count <= 40
     }
+
+    static let fillerWords: Set<String> = [
+        "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "at", "by", "for", "with", "from", "as",
+        "is", "was", "are", "were", "be", "it", "its", "this", "that", "these", "those", "he", "she", "they",
+        "we", "his", "her", "their", "not", "no", "so", "if", "then", "than",
+    ]
 
     /// Groups highlights of the same word / phrase ("Churchill’s" and "churchill").
     var keywordKey: String { Highlight.keywordKey(text) }

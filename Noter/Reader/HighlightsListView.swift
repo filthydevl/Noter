@@ -97,7 +97,7 @@ extension HighlightsListView {
         HighlightRow(
             highlight: h,
             label: session.pageLabel(for: h),
-            tags: h.tagKeys.compactMap { byKey[$0] },
+            tags: session.tagKeys(of: h).compactMap { byKey[$0] },
             available: keywords.filter {
                 !(h.isKeyword && $0.id == h.keywordKey) && !session.removedKeywords.contains($0.id)
             },
@@ -355,7 +355,7 @@ struct HighlightRow: View {
                                 Button {
                                     toggleTag(k.id)
                                 } label: {
-                                    if highlight.tagKeys.contains(k.id) {
+                                    if tags.contains(where: { $0.id == k.id }) {
                                         Label(k.text, systemImage: "checkmark")
                                     } else {
                                         Text(k.text)

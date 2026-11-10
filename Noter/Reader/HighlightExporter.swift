@@ -38,7 +38,7 @@ enum HighlightExporter {
                 .map { "> \($0)" }
                 .joined(separator: "\n>\n")
             md += quoted + "\n"
-            let tags = h.tagKeys.compactMap { keywords[$0] }
+            let tags = session.tagKeys(of: h).compactMap { keywords[$0] }
             if !tags.isEmpty { md += "\nKey words: " + tags.map { "`\($0)`" }.joined(separator: " ") + "\n" }
             if let note = h.noteText {
                 md += "\n**Note:** " + note.replacingOccurrences(of: "\n", with: "  \n") + "\n"

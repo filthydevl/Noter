@@ -214,6 +214,7 @@ final class DocumentSession: ObservableObject {
     /// a burst of pages doesn't keep the main thread busy.
     private func pageReady(_ index: Int) {
         layoutCache[index] = nil
+        autoTagCache = nil
         ocrDone = ocr.doneCount
         ocrUpgradeLeft = ocr.staleCount
         reanchorHighlights(onPage: index)
@@ -724,7 +725,7 @@ final class DocumentSession: ObservableObject {
         }
         return order.compactMap { key -> KeywordEntry? in
             guard let ms = mentions[key], let latest = ms.max(by: { $0.created < $1.created }) else { return nil }
-            let linked = sorted.filter { $0.keywordKey != key && $0.tagKeys.contains(key) }
+            let linked = sorted.filter { $0.keywordKey != key && tagKeys(of: $0).contains(key) }
             return KeywordEntry(id: key, text: Highlight.keywordDisplay(latest.text), color: latest.color,
                                 mentions: ms, linked: linked)
         }
@@ -734,14 +735,20 @@ final class DocumentSession: ObservableObject {
     /// Adds or removes a key word tag on a highlight.
     func toggleTag(_ key: String, on id: UUID) {
         guard let i = highlights.firstIndex(where: { $0.id == id }) else { return }
+        let tagged = tagKeys(of: highlights[i]).contains(key)
         var tags = highlights[i].tagKeys
-        if let j = tags.firstIndex(of: key) {
-            tags.remove(at: j)
+        var untagged = highlights[i].untagged ?? []
+        if tagged {
+            tags.removeAll { $0 == key }
+            // An automatic tag you take off stays off.
+            if autoTags[id] == key, !untagged.contains(key) { untagged.append(key) }
         } else {
-            tags.append(key)
+            untagged.removeAll { $0 == key }
+            if autoTags[id] != key { tags.append(key) }
         }
         pushUndo()
         highlights[i].tags = tags.isEmpty ? nil : tags
+        highlights[i].untagged = untagged.isEmpty ? nil : untagged
         highlightsChanged()
     }
 
@@ -814,6 +821,51 @@ final class DocumentSession: ObservableObject {
 
     private func rebuildIndex() {
         byPage = Dictionary(grouping: highlights, by: \.page)
+        autoTagCache = nil
+    }
+
+    /// Highlight → the key word it's automatically tagged with. Worked out when needed
+    /// (the order of a spread's halves needs its page read).
+    private var autoTags: [UUID: String] {
+        if let cached = autoTagCache { return cached }
+        let tags = computeAutoTags()
+        autoTagCache = tags
+        return tags
+    }
+    private var autoTagCache: [UUID: String]?
+
+    /// A key word (a name, word or phrase of up to 3 words) tags the highlights that
+    /// follow it in the same color (any shade of it): "Venustiano Carranza" in green,
+    /// then green lines about him. The run ends at a highlight of another color, at the
+    /// next key word, or after a page with no highlights.
+    private func computeAutoTags() -> [UUID: String] {
+        var out: [UUID: String] = [:]
+        var run: (key: String, color: HighlightColor)?
+        var lastPage = Int.min
+        for h in sortedHighlights() {
+            if lastPage != Int.min, h.page - lastPage > 1 { run = nil }
+            lastPage = h.page
+            if h.isKeyword {
+                let key = h.keywordKey
+                run = key.isEmpty ? nil : (key, h.color)
+                continue
+            }
+            guard let r = run, h.color == r.color else {
+                run = nil
+                continue
+            }
+            out[h.id] = r.key
+        }
+        return out
+    }
+
+    /// The key words a highlight is tagged with: yours plus the automatic one.
+    func tagKeys(of h: Highlight) -> [String] {
+        var keys = h.tagKeys
+        if let auto = autoTags[h.id], !keys.contains(auto), !(h.untagged ?? []).contains(auto) {
+            keys.append(auto)
+        }
+        return keys
     }
 
     /// Auto-save: every change is written to disk immediately.
