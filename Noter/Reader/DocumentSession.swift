@@ -71,6 +71,8 @@ final class DocumentSession: ObservableObject {
     let questions: QuestionIndex
     /// Highlight colors, their names, and auto-switch.
     let palette: ColorPalette
+    /// The book's parts (headings), for the page slider.
+    let outline: OutlineIndex
     /// Key words you removed from the Key words list (remembered per document). Their
     /// highlights stay; they just aren't listed or offered as tags.
     @Published private(set) var removedKeywords: Set<String> = []
@@ -112,6 +114,7 @@ final class DocumentSession: ObservableObject {
         self.speech = SpeechController()
         self.questions = QuestionIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
         self.palette = ColorPalette(docID: info.id)
+        self.outline = OutlineIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
         self.removedKeywords = Set(Storage.load([String].self, from: DocumentSession.removedKeywordsURL(info.id)) ?? [])
         let defaults = UserDefaults.standard
         self.color = HighlightColor(rawValue: defaults.string(forKey: "noter.highlightColor") ?? "") ?? .yellow
@@ -135,6 +138,7 @@ final class DocumentSession: ObservableObject {
         recomputeLabels()
         saveInfo()
         ocr.start()
+        outline.start()
     }
 
     func close() {
@@ -145,6 +149,7 @@ final class DocumentSession: ObservableObject {
         pdfController?.saveAllInk()
         speech.stop()
         questions.stop()
+        outline.stop()
         ocr.stop()
         saveAll()
     }
@@ -196,6 +201,7 @@ final class DocumentSession: ObservableObject {
         layoutCache.removeAll()
         search.invalidate()
         questions.reset(mode: mode)
+        outline.reset(mode: mode)
         recomputeLabels()
         transcriptController?.reloadAll()
         HighlightExporter.export(self)
@@ -211,6 +217,7 @@ final class DocumentSession: ObservableObject {
         reanchorHighlights(onPage: index)
         transcriptController?.pageBecameReady(index)
         questions.pageReady(index)
+        outline.pageReady(index)
         search.invalidate(index)
         guard readyFlush == nil else { return }
         readyFlush = Task { [weak self] in

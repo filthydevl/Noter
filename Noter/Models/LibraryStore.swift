@@ -4,11 +4,69 @@ import PDFKit
 @MainActor
 final class LibraryStore: ObservableObject {
     @Published private(set) var documents: [DocumentInfo] = []
+    /// Your folders, in the order you made them.
+    @Published private(set) var folders: [LibraryFolder] = []
     @Published private(set) var importing = false
     @Published var lastError: String?
 
     init() {
+        folders = Storage.load([LibraryFolder].self, from: Self.foldersURL) ?? []
         reload()
+    }
+
+    // MARK: Folders
+
+    private static var foldersURL: URL {
+        Storage.libraryRoot.deletingLastPathComponent().appendingPathComponent("folders.json")
+    }
+
+    private func saveFolders() {
+        Storage.save(folders, to: Self.foldersURL)
+    }
+
+    @discardableResult
+    func createFolder(named name: String) -> LibraryFolder {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folder = LibraryFolder(id: UUID(), name: trimmed.isEmpty ? "New folder" : trimmed)
+        folders.append(folder)
+        saveFolders()
+        return folder
+    }
+
+    func rename(_ folder: LibraryFolder, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let i = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        folders[i].name = trimmed
+        saveFolders()
+    }
+
+    /// Deletes the folder; its books stay in the library, out of any folder.
+    func delete(_ folder: LibraryFolder) {
+        for doc in documents where doc.folderID == folder.id { setFolder(nil, for: doc, reloading: false) }
+        folders.removeAll { $0.id == folder.id }
+        saveFolders()
+        reload()
+    }
+
+    func move(_ doc: DocumentInfo, to folder: LibraryFolder?) {
+        setFolder(folder?.id, for: doc, reloading: true)
+    }
+
+    func move(docID: UUID, to folder: LibraryFolder?) {
+        guard let doc = documents.first(where: { $0.id == docID }) else { return }
+        move(doc, to: folder)
+    }
+
+    private func setFolder(_ id: UUID?, for doc: DocumentInfo, reloading: Bool) {
+        // Re-read the info from disk so nothing saved by the reader is lost.
+        guard var info = Storage.load(DocumentInfo.self, from: Storage.infoURL(doc.id)) else { return }
+        info.folderID = id
+        Storage.save(info, to: Storage.infoURL(doc.id))
+        if reloading { reload() }
+    }
+
+    func count(in folder: LibraryFolder) -> Int {
+        documents.filter { $0.folderID == folder.id }.count
     }
 
     func reload() {
@@ -25,13 +83,17 @@ final class LibraryStore: ObservableObject {
 
     /// Copies the PDFs into the library. Returns the ids of the new documents.
     @discardableResult
-    func importPDFs(_ urls: [URL]) async -> [UUID] {
+    func importPDFs(_ urls: [URL], into folder: LibraryFolder? = nil) async -> [UUID] {
         importing = true
         defer { importing = false }
         var ids: [UUID] = []
         for url in urls {
             do {
-                let info = try await Self.importOne(url)
+                var info = try await Self.importOne(url)
+                if let folder {
+                    info.folderID = folder.id
+                    Storage.save(info, to: Storage.infoURL(info.id))
+                }
                 ids.append(info.id)
             } catch {
                 lastError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)"

@@ -59,6 +59,14 @@ struct DocumentInfo: Codable, Identifiable, Hashable {
     var viewMode: ViewMode
     var highlightCount: Int
     var ocrPagesDone: Int
+    /// The library folder it's in (nil: not in a folder).
+    var folderID: UUID? = nil
+}
+
+/// A folder in the library, named by you.
+struct LibraryFolder: Codable, Identifiable, Hashable {
+    var id: UUID
+    var name: String
 }
 
 // MARK: - OCR results (stored per PDF page)

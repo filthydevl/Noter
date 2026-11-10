@@ -88,10 +88,11 @@ struct ReaderView: View {
         }
         .overlay(alignment: .bottom) {
             if showScrubber {
-                PageScrubber(session: session)
-                    .padding(.horizontal, 80)
-                    .padding(.trailing, panel == nil ? 0 : 372)
-                    .padding(.bottom, 16)
+                // Long and low; clear of the undo button in the corner (and of an open panel).
+                PageScrubber(session: session, outline: session.outline)
+                    .padding(.leading, 20)
+                    .padding(.trailing, panel == nil ? 82 : 454)
+                    .padding(.bottom, 6)
                     .transition(.opacity)
             }
         }
