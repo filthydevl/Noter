@@ -26,6 +26,13 @@ final class PencilStrokeRecognizer: UIGestureRecognizer {
             state = .failed
             return
         }
+        // A pencil tap on a button on the page (the ✓ next to a circled word) is a tap,
+        // not a highlight stroke: let the button have it.
+        if touch.view is UIControl {
+            ignore(touch, for: event)
+            state = .failed
+            return
+        }
         activeTouch = touch
         points = [touch.location(in: view)]
         state = .began
