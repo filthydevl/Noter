@@ -39,7 +39,7 @@ final class PDFPageOverlay: UIView {
     /// PDF, except on the ✓ button.
     var inkActive = false
     /// The ✓ next to a circled word whose definition you're underlining.
-    private let confirmButton = UIButton(type: .system)
+    private let confirmButton = RoomyButton(type: .system)
     private var confirmRect: CGRect?
     var onConfirm: (() -> Void)?
 
@@ -57,10 +57,11 @@ final class PDFPageOverlay: UIView {
 
         var config = UIButton.Configuration.filled()
         config.image = UIImage(systemName: "checkmark", withConfiguration:
-            UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))
+            UIImage.SymbolConfiguration(pointSize: 11, weight: .bold))
         config.baseBackgroundColor = HighlightColor.maroon.uiColor
         config.baseForegroundColor = .white
         config.cornerStyle = .capsule
+        config.contentInsets = .zero
         confirmButton.configuration = config
         confirmButton.layer.shadowColor = UIColor.black.cgColor
         confirmButton.layer.shadowOpacity = 0.25
@@ -105,7 +106,7 @@ final class PDFPageOverlay: UIView {
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if !confirmButton.isHidden, confirmButton.frame.insetBy(dx: -10, dy: -10).contains(point) {
+        if !confirmButton.isHidden, confirmButton.frame.insetBy(dx: -14, dy: -14).contains(point) {
             return confirmButton
         }
         return inkActive ? super.hitTest(point, with: event) : nil
@@ -161,9 +162,10 @@ final class PDFPageOverlay: UIView {
             confirmButton.isHidden = true
             return
         }
-        let size: CGFloat = 40
-        var x = r.maxX + 8
-        if x + size > bounds.maxX { x = r.minX - 8 - size }
+        // Small to look at; taps within ~14 pt of it still count (see hitTest).
+        let size: CGFloat = 24
+        var x = r.maxX + 6
+        if x + size > bounds.maxX { x = r.minX - 6 - size }
         let y = min(max(r.midY - size / 2, bounds.minY), bounds.maxY - size)
         confirmButton.frame = CGRect(x: max(x, bounds.minX), y: y, width: size, height: size)
         confirmButton.isHidden = false

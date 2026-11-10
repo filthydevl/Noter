@@ -8,6 +8,13 @@ struct TextHighlight {
     var style: HighlightStyle = .fill
 }
 
+/// A small button that still takes taps a little way around it.
+final class RoomyButton: UIButton {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: -14, dy: -14).contains(point)
+    }
+}
+
 /// One book page of the transcript.
 final class TranscriptCell: UICollectionViewCell {
     static let reuseID = "TranscriptCell"
@@ -34,7 +41,7 @@ final class TranscriptCell: UICollectionViewCell {
     private var previewRange: NSRange?
     private var previewColor: UIColor?
     /// The ✓ next to a circled word whose definition you're underlining.
-    private let confirmButton = UIButton(type: .system)
+    private let confirmButton = RoomyButton(type: .system)
     private var confirmRange: NSRange?
     var onConfirm: (() -> Void)?
 
@@ -79,10 +86,11 @@ final class TranscriptCell: UICollectionViewCell {
 
         var config = UIButton.Configuration.filled()
         config.image = UIImage(systemName: "checkmark", withConfiguration:
-            UIImage.SymbolConfiguration(pointSize: 16, weight: .bold))
+            UIImage.SymbolConfiguration(pointSize: 11, weight: .bold))
         config.baseBackgroundColor = HighlightColor.maroon.uiColor
         config.baseForegroundColor = .white
         config.cornerStyle = .capsule
+        config.contentInsets = .zero
         confirmButton.configuration = config
         confirmButton.layer.shadowColor = UIColor.black.cgColor
         confirmButton.layer.shadowOpacity = 0.25
@@ -159,9 +167,9 @@ final class TranscriptCell: UICollectionViewCell {
             return
         }
         let e = textView.convert(r.circledWordEllipse, to: contentView)
-        let size: CGFloat = 38
-        var x = e.maxX + 8
-        if x + size > contentView.bounds.maxX { x = e.minX - 8 - size }
+        let size: CGFloat = 24
+        var x = e.maxX + 6
+        if x + size > contentView.bounds.maxX { x = e.minX - 6 - size }
         confirmButton.frame = CGRect(x: max(x, 0), y: e.midY - size / 2, width: size, height: size)
         confirmButton.isHidden = false
         contentView.bringSubviewToFront(confirmButton)
