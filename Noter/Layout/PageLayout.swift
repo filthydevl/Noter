@@ -323,19 +323,64 @@ enum PageLayout {
         }
         if let f = furniture(top: false) { drop.formUnion(f.rows) }
 
-        // Footnotes: a block of smaller lines at the bottom, set apart by a gap or
-        // starting with a note marker (1, *, †…).
+        // Extraneous lines at the foot (and head) of the page: DOIs, links, copyright,
+        // publisher / journal / download stamps, ISSN / ISBN, licences.
+        func rowText(_ i: Int) -> String { rows[i].tokens.map(\.text).joined(separator: " ") }
+        func rowH(_ i: Int) -> CGFloat {
+            let hs = rows[i].tokens.map(\.rect.height).sorted()
+            return hs.isEmpty ? rows[i].rect.height : hs[hs.count / 2]
+        }
+        func gapAbove(_ pos: Int) -> CGFloat {
+            pos == 0 ? .infinity : rows[byY[pos]].rect.minY - rows[byY[pos - 1]].rect.maxY
+        }
+        for (pos, i) in byY.enumerated().reversed() where !drop.contains(i) {
+            let r = rows[i].rect
+            guard r.midY > 0.72 else { break }
+            let t = rowText(i)
+            let strong = Self.matches(Self.strongExtraneous, t)
+            let weak = Self.matches(Self.weakExtraneous, t)
+            let apart = rowH(i) < bodyH * 0.95 || gapAbove(pos) > typicalGap * 1.3 || r.width < colW * 0.7
+                || pos == byY.count - 1 || drop.contains(byY[min(pos + 1, byY.count - 1)])
+            if strong || (weak && apart) { drop.insert(i) }
+        }
+        for i in byY.prefix(4) where !drop.contains(i) && rows[i].rect.midY < 0.12 {
+            if Self.matches(Self.strongExtraneous, rowText(i)) { drop.insert(i) }
+        }
+
+        // Footnotes: a block of lines at the bottom of the page that is
+        // * set in smaller type, set apart by a gap or starting with a note marker, or
+        // * starts with a note marker ("1", "12.", "*", "†"…) after a clear gap, even when
+        //   it's barely smaller than the text.
+        let kept = byY.filter { !drop.contains($0) }
         var block: [Int] = []
-        var k = byY.count - 1
-        if drop.contains(byY[k]) { k -= 1 }
-        while k > 0, rows[byY[k]].rect.midY > 0.5, rows[byY[k]].rect.height < medianH * 0.86 {
-            block.append(byY[k])
+        var k = kept.count - 1
+        while k > 0, rows[kept[k]].rect.midY > 0.5, rowH(kept[k]) < bodyH * 0.92 {
+            block.append(kept[k])
             k -= 1
         }
+        func startsWithMarker(_ i: Int) -> Bool {
+            guard let first = rows[i].tokens.first?.text else { return false }
+            if first.range(of: #"^(\d{1,3}|[*†‡§¶]+)[.)]?$"#, options: .regularExpression) != nil { return true }
+            // "1See" — a marker glued to the note's first word.
+            return first.range(of: #"^\d{1,3}[A-Z][a-z]"#, options: .regularExpression) != nil
+        }
+        func gapBefore(_ i: Int, below j: Int) -> CGFloat { rows[i].rect.minY - rows[j].rect.maxY }
         if let first = block.last, k >= 0, block.count < rows.count / 2 + 1 {
-            let gap = rows[first].rect.minY - rows[byY[k]].rect.maxY
-            let marker = rows[first].tokens.first?.text.first.map { $0.isNumber || "*†‡§".contains($0) } ?? false
-            if gap > medianH * 0.8 || marker { drop.formUnion(block) }
+            let gap = gapBefore(first, below: kept[k])
+            if gap > medianH * 0.8 || gap > typicalGap * 1.4 || startsWithMarker(first) { drop.formUnion(block) }
+        }
+        // Same-size footnotes after a clear break.
+        if block.isEmpty || !drop.contains(block[0]) {
+            let lower = kept.filter { rows[$0].rect.midY > 0.55 }
+            for (n, i) in lower.enumerated() {
+                guard let pos = kept.firstIndex(of: i), pos > 0 else { continue }
+                let below = Array(lower[n...])
+                guard below.count <= max(rows.count * 2 / 5, 1), startsWithMarker(i),
+                      gapBefore(i, below: kept[pos - 1]) > typicalGap * 1.8,
+                      below.allSatisfy({ rowH($0) <= bodyH * 1.02 }) else { continue }
+                drop.formUnion(below)
+                break
+            }
         }
         return (rows.enumerated().filter { !drop.contains($0.offset) }.map(\.element), header)
     }
@@ -683,6 +728,20 @@ enum PageLayout {
             if c == 0x3F || c == 0x2E || c == 0x21 || c == 0x0A { sentenceStart = i + 1 } // ? . ! newline
             i += 1
         }
+    }
+
+    /// Page clutter that is never part of the text: DOIs, links, ©, stamps, ISSN / ISBN.
+    static let strongExtraneous = try? NSRegularExpression(pattern:
+        #"\bdoi\b|doi\.org|\b10\.\d{4,9}/\S+|https?://|www\.|©|\(c\)\s*(19|20)\d\d|\bissn\b|\bisbn\b|all rights reserved|downloaded (from|by)|this content downloaded|creative commons|\bcc by\b|jstor|terms (and conditions|of use)|for personal use only"#,
+        options: [.caseInsensitive])
+    /// Publisher-ish words that only count on a short / small / separate line at the foot.
+    static let weakExtraneous = try? NSRegularExpression(pattern:
+        #"copyright|published (by|online)|university press|\bpress\b.*(19|20)\d\d|licen[cs]ed?\b|reprinted|\bvol\.?\s*\d+.*\bno\.?\s*\d+|accepted:|received:|retrieved from|\.(com|org|net|edu|gov)\b"#,
+        options: [.caseInsensitive])
+
+    static func matches(_ regex: NSRegularExpression?, _ text: String) -> Bool {
+        guard let regex else { return false }
+        return regex.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) != nil
     }
 
     /// "p." "pp." "No." "vol." "ch." "fig."… — a number after these is a reference, not a
