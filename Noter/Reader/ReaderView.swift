@@ -74,25 +74,23 @@ struct ReaderView: View {
         // Landscape with a panel open: the page moves over to the left, beside the panel
         // and the rail, instead of sitting under them.
         .padding(.trailing, pushesPageLeft ? 376 + Self.railWidth + 8 : 0)
+        // Resized in one step: animating it re-laid out the whole PDF every frame (laggy).
+        .transaction { $0.animation = nil }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .overlay(alignment: .trailing) {
-            // At the very edge of the screen, below Undo (scrolls if the screen is short).
+            // At the very edge of the screen, below the player (scrolls inside its own
+            // frame if the screen is short, never cut off).
             ViewThatFits(in: .vertical) {
-                rail
-                ScrollView(.vertical, showsIndicators: false) { rail }
+                rail(scrolls: false)
+                rail(scrolls: true)
             }
-            .padding(.top, 122)
+            .padding(.top, 66)
             .padding(.bottom, scribbleBar ? 76 : 10)
             .padding(.trailing, railTrailing)
         }
         // Above the rail, so nothing ever covers the player.
         .overlay(alignment: .topTrailing) {
-            VStack(alignment: .trailing, spacing: 10) {
-                SpeechControlView(speech: session.speech) { session.showReadingPosition() }
-                // Under the player, Undo lined up with the tool rail below it.
-                UndoRedoControls(session: session)
-                    .padding(.trailing, (Self.railWidth - 46) / 2)
-            }
+            SpeechControlView(speech: session.speech) { session.showReadingPosition() }
             .padding(.top, 10)
             .padding(.trailing, railTrailing)
         }
@@ -258,8 +256,9 @@ struct ReaderView: View {
 
     private var scribbleBar: Bool { session.penMode == .scribble && session.viewMode != .transcript }
 
-    private var rail: some View {
-        ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel)
+    private func rail(scrolls: Bool) -> some View {
+        ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel,
+                 scrolls: scrolls)
     }
 
     private var layoutBinding: Binding<LayoutMode> {
@@ -330,75 +329,60 @@ struct ReaderView: View {
     }
 }
 
-/// Undo under the player: your last highlight change, or your last ink / shape change
-/// while scribbling. Redo shows up beside it only after an undo, and goes away by
-/// itself a few seconds later, once there's nothing left to redo, or when you change
-/// something new.
-private struct UndoRedoControls: View {
+/// Undo, at the top of the tool rail: your last highlight change, or your last ink /
+/// shape change while scribbling.
+private struct RailUndoButton: View {
     @ObservedObject var session: DocumentSession
-    /// Bumped when the ink undo manager changes (it isn't observable).
-    @State private var inkTick = 0
-    @State private var redoOffered = false
-    @State private var hideTask: Task<Void, Never>?
-
-    private var scribbling: Bool { session.penMode == .scribble && session.viewMode != .transcript }
 
     var body: some View {
-        let _ = inkTick
-        let canUndo = scribbling ? session.inkUndo.canUndo : session.canUndo
-        let canRedo = scribbling ? session.inkUndo.canRedo : session.canRedo
-        let showRedo = redoOffered && canRedo
-        HStack(spacing: 10) {
-            // Appears to the left, so Undo never moves under your finger.
-            button("arrow.uturn.forward", "Redo", enabled: true) {
-                if scribbling { session.inkUndo.redo() } else { session.redo() }
-                offerRedo()
-            }
-            .opacity(showRedo ? 1 : 0)
-            .scaleEffect(showRedo ? 1 : 0.5)
-            .allowsHitTesting(showRedo)
-            .accessibilityHidden(!showRedo)
-            button("arrow.uturn.backward", "Undo", enabled: canUndo) {
-                if scribbling { session.inkUndo.undo() } else { session.undo() }
-                offerRedo()
-            }
-        }
-        .animation(.snappy(duration: 0.22), value: showRedo)
-        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidCloseUndoGroup)) { inkChanged($0) }
-        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { inkChanged($0) }
-        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { inkChanged($0) }
-        .onChange(of: session.penMode) { _, _ in redoOffered = false }
-    }
-
-    private func inkChanged(_ note: Notification) {
-        guard (note.object as? UndoManager) === session.inkUndo else { return }
-        inkTick &+= 1
-    }
-
-    private func offerRedo() {
-        redoOffered = true
-        hideTask?.cancel()
-        hideTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(6))
-            guard !Task.isCancelled else { return }
-            redoOffered = false
-        }
-    }
-
-    private func button(_ symbol: String, _ label: String, enabled: Bool,
-                        action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 17, weight: .semibold))
-                .frame(width: 46, height: 46)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
-                .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
+        let _ = session.inkUndoVersion
+        let scribbling = session.penMode == .scribble && session.viewMode != .transcript
+        let enabled = scribbling ? session.inkUndo.canUndo : session.canUndo
+        Button {
+            if scribbling { session.inkUndo.undo() } else { session.undo() }
+            session.offerRedo()
+        } label: {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Color.primary)
+                .frame(width: 44, height: 40)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.45)
-        .accessibilityLabel(label)
+        .opacity(enabled ? 1 : 0.35)
+        .accessibilityLabel("Undo")
+    }
+}
+
+/// Redo pops out beside Undo only after an undo, and goes away by itself a few
+/// seconds later, once there's nothing left to redo, or when you change something new.
+private struct RedoBubble: View {
+    @ObservedObject var session: DocumentSession
+
+    var body: some View {
+        let _ = session.inkUndoVersion
+        let scribbling = session.penMode == .scribble && session.viewMode != .transcript
+        let canRedo = scribbling ? session.inkUndo.canRedo : session.canRedo
+        let show = session.redoOffered && canRedo
+        Button {
+            if scribbling { session.inkUndo.redo() } else { session.redo() }
+            session.offerRedo()
+        } label: {
+            Image(systemName: "arrow.uturn.forward")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 42, height: 42)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                .shadow(color: .black.opacity(0.14), radius: 6, y: 2)
+        }
+        .buttonStyle(.plain)
+        .opacity(show ? 1 : 0)
+        .scaleEffect(show ? 1 : 0.5)
+        .allowsHitTesting(show)
+        .accessibilityHidden(!show)
+        .accessibilityLabel("Redo")
+        .animation(.snappy(duration: 0.22), value: show)
     }
 }
 
@@ -410,6 +394,8 @@ private struct ToolRail: View {
     @ObservedObject var scribble: ScribbleSettings
     @ObservedObject var palette: ColorPalette
     @Binding var panel: SidePanel?
+    /// Too tall for the screen: the buttons scroll inside the rail's frame.
+    var scrolls = false
     @State private var showColors = false
     @State private var showTextOptions = false
 
@@ -417,7 +403,30 @@ private struct ToolRail: View {
     private var penColor: Color { scribbling ? scribble.color.color : session.color.color }
 
     var body: some View {
+        Group {
+            if scrolls {
+                ScrollView(.vertical, showsIndicators: false) { items }
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            } else {
+                items
+            }
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
+        .shadow(color: .black.opacity(0.1), radius: 12, y: 4)
+        // Redo pops out to the left of Undo.
+        .overlay(alignment: .topLeading) {
+            RedoBubble(session: session)
+                .offset(x: -50, y: 5)
+        }
+    }
+
+    private var items: some View {
         VStack(spacing: 4) {
+            RailUndoButton(session: session)
+
+            divider
+
             // Find a word or sentence in the book.
             railButton("magnifyingglass", label: "Search", selected: panel == .search) {
                 panel = panel == .search ? nil : .search
@@ -536,9 +545,6 @@ private struct ToolRail: View {
             }
         }
         .padding(6)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
-        .shadow(color: .black.opacity(0.1), radius: 12, y: 4)
     }
 
     /// Highlight colors with your names for them, the auto / manual switch, and the way

@@ -28,7 +28,27 @@ final class DocumentSession: ObservableObject {
     }
     /// The pen button switches between highlighting and scribbling.
     @Published var penMode: PenMode = .highlight {
-        didSet { pdfController?.applyScribbleState() }
+        didSet {
+            pdfController?.applyScribbleState()
+            redoOffered = false
+        }
+    }
+    /// Bumped when the ink undo manager changes (it isn't observable itself).
+    @Published private(set) var inkUndoVersion = 0
+    /// Redo is offered (beside Undo) for a few seconds after an undo.
+    @Published private(set) var redoOffered = false
+    private var redoHide: Task<Void, Never>?
+    private var undoObservers: [NSObjectProtocol] = []
+
+    /// After an undo or redo: show Redo for a few seconds.
+    func offerRedo() {
+        redoOffered = true
+        redoHide?.cancel()
+        redoHide = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            self?.redoOffered = false
+        }
     }
     /// Briefly true when you tap the page while scribbling (shows "!" on the pen button).
     @Published private(set) var scribbleHint = false
@@ -136,6 +156,13 @@ final class DocumentSession: ObservableObject {
 
         rebuildIndex()
         speech.session = self
+        for name in [NSNotification.Name.NSUndoManagerDidCloseUndoGroup, .NSUndoManagerDidUndoChange,
+                     .NSUndoManagerDidRedoChange] {
+            undoObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: inkUndo, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.inkUndoVersion &+= 1 }
+                })
+        }
         ocr.onPageReady = { [weak self] index in self?.pageReady(index) }
         questions.onChange = { [weak self] in self?.marksChanged() }
         scribble.onChange = { [weak self] in self?.pdfController?.applyScribbleState() }
@@ -150,6 +177,8 @@ final class DocumentSession: ObservableObject {
     }
 
     func close() {
+        undoObservers.forEach(NotificationCenter.default.removeObserver)
+        undoObservers = []
         if readyFlush != nil {
             readyFlush?.cancel()
             flushPageReady()
