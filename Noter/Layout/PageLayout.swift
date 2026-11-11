@@ -393,8 +393,11 @@ enum PageLayout {
     ///    continuation on the next line, not continuing an unfinished previous line,
     ///  * be set apart from the text by extra space,
     ///  * and look like a heading: larger type (judged from word heights, which one
-    ///    tall character can't inflate), ALL CAPS, centred, or "Chapter N".
-    /// A heading that wraps onto a second line in the same style keeps both lines.
+    ///    tall character can't inflate), ALL CAPS, centred (the same margin on both
+    ///    sides, wherever on the page it is), "Chapter N", or the title of one source
+    ///    in a collection of primary sources ("Document 3: …", "Source 2", "Excerpt
+    ///    from …").
+    /// A heading that wraps onto more lines in the same style keeps them all.
     static func detectHeadings(_ rows: [Row]) -> Set<Int> {
         guard rows.count >= 3 else { return [] }
         func median(_ v: [CGFloat]) -> CGFloat {
@@ -422,16 +425,25 @@ enum PageLayout {
             return letters.count >= 4 && Double(letters.filter(\.isUppercase).count) / Double(letters.count) > 0.85
         }
         let chapterPattern = #"^(chapter|part|book|section)\s+([0-9ivxlc]+|[a-z]+)\b"#
+        let sourcePattern = #"^((primary\s+)?(document|doc\.|source|reading|selection|exhibit|appendix)\s*([0-9]+[a-z]?|[ivxlc]+|[a-z])\b|(an\s+)?(excerpts?|extracts?)\s+from\b)"#
+        /// Same margin left and right, clearly in from both: set in the middle.
+        func isCentred(_ i: Int) -> Bool {
+            let left = rows[i].rect.minX - colMin, right = colMax - rows[i].rect.maxX
+            return rows[i].rect.width < colW * 0.8 && left > colW * 0.07 && right > colW * 0.07
+                && abs(left - right) < max(colW * 0.08, (left + right) * 0.25)
+        }
 
         var out = Set<Int>()
         var style: [Int: String] = [:] // why each heading qualified, for wrapped lines
         for i in rows.indices {
             let t = text(i)
             let words = rows[i].tokens.count
-            guard (1...12).contains(words), let firstLetter = t.first(where: { $0.isLetter || $0.isNumber }),
+            let source = t.range(of: sourcePattern, options: [.regularExpression, .caseInsensitive]) != nil
+            guard (1...(source ? 18 : 12)).contains(words),
+                  let firstLetter = t.first(where: { $0.isLetter || $0.isNumber }),
                   firstLetter.isUppercase || firstLetter.isNumber else { continue }
-            // Reads like part of a sentence.
-            if let last = t.last, ".,;:".contains(last), !t.hasSuffix("...") { continue }
+            // Reads like part of a sentence ("Document 3:" is fine).
+            if let last = t.last, ".,;:".contains(last), !t.hasSuffix("..."), !(source && last == ":") { continue }
             if i + 1 < rows.count, gapBelow(i) < typicalGap * 1.6,
                let next = text(i + 1).first(where: \.isLetter), next.isLowercase { continue }
             if i > 0, gapAbove(i) < typicalGap * 1.6, let prevLast = text(i - 1).last,
@@ -441,28 +453,46 @@ enum PageLayout {
             let spacedBelow = gapBelow(i) > typicalGap * 1.3
             let big = rowH[i] >= bodyH * 1.35
             let caps = isCaps(t) && words <= 10
-            let centred = rows[i].rect.width < colW * 0.7 && abs(rows[i].rect.midX - colMid) < colW * 0.05
+            let centred = isCentred(i) && abs(rows[i].rect.midX - colMid) < colW * 0.1
             let chapter = t.range(of: chapterPattern, options: [.regularExpression, .caseInsensitive]) != nil
                 && words <= 8
 
             if (big || chapter) && (spacedAbove || spacedBelow) {
                 out.insert(i)
                 style[i] = big ? "big" : "chapter"
-            } else if (caps || (centred && words <= 10)) && spacedAbove && spacedBelow {
+            } else if source && (spacedAbove || spacedBelow || centred || caps) {
                 out.insert(i)
-                style[i] = caps ? "caps" : "centred"
+                style[i] = "source"
+            } else if caps && spacedAbove && spacedBelow {
+                out.insert(i)
+                style[i] = "caps"
+            } else if centred && words <= 12 && (spacedAbove || spacedBelow || i == 0) {
+                out.insert(i)
+                style[i] = "centred"
             }
         }
 
-        // Second line of a wrapped heading: same style, tight below the first.
-        for i in out.sorted() where i + 1 < rows.count && !out.contains(i + 1) {
-            let j = i + 1
-            let t = text(j)
-            guard rows[j].tokens.count <= 12, gapBelow(i) < typicalGap * 1.6,
-                  let last = t.last, !".,;:".contains(last) else { continue }
-            let sameSize = abs(rowH[j] - rowH[i]) < rowH[i] * 0.12
-            if (style[i] == "big" && sameSize && rowH[j] >= bodyH * 1.35) || (style[i] == "caps" && isCaps(t)) {
+        // More lines of a wrapped heading: same style, tight below the one before.
+        for i in out.sorted() {
+            var k = i
+            while k + 1 < rows.count, !out.contains(k + 1), k - i < 3 {
+                let j = k + 1
+                let t = text(j)
+                guard rows[j].tokens.count <= 14, gapBelow(k) < typicalGap * 1.6 else { break }
+                let sameSize = abs(rowH[j] - rowH[k]) < rowH[k] * 0.12
+                let continues: Bool
+                switch style[i] {
+                case "big": continues = sameSize && rowH[j] >= bodyH * 1.35
+                case "caps": continues = isCaps(t)
+                case "centred": continues = sameSize && isCentred(j)
+                case "source": continues = sameSize && (isCentred(j) || t.count < 70)
+                    && !(t.last.map { ".".contains($0) } ?? false)
+                default: continues = false
+                }
+                guard continues else { break }
                 out.insert(j)
+                style[j] = style[i]
+                k = j
             }
         }
         // Headings are rare: if a lot of lines qualify, the page is just unusual.

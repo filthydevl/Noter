@@ -76,6 +76,10 @@ struct HighlightsListView: View {
                                 ConnectedIdeas(run: run, name: session.palette.name(run[0].color)) { h in
                                     row(h, keywords: keywords, byKey: byKey)
                                 }
+                            case .definition(let term, let parts):
+                                WordWithDefinition(term: term, parts: parts) { h in
+                                    row(h, keywords: keywords, byKey: byKey)
+                                }
                             }
                         }
                     }
@@ -115,11 +119,14 @@ extension HighlightsListView {
 enum HighlightBlock: Identifiable {
     case single(Highlight)
     case run([Highlight])
+    /// A circled word and its definition(s), kept together.
+    case definition(Highlight, [Highlight])
 
     var id: UUID {
         switch self {
         case .single(let h): h.id
         case .run(let hs): hs[0].id
+        case .definition(let term, _): term.id
         }
     }
 
@@ -134,8 +141,20 @@ enum HighlightBlock: Identifiable {
             }
             run = []
         }
-        for h in items {
-            if h.isTerm || h.isDefinition {
+        var i = 0
+        while i < items.count {
+            let h = items[i]
+            i += 1
+            if h.isTerm {
+                flush()
+                // Its definitions come right after it (see `groupedHighlights`).
+                var parts: [Highlight] = []
+                while i < items.count, items[i].isDefinition, items[i].termID == h.id {
+                    parts.append(items[i])
+                    i += 1
+                }
+                out.append(parts.isEmpty ? .single(h) : .definition(h, parts))
+            } else if h.isDefinition {
                 flush()
                 out.append(.single(h))
             } else if let last = run.last, last.color != h.color {
@@ -147,6 +166,29 @@ enum HighlightBlock: Identifiable {
         }
         flush()
         return out
+    }
+}
+
+/// A circled word with its definition below it, an arrow between: one block, each still
+/// its own card.
+struct WordWithDefinition<Row: View>: View {
+    let term: Highlight
+    let parts: [Highlight]
+    @ViewBuilder let row: (Highlight) -> Row
+
+    var body: some View {
+        let color = HighlightColor.maroon.color
+        VStack(spacing: 6) {
+            row(term)
+            ForEach(parts) { p in
+                DefinitionArrow(word: Highlight.keywordDisplay(term.text))
+                row(p)
+            }
+        }
+        .padding(8)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(color.opacity(0.3)))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -383,16 +425,12 @@ struct DefinitionArrow: View {
     let word: String
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.down")
-                .font(.system(size: 13, weight: .bold))
-            Text("definition of “\(word)”")
-                .font(.caption2.weight(.semibold))
-                .lineLimit(1)
-        }
-        .foregroundStyle(HighlightColor.maroon.color)
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
+        // Just the arrow; VoiceOver still says what it is.
+        Image(systemName: "arrow.down")
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(HighlightColor.maroon.color)
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Definition of \(word)")
     }
 }
 

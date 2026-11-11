@@ -60,6 +60,11 @@ final class DocumentSession: ObservableObject {
     @Published private(set) var currentPage = 0
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
+    /// A side panel is open / the screen is narrow (portrait): jumping to a spot closes
+    /// the panel so it doesn't cover it.
+    var panelOpen = false
+    var narrowLayout = false
+    @Published private(set) var closePanelSignal = 0
     @Published private(set) var toast: String?
     @Published private(set) var speechPosition: SpeechPosition?
     @Published private(set) var labelsVersion = 0
@@ -651,11 +656,20 @@ final class DocumentSession: ObservableObject {
     }
 
     /// Jumps to a highlight and blinks a box around it.
+    /// In portrait an open side panel covers much of the page: close it before jumping.
+    private func clearViewForJump() {
+        guard panelOpen, narrowLayout else { return }
+        closePanelSignal += 1
+        panelOpen = false
+        pdfController?.coveredRight = 64
+    }
+
     func open(_ h: Highlight) {
         setCurrentPage(h.page)
         let mode = lastReadingMode
         viewMode = mode
         noteUserActivity() // don't let read-along scroll away from it
+        clearViewForJump()
         if mode == .pdf {
             pdfController?.focus(page: h.page, rects: h.rects)
             pdfController?.flash(pageIndex: h.page, rects: h.rects)
@@ -675,6 +689,7 @@ final class DocumentSession: ObservableObject {
         let mode = lastReadingMode
         viewMode = mode
         noteUserActivity()
+        clearViewForJump()
         guard let lp = logicalPage(slot), location.tokens.upperBound < lp.tokens.count else { return }
         if mode == .pdf {
             let rects = lp.lineRects(for: location.tokens)

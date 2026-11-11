@@ -59,45 +59,52 @@ struct ReaderView: View {
 
     var body: some View {
         ZStack {
+            // Under the top bar too: only its buttons float over the page.
             PDFReaderRepresentable(session: session)
-                .ignoresSafeArea(edges: .bottom)
+                .ignoresSafeArea(edges: [.top, .bottom])
                 .opacity(session.viewMode == .transcript ? 0 : 1)
                 .allowsHitTesting(session.viewMode != .transcript)
 
             TranscriptRepresentable(session: session)
-                .ignoresSafeArea(edges: .bottom)
+                .ignoresSafeArea(edges: [.top, .bottom])
                 .opacity(session.viewMode == .transcript ? 1 : 0)
                 .allowsHitTesting(session.viewMode == .transcript)
         }
         .overlay(alignment: .topTrailing) {
             VStack(alignment: .trailing, spacing: 10) {
                 SpeechControlView(speech: session.speech) { session.showReadingPosition() }
-                // Under the player, left of the tool rail so they never overlap.
+                // Under the player, Undo lined up with the tool rail below it.
                 UndoRedoControls(session: session)
-                    .padding(.trailing, 62)
+                    .padding(.trailing, (Self.railWidth - 46) / 2)
             }
             .padding(.top, 10)
-            .padding(.trailing, panel == nil ? 14 : 386) // beside an open side panel
+            .padding(.trailing, railTrailing)
         }
         .overlay(alignment: .trailing) {
-            ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel)
-                .padding(.trailing, panel == nil ? 14 : 386)
+            // At the very edge of the screen, below Undo (scrolls if the screen is short).
+            ViewThatFits(in: .vertical) {
+                rail
+                ScrollView(.vertical, showsIndicators: false) { rail }
+            }
+            .padding(.top, 122)
+            .padding(.bottom, scribbleBar ? 76 : 10)
+            .padding(.trailing, railTrailing)
         }
         .overlay(alignment: .bottom) {
-            if session.penMode == .scribble && session.viewMode != .transcript {
+            if scribbleBar {
                 ScribbleToolbar(session: session, settings: session.scribble)
-                    .padding(.horizontal, 74) // room for the undo button in the corner
+                    .padding(.horizontal, 50) // clear of the page slider and the rail
                     .padding(.bottom, 18)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .overlay(alignment: .bottom) {
-            if showScrubber {
-                // Long and low; clear of an open panel.
+        .overlay(alignment: .leading) {
+            if session.pageCount > 1 {
+                // Up the very left edge of the screen.
                 PageScrubber(session: session, outline: session.outline)
-                    .padding(.leading, 20)
-                    .padding(.trailing, panel == nil ? 20 : 392)
-                    .padding(.bottom, 6)
+                    .padding(.leading, 4)
+                    .padding(.top, 8)
+                    .padding(.bottom, scribbleBar ? 76 : 16)
                     .transition(.opacity)
             }
         }
@@ -147,7 +154,19 @@ struct ReaderView: View {
         }
         .animation(.snappy(duration: 0.28), value: panel)
         // Jumping to a highlight centers it in the part of the page you can see.
-        .onChange(of: panel) { _, p in session.pdfController?.coveredRight = p == nil ? 70 : 456 }
+        .onChange(of: panel) { _, p in
+            session.pdfController?.coveredRight = p == nil ? Self.railWidth + 8 : 372 + Self.railWidth + 12
+            session.panelOpen = p != nil
+        }
+        // In portrait an open panel would cover the spot you jump to: it closes.
+        .onChange(of: session.closePanelSignal) { _, _ in panel = nil }
+        .background {
+            GeometryReader { g in
+                Color.clear
+                    .onAppear { session.narrowLayout = g.size.width < 1140 }
+                    .onChange(of: g.size.width) { _, w in session.narrowLayout = w < 1140 }
+            }
+        }
         .animation(.snappy(duration: 0.25), value: session.pendingTerm)
         .animation(.snappy(duration: 0.25), value: session.penMode)
         .overlay(alignment: .trailing) {
@@ -180,6 +199,7 @@ struct ReaderView: View {
         .navigationTitle(session.info.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
+        .toolbarBackground(.hidden, for: .navigationBar)
     }
 
     @ViewBuilder
@@ -200,9 +220,15 @@ struct ReaderView: View {
         }
     }
 
-    /// The page slider, except while the scribble toolbar is there.
-    private var showScrubber: Bool {
-        !(session.penMode == .scribble && session.viewMode != .transcript) && session.pageCount > 1
+    static let railWidth: CGFloat = 56
+
+    /// The tool rail's distance from the right edge: at the edge, or beside an open panel.
+    private var railTrailing: CGFloat { panel == nil ? 4 : 376 }
+
+    private var scribbleBar: Bool { session.penMode == .scribble && session.viewMode != .transcript }
+
+    private var rail: some View {
+        ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel)
     }
 
     private var layoutBinding: Binding<LayoutMode> {
@@ -292,11 +318,7 @@ private struct UndoRedoControls: View {
         let canRedo = scribbling ? session.inkUndo.canRedo : session.canRedo
         let showRedo = redoOffered && canRedo
         HStack(spacing: 10) {
-            button("arrow.uturn.backward", "Undo", enabled: canUndo) {
-                if scribbling { session.inkUndo.undo() } else { session.undo() }
-                offerRedo()
-            }
-            // Its slot is kept, so Undo never moves under your finger.
+            // Appears to the left, so Undo never moves under your finger.
             button("arrow.uturn.forward", "Redo", enabled: true) {
                 if scribbling { session.inkUndo.redo() } else { session.redo() }
                 offerRedo()
@@ -305,6 +327,10 @@ private struct UndoRedoControls: View {
             .scaleEffect(showRedo ? 1 : 0.5)
             .allowsHitTesting(showRedo)
             .accessibilityHidden(!showRedo)
+            button("arrow.uturn.backward", "Undo", enabled: canUndo) {
+                if scribbling { session.inkUndo.undo() } else { session.undo() }
+                offerRedo()
+            }
         }
         .animation(.snappy(duration: 0.22), value: showRedo)
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidCloseUndoGroup)) { inkChanged($0) }

@@ -25,6 +25,9 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     private lazy var readTap = UITapGestureRecognizer(target: self, action: #selector(handleReadTap(_:)))
     /// While scribbling, a finger tap that can't jump the voice shows "!" on the pen button.
     private lazy var hintTap = UITapGestureRecognizer(target: self, action: #selector(handleHintTap(_:)))
+    /// A tap (finger or pencil) on the ✓ next to a circled word. Caught here because PDFKit
+    /// only passes touches to things drawn on a page in markup mode.
+    private lazy var confirmTap = UITapGestureRecognizer(target: self, action: #selector(handleConfirmTap(_:)))
     private weak var session: DocumentSession?
 
     /// Overlays of the pages PDFKit is currently displaying, by page index.
@@ -88,7 +91,11 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         addSubview(inkOverlay)
 
         pencil.addTarget(self, action: #selector(handlePencil(_:)))
+        pencil.ignoresTouch = { [weak self] p in self?.confirmHit(p) ?? false }
         pdfView.addGestureRecognizer(pencil)
+
+        confirmTap.delegate = self
+        pdfView.addGestureRecognizer(confirmTap)
 
         readTap.allowedTouchTypes = fingerTouchTypes
         readTap.delegate = self
@@ -128,10 +135,12 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     /// taps) finger-only, so a pencil touch can only ever highlight.
     private func restrictPencilToHighlighting() {
         func walk(_ v: UIView) {
-            // The scribble canvas owns the pencil while scribbling: leave it alone.
-            if v is PKCanvasView { return }
+            // The scribble canvas and the shape layer own the pencil while scribbling, and
+            // the ✓ takes pencil taps: leave them alone.
+            if v is PKCanvasView || v is ShapeOverlayView || v is RoomyButton { return }
             for g in v.gestureRecognizers ?? []
-            where g !== pencil && g !== readTap && g !== hintTap && !(g is UIHoverGestureRecognizer) {
+            where g !== pencil && g !== readTap && g !== hintTap && g !== confirmTap
+                && !(g is UIHoverGestureRecognizer) {
                 g.allowedTouchTypes = fingerTouchTypes
             }
             if let sv = v as? UIScrollView, hookedScrollViews.insert(ObjectIdentifier(sv)).inserted {
@@ -148,6 +157,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
 
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
         if g === readTap { return session?.speech.isActive ?? false }
+        if g === confirmTap { return confirmHit(g.location(in: pdfView)) }
         if g === hintTap {
             guard let s = session else { return false }
             return s.penMode == .scribble && !s.speech.isActive
@@ -157,7 +167,20 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
 
     func gestureRecognizer(_ g: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        g === readTap || g === hintTap
+        g === readTap || g === hintTap || g === confirmTap
+    }
+
+    /// Whether a point in the PDF view is on (or right next to) a ✓.
+    private func confirmHit(_ point: CGPoint) -> Bool {
+        overlays.values.contains { o in
+            guard o.window != nil, let f = o.confirmHitFrame else { return false }
+            return o.convert(f, to: pdfView).contains(point)
+        }
+    }
+
+    @objc private func handleConfirmTap(_ g: UITapGestureRecognizer) {
+        guard g.state == .ended else { return }
+        session?.confirmDefinition()
     }
 
     @objc private func handleHintTap(_ g: UITapGestureRecognizer) {
@@ -209,10 +232,13 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         }
         // The highlight's size on the page, in page points (rotation applied).
         let width = union.width * size.width, height = union.height * size.height
-        let fitWidth = view.width / size.width
-        var scale = view.width * 0.86 / max(width, size.width * 0.4)
-        scale = min(scale, view.height * 0.55 / max(height, 1))
-        scale = min(max(scale, fitWidth), fitWidth * 3, pdfView.maxScaleFactor)
+        // Right in on the quote: it fills the width you can see (and at most ~40% of the
+        // height), never smaller than the page fitted to the screen's width.
+        let fitScreen = pdfView.bounds.inset(by: pdfView.safeAreaInsets).width / size.width
+        var scale = view.width * 0.92 / max(width, 1)
+        scale = min(scale, view.height * 0.4 / max(height, 1))
+        scale = min(max(scale, fitScreen * 1.1), fitScreen * 4, pdfView.maxScaleFactor)
+        pdfView.autoScales = false // or PDFKit fits the width again on the next layout
         pdfView.scaleFactor = scale
         pdfView.layoutIfNeeded()
         pdfView.go(to: pr, on: page)
@@ -227,6 +253,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         let view = visibleArea
         guard size.width > 1, size.height > 1, view.width > 10, view.height > 10 else { return }
         let scale = min(view.width / size.width, view.height / size.height) * 0.97
+        pdfView.autoScales = false
         pdfView.minScaleFactor = min(pdfView.minScaleFactor, scale)
         pdfView.scaleFactor = min(scale, pdfView.maxScaleFactor)
         pdfView.layoutIfNeeded()
@@ -251,7 +278,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     }
 
     /// Width on the right covered by the tool rail and an open side panel.
-    var coveredRight: CGFloat = 70
+    var coveredRight: CGFloat = 64
 
     /// The part of the PDF view you can see past the bars, the rail and a panel.
     private var visibleArea: CGRect {

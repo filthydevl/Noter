@@ -8,6 +8,9 @@ final class PencilStrokeRecognizer: UIGestureRecognizer {
     /// Stroke samples in the coordinate space of `view`.
     private(set) var points: [CGPoint] = []
     private var activeTouch: UITouch?
+    /// Spots (in `view`) where the pencil taps a control instead of highlighting — the
+    /// ✓ next to a circled word, which PDFKit doesn't pass touches to.
+    var ignoresTouch: ((CGPoint) -> Bool)?
 
     override init(target: Any?, action: Selector?) {
         super.init(target: target, action: action)
@@ -28,7 +31,7 @@ final class PencilStrokeRecognizer: UIGestureRecognizer {
         }
         // A pencil tap on a button on the page (the ✓ next to a circled word) is a tap,
         // not a highlight stroke: let the button have it.
-        if touch.view is UIControl {
+        if touch.view is UIControl || ignoresTouch?(touch.location(in: view)) == true {
             ignore(touch, for: event)
             state = .failed
             return

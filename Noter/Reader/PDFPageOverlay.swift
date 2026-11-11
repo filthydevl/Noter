@@ -96,6 +96,11 @@ final class PDFPageOverlay: UIView {
         setNeedsLayout()
     }
 
+    /// Where a tap counts as tapping the ✓ (this view's coordinates), if it's showing.
+    var confirmHitFrame: CGRect? {
+        confirmButton.isHidden || confirmButton.superview == nil ? nil : confirmButton.frame.insetBy(dx: -14, dy: -14)
+    }
+
     /// Shows the ✓ next to the circled word at `rect` (normalized), or hides it.
     func setConfirm(_ rect: CGRect?) {
         confirmRect = rect

@@ -9,7 +9,22 @@ struct TextHighlight {
 }
 
 /// A small button that still takes taps a little way around it.
-final class RoomyButton: UIButton {
+final class RoomyButton: UIButton, UIGestureRecognizerDelegate {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // Its own tap (finger or pencil), so the text view's gestures can't swallow it.
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
+        tap.delegate = self
+        addGestureRecognizer(tap)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    @objc private func tapped() { sendActions(for: .primaryActionTriggered) }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         bounds.insetBy(dx: -14, dy: -14).contains(point)
     }
