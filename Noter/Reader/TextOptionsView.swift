@@ -97,6 +97,12 @@ struct TextOptionsView: View {
                     }
                     .pickerStyle(.segmented)
                 }
+                section("Pages") {
+                    Toggle(isOn: appearance.twoPages) {
+                        Label("Two pages side by side in landscape", systemImage: "book")
+                    }
+                    .font(.subheadline)
+                }
                 section("Alignment") {
                     Picker("Alignment", selection: appearance.justified) {
                         Label("Left", systemImage: "text.alignleft").tag(false)

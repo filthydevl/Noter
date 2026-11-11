@@ -123,6 +123,14 @@ struct TextAppearance: Codable, Equatable {
     var paragraphSpacing: Double = 0.9
     var width: ReaderWidth = .medium
     var justified = false
+    /// In landscape, two pages side by side like an open book. Optional so options saved
+    /// before it existed still load.
+    var twoPagesInLandscape: Bool?
+
+    var twoPages: Bool {
+        get { twoPagesInLandscape ?? false }
+        set { twoPagesInLandscape = newValue }
+    }
 
     private static let key = "noter.textAppearance"
 

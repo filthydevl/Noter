@@ -33,6 +33,19 @@ final class RoomyButton: UIButton, UIGestureRecognizerDelegate {
 /// One book page of the transcript.
 final class TranscriptCell: UICollectionViewCell {
     static let reuseID = "TranscriptCell"
+
+    /// In the two-page layout the cell measures its own height (the list layout does it
+    /// for itself).
+    override func preferredLayoutAttributesFitting(_ attributes: UICollectionViewLayoutAttributes)
+        -> UICollectionViewLayoutAttributes {
+        guard attributes is TwoPageLayout.Attributes else { return super.preferredLayoutAttributesFitting(attributes) }
+        let a = attributes.copy() as! UICollectionViewLayoutAttributes
+        let size = contentView.systemLayoutSizeFitting(
+            CGSize(width: attributes.frame.width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        a.frame.size.height = ceil(size.height)
+        return a
+    }
     private static let speechColor = UIColor(named: "AccentColor") ?? .systemIndigo
 
     let header = UILabel()

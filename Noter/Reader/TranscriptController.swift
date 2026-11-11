@@ -38,7 +38,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         self.session = session
         super.init(frame: .zero)
 
-        let layout = UICollectionViewCompositionalLayout { [weak self] _, env in
+        listLayout = UICollectionViewCompositionalLayout { [weak self] _, env in
             let width = env.container.effectiveContentSize.width
             let maxText = self?.maxTextWidth ?? 740
             let side = max(28, (width - maxText) / 2)
@@ -49,7 +49,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             section.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: side, bottom: 0, trailing: side)
             return section
         }
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: listLayout)
         collectionView.backgroundColor = session.textAppearance.theme.background
         maxTextWidth = session.textAppearance.width.points
         overrideUserInterfaceStyle = session.textAppearance.theme.interfaceStyle
@@ -77,9 +77,36 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    /// One page after another (portrait, or two pages off).
+    private var listLayout: UICollectionViewLayout!
+    /// Two pages side by side (landscape with "Two pages" on).
+    private let bookLayout = TwoPageLayout()
+    private var showingTwoPages = false
+
+    /// Two pages fit: landscape and wide enough for two columns of text.
+    private var wantsTwoPages: Bool {
+        guard let s = session, s.textAppearance.twoPages else { return false }
+        return bounds.width > bounds.height && bounds.width >= 900
+    }
+
+    /// Switches between one and two pages across when the option or the shape changes,
+    /// keeping your place.
+    private func updatePageLayout() {
+        let want = wantsTwoPages
+        guard want != showingTwoPages, bounds.width > 0 else { return }
+        showingTwoPages = want
+        let page = session?.currentPage ?? 0
+        bookLayout.maxTextWidth = maxTextWidth
+        bookLayout.resetHeights()
+        collectionView.setCollectionViewLayout(want ? bookLayout : listLayout, animated: false)
+        collectionView.reloadData()
+        DispatchQueue.main.async { [weak self] in self?.scroll(toPage: page) }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         collectionView.frame = bounds
+        updatePageLayout()
         if !didInitialScroll, !initialScrollScheduled, bounds.height > 0, let s = session {
             initialScrollScheduled = true
             DispatchQueue.main.async { [weak self] in self?.scroll(toPage: s.currentPage) }
@@ -170,8 +197,14 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         overrideUserInterfaceStyle = a.theme.interfaceStyle
         collectionView.backgroundColor = a.theme.background
         maxTextWidth = a.width.points
+        bookLayout.maxTextWidth = maxTextWidth
+        bookLayout.resetHeights()
         collectionView.collectionViewLayout.invalidateLayout()
-        reloadAll()
+        if wantsTwoPages != showingTwoPages {
+            updatePageLayout()
+        } else {
+            reloadAll()
+        }
     }
 
     /// Questions were found / toggled: redraw the marks on the visible pages.
