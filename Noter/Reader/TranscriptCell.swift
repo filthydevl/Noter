@@ -166,6 +166,14 @@ final class TranscriptCell: UICollectionViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // Let the text re-wrap to its final width first (a two-page column is narrower
+        // than the list), so highlights are measured on the lines you actually see.
+        textView.layoutIfNeeded()
+        let width = textView.bounds.width - textView.textContainerInset.left - textView.textContainerInset.right
+        if width > 1, abs(textView.textContainer.size.width - width) > 0.5 {
+            textView.textContainer.size = CGSize(width: width, height: textView.textContainer.size.height)
+        }
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
         // Geometry depends on the final width, so redraw overlays after layout.
         withoutAnimation {
             for layer in [highlightLayer, markLayer, markUnderlineLayer, speechPhraseLayer, speechWordLayer,
@@ -346,10 +354,23 @@ final class TranscriptCell: UICollectionViewCell {
         let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         guard glyphs.length > 0 else { return [] }
         var rects: [CGRect] = []
+        let text = storage.string as NSString
+        func isBlank(_ glyph: Int) -> Bool {
+            let c = lm.characterIndexForGlyph(at: glyph)
+            guard c < text.length, let u = UnicodeScalar(text.character(at: c)) else { return true }
+            return CharacterSet.whitespacesAndNewlines.contains(u)
+        }
         lm.enumerateLineFragments(forGlyphRange: glyphs) { lineRect, _, container, lineGlyphs, _ in
-            let r = NSIntersectionRange(lineGlyphs, glyphs)
+            var r = NSIntersectionRange(lineGlyphs, glyphs)
+            // Spaces and line breaks at either end aren't drawn: a paragraph break's box
+            // runs to the end of the line (and past a two-page column).
+            while r.length > 0, isBlank(NSMaxRange(r) - 1) { r.length -= 1 }
+            while r.length > 0, isBlank(r.location) { r.location += 1; r.length -= 1 }
             guard r.length > 0 else { return }
             var box = lm.boundingRect(forGlyphRange: r, in: container)
+            // Never wider than the column.
+            box = box.intersection(CGRect(x: 0, y: box.minY, width: container.size.width, height: box.height))
+            guard !box.isNull, box.width > 0 else { return }
             let char = lm.characterIndexForGlyph(at: r.location)
             let font = storage.attribute(.font, at: min(char, storage.length - 1), effectiveRange: nil) as? UIFont
                 ?? .systemFont(ofSize: 17)
