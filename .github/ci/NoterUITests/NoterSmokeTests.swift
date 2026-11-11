@@ -136,9 +136,15 @@ final class NoterSmokeTests: XCTestCase {
         sleep(3)
         snapshot(app, "8-question-jump")
         assertRunning(app, "after jumping to a question")
+        // In portrait the panel closes when you jump (so it can't cover the spot): reopen it.
+        let removeButtons = app.buttons.matching(identifier: "Remove question")
+        print("NOTER-SMOKE: panel closed after jump: \(removeButtons.count == 0)")
+        if removeButtons.count == 0 {
+            app.buttons["Questions"].tap()
+            _ = removeButtons.firstMatch.waitForExistence(timeout: 5)
+        }
 
         // Remove a question from the list (the last one, so the jump below still works).
-        let removeButtons = app.buttons.matching(identifier: "Remove question")
         let before = removeButtons.count
         if before > 0 {
             removeButtons.element(boundBy: before - 1).tap()
@@ -148,7 +154,13 @@ final class NoterSmokeTests: XCTestCase {
         assertRunning(app, "after removing a question")
         app.buttons["Text"].tap()
         sleep(2)
-        if found { question.tap() }
+        if found {
+            if !question.exists {
+                app.buttons["Questions"].tap()
+                _ = question.waitForExistence(timeout: 5)
+            }
+            if question.exists { question.tap() }
+        }
         sleep(3)
         assertRunning(app, "after jumping to a question in the text view")
 
