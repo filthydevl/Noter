@@ -19,6 +19,10 @@ final class OCRStore {
     /// Recognizer version per page (missing = 1, before versions were recorded).
     private var versions: [Int: Int] = [:]
     var onPageReady: ((Int) -> Void)?
+    /// The worker stopped (done, cancelled, or the PDF couldn't be read).
+    var onWorkerEnded: (() -> Void)?
+    /// Background reading (the book isn't open): only pages without text, no refining.
+    var firstPassOnly = false
 
     private var cache: [Int: OCRPage] = [:]
     private var cacheOrder: [Int] = []
@@ -81,7 +85,7 @@ final class OCRStore {
     // MARK: Worker
 
     func start() {
-        guard worker == nil, !isComplete || !waiters.isEmpty || staleCount > 0 else { return }
+        guard worker == nil, !isComplete || !waiters.isEmpty || (!firstPassOnly && staleCount > 0) else { return }
         let id = docID
         let url = Storage.pdfURL(id)
         worker = Task.detached(priority: .utility) { [weak self] in
@@ -123,6 +127,7 @@ final class OCRStore {
             let i = (focus + offset) % pageCount
             if meta[i] == nil { return (i, false) }
         }
+        if firstPassOnly { return nil }
         for offset in 0..<pageCount {
             let i = (focus + offset) % pageCount
             if isStale(i) { return (i, true) }
@@ -171,6 +176,7 @@ final class OCRStore {
             let p = page(index)
             conts.forEach { $0.resume(returning: p) }
         }
+        onWorkerEnded?()
     }
 
     // MARK: Helpers

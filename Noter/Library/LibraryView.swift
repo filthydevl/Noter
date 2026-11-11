@@ -12,6 +12,7 @@ enum Shelf: Hashable {
 
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
+    @ObservedObject private var reading = BackgroundOCR.shared
     @State private var showImporter = false
     @State private var path: [UUID] = []
     @State private var pendingDelete: DocumentInfo?
@@ -75,7 +76,9 @@ struct LibraryView: View {
                                 LazyVGrid(columns: columns, spacing: 36) {
                                     ForEach(shown) { doc in
                                         NavigationLink(value: doc.id) {
-                                            BookCard(doc: doc, folder: folderName(of: doc))
+                                            BookCard(doc: doc, folder: folderName(of: doc),
+                                                     pagesRead: max(reading.progress[doc.id] ?? 0, doc.ocrPagesDone),
+                                                     reading: reading.working == doc.id)
                                         }
                                         .buttonStyle(.plain)
                                         .draggable(doc.id.uuidString)
@@ -311,6 +314,10 @@ private struct BookCard: View {
     let doc: DocumentInfo
     /// Shown under the title in "All".
     var folder: String? = nil
+    /// Pages whose text has been read so far.
+    var pagesRead = 0
+    /// Being read in the background right now.
+    var reading = false
     @State private var cover: UIImage?
 
     var body: some View {
@@ -332,6 +339,12 @@ private struct BookCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.06)))
+            .overlay(alignment: .topTrailing) {
+                if pagesRead < doc.pageCount {
+                    ReadingRing(done: pagesRead, total: doc.pageCount, active: reading)
+                        .padding(8)
+                }
+            }
             .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -343,11 +356,12 @@ private struct BookCard: View {
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if doc.ocrPagesDone < doc.pageCount {
-                    ProgressView(value: Double(doc.ocrPagesDone), total: Double(max(doc.pageCount, 1)))
-                        .tint(.secondary)
-                        .padding(.top, 4)
-                        .accessibilityLabel("Text recognized on \(doc.ocrPagesDone) of \(doc.pageCount) pages")
+                if pagesRead < doc.pageCount {
+                    Text(reading ? "Reading text · \(pagesRead)/\(doc.pageCount)"
+                         : "Text read on \(pagesRead)/\(doc.pageCount) pages")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(reading ? Color.accentColor : .secondary)
+                        .accessibilityHidden(true) // the ring says it
                 }
             }
         }
@@ -377,5 +391,48 @@ enum Thumbnailer {
             if let data = image.jpegData(compressionQuality: 0.82) { try? data.write(to: url, options: .atomic) }
             return image
         }.value
+    }
+}
+
+/// On a book's cover while its text is still being read: how far along it is.
+private struct ReadingRing: View {
+    let done: Int
+    let total: Int
+    /// Being read right now (it turns slowly), or waiting its turn.
+    let active: Bool
+    @State private var spin = false
+
+    var body: some View {
+        let fraction = Double(done) / Double(max(total, 1))
+        ZStack {
+            Circle().fill(.regularMaterial)
+            Circle().stroke(Color.primary.opacity(0.15), lineWidth: 4).padding(5)
+            Circle()
+                .trim(from: 0, to: max(fraction, 0.02))
+                .stroke(active ? Color.accentColor : Color.secondary,
+                        style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .padding(5)
+            Text("\(Int((fraction * 100).rounded(.down)))%")
+                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundStyle(.primary)
+        }
+        .frame(width: 46, height: 46)
+        .overlay {
+            if active {
+                // A small dot going round: work is happening.
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 6, height: 6)
+                    .offset(y: -23)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(.linear(duration: 2).repeatForever(autoreverses: false), value: spin)
+                    .onAppear { spin = true }
+            }
+        }
+        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        .accessibilityElement()
+        .accessibilityLabel(active ? "Reading the text" : "Text not read yet on every page")
+        .accessibilityValue("\(done) of \(total) pages")
     }
 }

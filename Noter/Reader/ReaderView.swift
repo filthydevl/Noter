@@ -35,7 +35,7 @@ final class SessionHolder: ObservableObject {
 
     func open(_ id: UUID) {
         guard session == nil else {
-            session?.ocr.start()
+            session?.reopen()
             return
         }
         if let info = Storage.load(DocumentInfo.self, from: Storage.infoURL(id)),

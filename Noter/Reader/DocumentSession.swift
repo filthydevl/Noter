@@ -116,7 +116,8 @@ final class DocumentSession: ObservableObject {
         var info = info
         info.lastOpened = Date()
         self.info = info
-        let ocr = OCRStore(docID: info.id, pageCount: pdf.pageCount)
+        // The same store the background reader used, if it was working on this book.
+        let ocr = BackgroundOCR.shared.attach(info.id, pageCount: pdf.pageCount)
         self.ocr = ocr
         self.speech = SpeechController()
         self.questions = QuestionIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
@@ -157,8 +158,17 @@ final class DocumentSession: ObservableObject {
         speech.stop()
         questions.stop()
         outline.stop()
-        ocr.stop()
         saveAll()
+        // Keep reading the rest of the book's pages while you're in the library.
+        BackgroundOCR.shared.detach(info.id)
+    }
+
+    /// The reader came back on screen without being rebuilt.
+    func reopen() {
+        _ = BackgroundOCR.shared.attach(info.id, pageCount: pdf.pageCount)
+        ocr.onPageReady = { [weak self] index in self?.pageReady(index) }
+        ocr.setFocus(currentPage)
+        ocr.start()
     }
 
     func saveAll() {

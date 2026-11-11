@@ -79,6 +79,8 @@ final class LibraryStore: ObservableObject {
             docs.append(info)
         }
         documents = docs.sorted { ($0.lastOpened ?? $0.added) > ($1.lastOpened ?? $1.added) }
+        // Unfinished books keep being read in the background.
+        BackgroundOCR.shared.libraryChanged(documents)
     }
 
     /// Copies the PDFs into the library. Returns the ids of the new documents.
