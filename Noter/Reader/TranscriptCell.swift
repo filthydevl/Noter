@@ -50,7 +50,7 @@ final class TranscriptCell: UICollectionViewCell {
 
     let header = UILabel()
     /// TextKit 1 so we can map pen positions to characters precisely.
-    let textView = UITextView(usingTextLayoutManager: false)
+    let textView = ReportingTextView(usingTextLayoutManager: false)
     /// Drawn behind the text, bottom to top.
     private let highlightLayer = CALayer()
     private let markLayer = CAShapeLayer()
@@ -109,6 +109,9 @@ final class TranscriptCell: UICollectionViewCell {
             v.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(v)
         }
+        // The text re-wraps when its width settles (a two-page column is narrower than
+        // the list): measure the highlights again then, or they sit on the old lines.
+        textView.onResize = { [weak self] in self?.redrawOverlays() }
 
         var config = UIButton.Configuration.filled()
         config.image = UIImage(systemName: "checkmark", withConfiguration:
@@ -169,6 +172,18 @@ final class TranscriptCell: UICollectionViewCell {
         // Let the text re-wrap to its final width first (a two-page column is narrower
         // than the list), so highlights are measured on the lines you actually see.
         textView.layoutIfNeeded()
+        redrawOverlays()
+        layoutConfirm()
+    }
+
+    override func apply(_ layoutAttributes: UICollectionViewLayoutAttributes) {
+        super.apply(layoutAttributes)
+        setNeedsLayout()
+    }
+
+    /// Highlights, marks, the read-along tint, flash and pen preview, measured on the
+    /// text as it's laid out now.
+    private func redrawOverlays() {
         let width = textView.bounds.width - textView.textContainerInset.left - textView.textContainerInset.right
         if width > 1, abs(textView.textContainer.size.width - width) > 0.5 {
             textView.textContainer.size = CGSize(width: width, height: textView.textContainer.size.height)
@@ -186,7 +201,6 @@ final class TranscriptCell: UICollectionViewCell {
         redrawFlash()
         redrawPreview()
         _ = drawSpeech()
-        layoutConfirm()
     }
 
     /// Shows the ✓ next to the circled word (a range of the page text), or hides it.
@@ -503,5 +517,25 @@ final class TranscriptCell: UICollectionViewCell {
             wordRect = wordRects.first ?? phraseRects.first
         }
         return wordRect
+    }
+}
+
+/// The page's text view; tells the cell when its size really changes (the text then
+/// wraps differently), so highlights can be measured again on the new lines.
+final class ReportingTextView: UITextView {
+    var onResize: (() -> Void)?
+    private var lastSize: CGSize = .zero
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.size != lastSize else { return }
+        lastSize = bounds.size
+        onResize?()
     }
 }
