@@ -67,6 +67,8 @@ struct DocumentInfo: Codable, Identifiable, Hashable {
 struct LibraryFolder: Codable, Identifiable, Hashable {
     var id: UUID
     var name: String
+    /// The folder it's grouped in (nil: top level). Optional so older folders load.
+    var parentID: UUID? = nil
 }
 
 // MARK: - OCR results (stored per PDF page)

@@ -24,10 +24,11 @@ final class LibraryStore: ObservableObject {
         Storage.save(folders, to: Self.foldersURL)
     }
 
+    /// A new folder, at the top level or inside `parent`.
     @discardableResult
-    func createFolder(named name: String) -> LibraryFolder {
+    func createFolder(named name: String, in parent: LibraryFolder? = nil) -> LibraryFolder {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let folder = LibraryFolder(id: UUID(), name: trimmed.isEmpty ? "New folder" : trimmed)
+        let folder = LibraryFolder(id: UUID(), name: trimmed.isEmpty ? "New folder" : trimmed, parentID: parent?.id)
         folders.append(folder)
         saveFolders()
         return folder
@@ -40,12 +41,70 @@ final class LibraryStore: ObservableObject {
         saveFolders()
     }
 
-    /// Deletes the folder; its books stay in the library, out of any folder.
+    /// Deletes the folder; its books and folders move up into the folder it was in
+    /// (or the top level). Nothing else is deleted.
     func delete(_ folder: LibraryFolder) {
-        for doc in documents where doc.folderID == folder.id { setFolder(nil, for: doc, reloading: false) }
+        for doc in documents where doc.folderID == folder.id { setFolder(folder.parentID, for: doc, reloading: false) }
+        for i in folders.indices where folders[i].parentID == folder.id { folders[i].parentID = folder.parentID }
         folders.removeAll { $0.id == folder.id }
         saveFolders()
         reload()
+    }
+
+    // MARK: Folders in folders
+
+    /// The folders directly inside `parent` (nil: the top level), A–Z.
+    func subfolders(of parent: UUID?) -> [LibraryFolder] {
+        folders.filter { $0.parentID == parent }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// A folder and every folder inside it, however deep.
+    func folderAndDescendants(_ id: UUID) -> Set<UUID> {
+        var out: Set<UUID> = [id]
+        var frontier = [id]
+        while let next = frontier.popLast() {
+            for f in folders where f.parentID == next && !out.contains(f.id) {
+                out.insert(f.id)
+                frontier.append(f.id)
+            }
+        }
+        return out
+    }
+
+    /// From the top level down to the folder.
+    func path(to id: UUID) -> [LibraryFolder] {
+        var out: [LibraryFolder] = []
+        var current = folders.first { $0.id == id }
+        var seen = Set<UUID>()
+        while let f = current, seen.insert(f.id).inserted {
+            out.insert(f, at: 0)
+            current = f.parentID.flatMap { p in folders.first { $0.id == p } }
+        }
+        return out
+    }
+
+    /// "Group › Folder"
+    func pathName(of id: UUID) -> String {
+        path(to: id).map(\.name).joined(separator: " › ")
+    }
+
+    /// Whether `folder` can go into `parent` (not into itself or a folder inside it).
+    func canMove(_ folder: LibraryFolder, into parent: LibraryFolder?) -> Bool {
+        guard let parent else { return folder.parentID != nil }
+        return !folderAndDescendants(folder.id).contains(parent.id) && folder.parentID != parent.id
+    }
+
+    /// Groups a folder inside another (nil: back to the top level).
+    func move(folder: LibraryFolder, into parent: LibraryFolder?) {
+        guard canMove(folder, into: parent), let i = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        folders[i].parentID = parent?.id
+        saveFolders()
+    }
+
+    func move(folderID: UUID, into parent: LibraryFolder?) {
+        guard let f = folders.first(where: { $0.id == folderID }) else { return }
+        move(folder: f, into: parent)
     }
 
     func move(_ doc: DocumentInfo, to folder: LibraryFolder?) {
@@ -65,8 +124,10 @@ final class LibraryStore: ObservableObject {
         if reloading { reload() }
     }
 
+    /// Books in the folder, including the folders inside it.
     func count(in folder: LibraryFolder) -> Int {
-        documents.filter { $0.folderID == folder.id }.count
+        let ids = folderAndDescendants(folder.id)
+        return documents.filter { $0.folderID.map(ids.contains) ?? false }.count
     }
 
     func reload() {
