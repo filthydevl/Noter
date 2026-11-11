@@ -84,7 +84,7 @@ struct ReaderView: View {
                 rail(scrolls: false)
                 rail(scrolls: true)
             }
-            .padding(.top, 66)
+            .padding(.top, 62)
             .padding(.bottom, scribbleBar ? 76 : 10)
             .padding(.trailing, railTrailing)
         }
@@ -224,7 +224,7 @@ struct ReaderView: View {
         }
     }
 
-    static let railWidth: CGFloat = 56
+    static let railWidth: CGFloat = 48
 
     /// Wide (landscape) with a panel open: the page sits to the left of it.
     private var pushesPageLeft: Bool { panel != nil && viewWidth >= 1140 }
@@ -343,9 +343,9 @@ private struct RailUndoButton: View {
             session.offerRedo()
         } label: {
             Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Color.primary)
-                .frame(width: 44, height: 40)
+                .frame(width: 38, height: 34)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -406,18 +406,18 @@ private struct ToolRail: View {
         Group {
             if scrolls {
                 ScrollView(.vertical, showsIndicators: false) { items }
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
             } else {
                 items
             }
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
         .shadow(color: .black.opacity(0.1), radius: 12, y: 4)
         // Redo pops out to the left of Undo.
         .overlay(alignment: .topLeading) {
             RedoBubble(session: session)
-                .offset(x: -50, y: 5)
+                .offset(x: -46, y: 2)
         }
     }
 
@@ -430,6 +430,17 @@ private struct ToolRail: View {
             // Find a word or sentence in the book.
             railButton("magnifyingglass", label: "Search", selected: panel == .search) {
                 panel = panel == .search ? nil : .search
+            }
+
+            // Text view customization (theme, font, size, spacing, margins…), right under Search.
+            if session.viewMode == .transcript {
+                railButton("textformat.size", label: "Reading options", selected: showTextOptions) {
+                    showTextOptions = true
+                }
+                .popover(isPresented: $showTextOptions, arrowEdge: .trailing) {
+                    TextOptionsView(session: session)
+                        .presentationCompactAdaptation(.popover)
+                }
             }
 
             divider
@@ -445,7 +456,7 @@ private struct ToolRail: View {
                     Image(systemName: "exclamationmark.circle.fill")
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .orange)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
                         .offset(x: 5, y: -5)
                         .transition(.scale.combined(with: .opacity))
                         .accessibilityLabel("Scribble is on")
@@ -481,10 +492,10 @@ private struct ToolRail: View {
                 Circle()
                     .fill(AngularGradient(colors: [.red, .orange, .yellow, .green, .mint, .cyan, .blue, .purple, .pink, .red],
                                           center: .center))
-                    .overlay(Circle().fill(.white.opacity(0.9)).frame(width: 7, height: 7))
-                    .frame(width: 24, height: 24)
+                    .overlay(Circle().fill(.white.opacity(0.9)).frame(width: 6, height: 6))
+                    .frame(width: 21, height: 21)
                     .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
-                    .frame(width: 44, height: 40)
+                    .frame(width: 38, height: 34)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(scribbling ? "Ink color" : "Highlight color")
@@ -532,19 +543,8 @@ private struct ToolRail: View {
                 panel = panel == .questions ? nil : .questions
             }
 
-            // Text view customization (theme, font, size, spacing, margins…).
-            if session.viewMode == .transcript {
-                divider
-                railButton("textformat.size", label: "Reading options", selected: showTextOptions) {
-                    showTextOptions = true
-                }
-                .popover(isPresented: $showTextOptions, arrowEdge: .trailing) {
-                    TextOptionsView(session: session)
-                        .presentationCompactAdaptation(.popover)
-                }
-            }
         }
-        .padding(6)
+        .padding(5)
     }
 
     /// Highlight colors with your names for them, the auto / manual switch, and the way
@@ -594,12 +594,12 @@ private struct ToolRail: View {
         } label: {
             Circle()
                 .fill(color)
-                .frame(width: 24, height: 24)
+                .frame(width: 20, height: 20)
                 .overlay(Circle().strokeBorder(Color.primary.opacity(selected ? 0.75 : 0.12),
-                                               lineWidth: selected ? 2.5 : 1))
+                                               lineWidth: selected ? 2 : 1))
                 .padding(3)
                 .overlay(Circle().strokeBorder(selected ? color.opacity(0.6) : .clear, lineWidth: 2))
-                .frame(width: 44, height: 34)
+                .frame(width: 38, height: 30)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -623,18 +623,18 @@ private struct ToolRail: View {
     }
 
     private var divider: some View {
-        Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 26, height: 1).padding(.vertical, 2)
+        Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 22, height: 1).padding(.vertical, 2)
     }
 
     private func railButton(_ symbol: String, label: String, selected: Bool = false, tint: Color? = nil,
                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 18, weight: .medium))
+                .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(selected ? (tint ?? Color.accentColor) : Color.primary)
-                .frame(width: 44, height: 44)
+                .frame(width: 38, height: 38)
                 .background(selected ? Color.primary.opacity(0.08) : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
