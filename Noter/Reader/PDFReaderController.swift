@@ -123,6 +123,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     override func layoutSubviews() {
         super.layoutSubviews()
         pdfView.frame = bounds
+        repairBrokenZoom()
         inkOverlay.frame = bounds
         inkLayer.frame = inkOverlay.bounds
         restrictPencilToHighlighting()
@@ -203,12 +204,13 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     }
 
     @objc private func visiblePagesChanged() {
+        repairBrokenZoom()
         restrictPencilToHighlighting()
     }
 
     func goTo(page index: Int, rect: CGRect?, force: Bool = false) {
         guard let s = session, let page = s.pdf.page(at: index) else { return }
-        if let rect {
+        if let rect, rect.isFiniteRect, PageGeometry(page: page).pageRect(fromNormalized: rect).isFiniteRect {
             let pr = PageGeometry(page: page).pageRect(fromNormalized: rect)
             pdfView.go(to: pr.insetBy(dx: 0, dy: -max(pr.height * 6, 60)), on: page)
         } else if force || pdfView.currentPage.map({ s.pdf.index(for: $0) }) != index {
@@ -220,6 +222,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     /// Zooms in on a spot (normalized rects on a page) and centers it on screen: the
     /// highlight's lines fill most of the width, without it running off the screen.
     func focus(page index: Int, rects: [CGRect], retry: Bool = true) {
+        let rects = rects.filter { $0.isFiniteRect && !$0.isNull }
         guard let s = session, let page = s.pdf.page(at: index), let first = rects.first else {
             goTo(page: index, rect: nil)
             return
@@ -246,6 +249,11 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         var scale = view.width * 0.92 / max(width, 1)
         scale = min(scale, view.height * 0.4 / max(height, 1))
         scale = min(max(scale, fitScreen * 1.1), fitScreen * 4, pdfView.maxScaleFactor)
+        // Never hand PDFKit a broken number (NaN zoom renders garbage and eats memory).
+        guard scale.isFinite, scale > 0, pr.isFiniteRect else {
+            goTo(page: index, rect: nil)
+            return
+        }
         pdfView.autoScales = false // or PDFKit fits the width again on the next layout
         pdfView.scaleFactor = scale
         pdfView.layoutIfNeeded()
@@ -261,6 +269,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         let view = visibleArea
         guard size.width > 1, size.height > 1, view.width > 10, view.height > 10 else { return }
         let scale = min(view.width / size.width, view.height / size.height) * 0.97
+        guard scale.isFinite, scale > 0 else { return }
         pdfView.autoScales = false
         pdfView.minScaleFactor = min(pdfView.minScaleFactor, scale)
         pdfView.scaleFactor = min(scale, pdfView.maxScaleFactor)
@@ -272,8 +281,9 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
 
     /// Scrolls so a rect (page coordinates) sits in the middle of the screen.
     private func center(_ pageRect: CGRect, on page: PDFPage, animated: Bool) {
-        guard let sv = scrollView else { return }
+        guard let sv = scrollView, pageRect.isFiniteRect else { return }
         let r = pdfView.convert(pdfView.convert(pageRect, from: page), to: sv)
+        guard r.isFiniteRect, sv.contentSize.width.isFinite, sv.contentSize.height.isFinite else { return }
         let inset = sv.adjustedContentInset
         let visible = sv.bounds.inset(by: inset)
         var offset = CGPoint(x: r.midX - inset.left - max(visible.width - coveredRight, 100) / 2,
@@ -282,6 +292,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         let maxY = max(-inset.top, sv.contentSize.height - sv.bounds.height + inset.bottom)
         offset.x = min(max(offset.x, -inset.left), maxX)
         offset.y = min(max(offset.y, -inset.top), maxY)
+        guard offset.x.isFinite, offset.y.isFinite else { return }
         sv.setContentOffset(offset, animated: animated)
     }
 
@@ -293,6 +304,20 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         var r = pdfView.bounds.inset(by: pdfView.safeAreaInsets)
         r.size.width = max(r.width - coveredRight, 0)
         return r
+    }
+
+    /// If the zoom or scroll position ever became an invalid number (NaN / infinite —
+    /// PDFKit then draws garbage and runs out of memory), go back to fitting the width.
+    private func repairBrokenZoom() {
+        guard bounds.width > 1, bounds.height > 1 else { return }
+        let scale = pdfView.scaleFactor
+        if !scale.isFinite || scale <= 0 {
+            pdfView.autoScales = true
+        }
+        if let sv = scrollView, !(sv.contentOffset.x.isFinite && sv.contentOffset.y.isFinite) {
+            sv.contentOffset = .zero
+            if let page = pdfView.currentPage ?? session?.pdf.page(at: 0) { pdfView.go(to: page) }
+        }
     }
 
     /// PDFKit's scroll view, inside the PDF view.

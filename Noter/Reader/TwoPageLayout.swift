@@ -93,6 +93,7 @@ final class TwoPageLayout: UICollectionViewLayout {
         let context = super.invalidationContext(forPreferredLayoutAttributes: preferred,
                                                 withOriginalAttributes: original)
         let ip = original.indexPath
+        guard preferred.frame.height.isFinite, preferred.frame.height > 0 else { return context }
         // How much its row grows / shrinks; above what you're reading, keep the text still.
         if let row = rows.first(where: { $0.items.contains(ip) }), let cv = collectionView {
             let oldRow = row.maxY - row.minY

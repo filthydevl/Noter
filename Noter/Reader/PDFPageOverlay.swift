@@ -186,13 +186,14 @@ final class PDFPageOverlay: UIView {
         guard let pdfView, window != nil else { return nil }
         let inPDFView = pdfView.convert(geometry.pageRect(fromNormalized: n), from: page)
         let r = convert(inPDFView, from: pdfView)
-        return r.isNull || r.isInfinite ? nil : r
+        return r.isNull || r.isInfinite || !r.isFiniteRect ? nil : r
     }
 
     private func path(_ rects: [CGRect], radius: CGFloat) -> CGPath? {
         guard !rects.isEmpty else { return nil }
         let p = UIBezierPath()
-        for r in rects { p.append(UIBezierPath(roundedRect: r, cornerRadius: radius)) }
+        guard radius.isFinite else { return nil }
+        for r in rects where r.isFiniteRect { p.append(UIBezierPath(roundedRect: r, cornerRadius: radius)) }
         return p.cgPath
     }
 
@@ -302,5 +303,13 @@ extension UIColor {
         layer.shadowOpacity = 0.9
         layer.shadowOffset = .zero
         layer.opacity = 0
+    }
+}
+
+extension CGRect {
+    /// No NaN or infinite numbers (they'd make CoreGraphics draw garbage, or the PDF
+    /// view zoom / scroll to nowhere).
+    var isFiniteRect: Bool {
+        origin.x.isFinite && origin.y.isFinite && size.width.isFinite && size.height.isFinite
     }
 }

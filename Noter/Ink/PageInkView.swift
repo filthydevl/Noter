@@ -321,11 +321,14 @@ final class InkTextLabel: UILabel, UIContextMenuInteractionDelegate {
 
     func configure(_ item: InkText, frame: CGRect) {
         self.item = item
+        guard frame.isFiniteRect else { isHidden = true; return }
+        isHidden = false
         self.frame = frame
         text = item.text
         textColor = UIColor(hex: item.colorHex) ?? .label
         let lineHeight = frame.height / CGFloat(max(item.lines, 1))
-        font = item.style.font(size: max(lineHeight * 0.72, 4))
+        let size = lineHeight * 0.72
+        font = item.style.font(size: size.isFinite ? max(size, 4) : 12)
         accessibilityLabel = item.text
     }
 
