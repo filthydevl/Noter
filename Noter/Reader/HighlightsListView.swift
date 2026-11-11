@@ -8,11 +8,12 @@ struct HighlightsListView: View {
     @ObservedObject var session: DocumentSession
     var onClose: () -> Void
     @State private var share: ShareItem?
+    @AppStorage("noter.analysisTags") private var showAnalysis = true
 
     var body: some View {
         let items = session.groupedHighlights()
         let keywords = session.keywordEntries(includingRemoved: true)
-        let byKey = Dictionary(uniqueKeysWithValues: keywords.map { ($0.id, $0) })
+        let byKey = session.tagEntriesByKey()
         let _ = session.labelsVersion // refresh when page numbers improve
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
@@ -109,7 +110,8 @@ extension HighlightsListView {
             toggleTag: { session.toggleTag($0, on: h.id) },
             delete: { session.removeHighlights([h.id]) },
             note: h.noteText,
-            colorName: session.palette.name(h.color))
+            colorName: session.palette.name(h.color),
+            showAnalysis: showAnalysis)
     }
 }
 
@@ -266,7 +268,14 @@ struct TagChip: View {
     let keyword: KeywordEntry
 
     var body: some View {
-        Text(keyword.text)
+        HStack(spacing: 3) {
+            if let symbol = keyword.symbol {
+                Image(systemName: symbol)
+                    .font(.caption2.weight(.semibold))
+                    .accessibilityHidden(true)
+            }
+            Text(keyword.text)
+        }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.primary)
             .lineLimit(1)
@@ -295,6 +304,8 @@ struct HighlightRow: View {
     var noteFocused: ((Bool) -> Void)? = nil
     /// Your name for the highlight's color ("Ideas"…).
     var colorName: String? = nil
+    /// Offer the analysis tags (cause, effect, premise…) in the tag menu.
+    var showAnalysis = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -389,6 +400,28 @@ struct HighlightRow: View {
             VStack(alignment: .trailing, spacing: 5) {
                 ForEach(tags) { TagChip(keyword: $0) }
                 Menu {
+                    if showAnalysis {
+                        Menu {
+                            ForEach(AnalysisTag.groups.indices, id: \.self) { g in
+                                Section(AnalysisTag.groups[g].0) {
+                                    ForEach(AnalysisTag.groups[g].1) { t in
+                                        Button {
+                                            toggleTag(t.key)
+                                        } label: {
+                                            if tags.contains(where: { $0.id == t.key }) {
+                                                Label(t.title, systemImage: "checkmark")
+                                            } else {
+                                                Label(t.title, systemImage: t.symbol)
+                                            }
+                                            Text(t.hint)
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            Label("Analysis tags", systemImage: "text.magnifyingglass")
+                        }
+                    }
                     if available.isEmpty {
                         Text("Highlight a single word or a short phrase to make it a key word.")
                     } else {
@@ -413,7 +446,7 @@ struct HighlightRow: View {
                         .frame(width: 30, height: 24)
                         .background(Color.primary.opacity(0.07), in: Capsule())
                 }
-                .accessibilityLabel("Tag with key word")
+                .accessibilityLabel("Tag with key word or analysis tag")
             }
             .frame(maxWidth: 120, alignment: .trailing)
         }

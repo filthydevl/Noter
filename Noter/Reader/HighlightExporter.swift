@@ -18,7 +18,7 @@ enum HighlightExporter {
 
         var md = "# \(session.info.title) — Highlights\n\n"
         md += "_\(items.count) highlight\(items.count == 1 ? "" : "s") · updated \(formatter.string(from: Date()))_\n"
-        let keywords = Dictionary(uniqueKeysWithValues: session.keywordEntries(includingRemoved: true).map { ($0.id, $0.text) })
+        let keywords = session.tagEntriesByKey().mapValues(\.text)
         var lastLabel: String?
         for h in items {
             let label = session.pageLabel(for: h)

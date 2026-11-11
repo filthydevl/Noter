@@ -777,6 +777,28 @@ final class DocumentSession: ObservableObject {
         .sorted { $0.text.localizedCaseInsensitiveCompare($1.text) == .orderedAscending }
     }
 
+    /// The analysis tags (cause, effect, premise…), each with the highlights tagged with
+    /// it. `onlyUsed`: just the ones you've tagged something with.
+    func analysisEntries(onlyUsed: Bool = false) -> [KeywordEntry] {
+        let sorted = sortedHighlights()
+        return AnalysisTag.allCases.compactMap { t in
+            let linked = sorted.filter { $0.tagKeys.contains(t.key) }
+            if onlyUsed && linked.isEmpty { return nil }
+            return KeywordEntry(id: t.key, text: t.title, color: t.color, mentions: [], linked: linked,
+                                symbol: t.symbol)
+        }
+    }
+
+    /// Every tag a highlight can carry, by key: your key words and the analysis tags.
+    func tagEntriesByKey() -> [String: KeywordEntry] {
+        var all = Dictionary(uniqueKeysWithValues: keywordEntries(includingRemoved: true).map { ($0.id, $0) })
+        for t in AnalysisTag.allCases {
+            all[t.key] = KeywordEntry(id: t.key, text: t.title, color: t.color, mentions: [], linked: [],
+                                      symbol: t.symbol)
+        }
+        return all
+    }
+
     /// Adds or removes a key word tag on a highlight.
     func toggleTag(_ key: String, on id: UUID) {
         guard let i = highlights.firstIndex(where: { $0.id == id }) else { return }

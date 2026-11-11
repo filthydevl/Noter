@@ -7,22 +7,28 @@ struct KeywordsListView: View {
     @ObservedObject var session: DocumentSession
     var onClose: () -> Void
     @State private var share: ShareItem?
+    @AppStorage("noter.analysisTags") private var showAnalysis = true
 
     var body: some View {
         let _ = session.labelsVersion // refresh when page numbers improve
         let entries = session.keywordEntries()
+        let analysis = session.analysisEntries(onlyUsed: true)
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Key words")
                         .font(.title3.weight(.semibold))
-                    Text("\(entries.count) key word\(entries.count == 1 ? "" : "s")")
+                    Text("\(entries.count) key word\(entries.count == 1 ? "" : "s")"
+                         + (analysis.isEmpty ? "" : " · \(analysis.count) analysis tag\(analysis.count == 1 ? "" : "s")"))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if !entries.isEmpty || !session.removedKeywords.isEmpty {
+                Group {
                     Menu {
+                        Toggle(isOn: $showAnalysis) {
+                            Label("Analysis tags in tag menus", systemImage: "text.magnifyingglass")
+                        }
                         if !entries.isEmpty {
                             Button {
                                 if let url = PDFExport.keywords(session) { share = ShareItem(url: url) }
@@ -38,9 +44,9 @@ struct KeywordsListView: View {
                             }
                         }
                     } label: {
-                        PanelIcon(symbol: "square.and.arrow.up")
+                        PanelIcon(symbol: "ellipsis")
                     }
-                    .accessibilityLabel("Export key words")
+                    .accessibilityLabel("Key words options")
                 }
                 Button(action: onClose) { PanelIcon(symbol: "xmark") }
                     .buttonStyle(.plain)
@@ -50,7 +56,7 @@ struct KeywordsListView: View {
             .padding(.top, 18)
             .padding(.bottom, 12)
 
-            if entries.isEmpty {
+            if entries.isEmpty && analysis.isEmpty {
                 ContentUnavailableView(
                     "No key words yet",
                     systemImage: "key",
@@ -59,6 +65,12 @@ struct KeywordsListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
+                        // Cause, effect, premise… you've tagged highlights with.
+                        if !analysis.isEmpty {
+                            sectionTitle("Analysis")
+                            ForEach(analysis) { k in KeywordRow(keyword: k, session: session) }
+                            if !entries.isEmpty { sectionTitle("Key words") }
+                        }
                         ForEach(entries) { k in
                             KeywordRow(keyword: k, session: session)
                                 .contextMenu {
@@ -80,6 +92,16 @@ struct KeywordsListView: View {
         .background(.regularMaterial)
         .sheet(item: $share) { ShareSheet(url: $0.url) }
     }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 6)
+            .padding(.top, 6)
+            .accessibilityAddTraits(.isHeader)
+    }
 }
 
 private struct KeywordRow: View {
@@ -90,17 +112,18 @@ private struct KeywordRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center) {
                 Button {
-                    if let first = keyword.mentions.first { session.open(first) }
+                    if let first = keyword.mentions.first ?? keyword.linked.first { session.open(first) }
                 } label: {
                     TagChip(keyword: keyword)
                         .font(.body)
                 }
                 .buttonStyle(.plain)
                 Spacer(minLength: 8)
-                Text("\(keyword.linked.count) linked")
+                Text("\(keyword.linked.count) \(keyword.isAnalysis ? "tagged" : "linked")")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                 // Takes it off this list only; its highlights stay.
+                if !keyword.isAnalysis {
                 Button {
                     session.removeKeyword(keyword.id)
                 } label: {
@@ -112,9 +135,11 @@ private struct KeywordRow: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Remove key word")
+                }
             }
 
             // Where you highlighted it — same page-number style as the highlights panel.
+            if !keyword.mentions.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(keyword.mentions) { h in
@@ -137,6 +162,8 @@ private struct KeywordRow: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+
             }
 
             // Highlights tagged with it.

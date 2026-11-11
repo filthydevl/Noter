@@ -11,4 +11,8 @@ struct KeywordEntry: Identifiable {
     let mentions: [Highlight]
     /// Highlights you've tagged with it, in book order.
     let linked: [Highlight]
+    /// An analysis tag's icon (nil for your own key words).
+    var symbol: String? = nil
+
+    var isAnalysis: Bool { AnalysisTag.from(key: id) != nil }
 }

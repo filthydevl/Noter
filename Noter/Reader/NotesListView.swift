@@ -10,13 +10,14 @@ struct NotesListView: View {
     /// The card whose note you just started typing in.
     @State private var editing: UUID?
     @State private var share: ShareItem?
+    @AppStorage("noter.analysisTags") private var showAnalysis = true
 
     var body: some View {
         let all = session.groupedHighlights()
         let noted = all.filter { $0.noteText != nil }.count
         let items = onlyWithNotes ? all.filter { $0.noteText != nil } : all
         let keywords = session.keywordEntries(includingRemoved: true)
-        let byKey = Dictionary(uniqueKeysWithValues: keywords.map { ($0.id, $0) })
+        let byKey = session.tagEntriesByKey()
         let _ = session.labelsVersion // refresh when page numbers improve
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
@@ -96,7 +97,8 @@ struct NotesListView: View {
                                         delete: { session.removeHighlights([h.id]) },
                                         editNote: { session.setNote($0, on: h.id) },
                                         noteFocused: { if $0 { editing = h.id } },
-                                        colorName: session.palette.name(h.color))
+                                        colorName: session.palette.name(h.color),
+                                        showAnalysis: showAnalysis)
                                 }
                                 .id(h.id)
                             }
