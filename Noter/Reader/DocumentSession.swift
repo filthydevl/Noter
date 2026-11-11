@@ -533,13 +533,24 @@ final class DocumentSession: ObservableObject {
         guard let term = pendingTerm else { return }
         let parts = sortedHighlights().filter { definitionParts.contains($0.id) && $0.termID == term }
         var merged: [Highlight] = []
-        for (_, group) in Dictionary(grouping: parts, by: \.page).sorted(by: { $0.key < $1.key }) {
+        for (page, group) in Dictionary(grouping: parts, by: \.page).sorted(by: { $0.key < $1.key }) {
             guard var first = group.first else { continue }
             for p in group.dropFirst() {
                 first.spans += p.spans
                 first.rects += p.rects
                 first.text += " " + p.text
                 if first.note == nil { first.note = p.note }
+            }
+            // One definition from its first word to its last, every line between
+            // included — the same in the PDF as in the text view (not just the bits the
+            // pencil went over).
+            if let lp = logicalPages(page)?.first(where: { lp in group.contains { lp.range(of: $0) != nil } }) {
+                let ranges = group.compactMap { lp.range(of: $0) }
+                if let lo = ranges.map(\.lowerBound).min(), let hi = ranges.map(\.upperBound).max() {
+                    first.spans = lp.spans(for: lo...hi)
+                    first.rects = lp.lineRects(for: lo...hi)
+                    first.text = lp.string(for: lo...hi)
+                }
             }
             merged.append(first)
         }
@@ -627,6 +638,20 @@ final class DocumentSession: ObservableObject {
             if h.isTerm { out += definitions[h.id] ?? [] }
         }
         return out
+    }
+
+    /// Where a highlight is drawn on the PDF page. A definition covers its words from
+    /// first to last (as the text view shows it), including definitions saved before
+    /// they were joined that way.
+    func displayRects(_ h: Highlight) -> [CGRect] {
+        guard h.isDefinition, let pages = logicalPages(h.page) else { return h.rects }
+        for lp in pages {
+            if let r = lp.range(of: h) {
+                let rects = lp.lineRects(for: r)
+                return rects.isEmpty ? h.rects : rects
+            }
+        }
+        return h.rects
     }
 
     /// The circled word a definition belongs to.
@@ -902,7 +927,13 @@ final class DocumentSession: ObservableObject {
     func savePDF(baked: Bool, done: @escaping (URL) -> Void) {
         guard !isSavingPDF else { return }
         isSavingPDF = true
-        let info = self.info, items = highlights
+        let info = self.info
+        // Definitions printed from their first word to their last, as they're shown.
+        let items = highlights.map { h -> Highlight in
+            var h = h
+            if h.isDefinition { h.rects = displayRects(h) }
+            return h
+        }
         let ink = baked ? AnnotatedPDFExport.inkImages(self) : nil
         Task.detached(priority: .userInitiated) { [weak self] in
             let url = AnnotatedPDFExport.export(info: info, highlights: items, ink: ink)
