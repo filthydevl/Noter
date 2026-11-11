@@ -451,6 +451,7 @@ final class DocumentSession: ObservableObject {
     /// `underline`: you drew a line under the words.
     func addHighlight(on lp: LogicalPage, range: ClosedRange<Int>, underline: Bool = false) {
         guard !lp.tokens.isEmpty, range.upperBound < lp.tokens.count, range.lowerBound >= 0 else { return }
+        if pendingTerm == nil, !underline, extendHighlight(on: lp, range: range) { return }
         var h = Highlight(
             id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: range), rects: lp.lineRects(for: range),
             text: lp.string(for: range), color: color, created: Date())
@@ -775,6 +776,51 @@ final class DocumentSession: ObservableObject {
                                 mentions: ms, linked: linked)
         }
         .sorted { $0.text.localizedCaseInsensitiveCompare($1.text) == .orderedAscending }
+    }
+
+    /// A stroke that runs into a highlight of the same color and carries on past it
+    /// extends that highlight — it stays one highlight (two it bridges become one).
+    /// Not when the stroke stays inside it (a word of its own within it), only touches
+    /// the word next to it (that's a new highlight), or swallows a key word or a
+    /// circled word / definition whole (they stay what they are). Returns whether it did.
+    private func extendHighlight(on lp: LogicalPage, range: ClosedRange<Int>) -> Bool {
+        let latest = highlights.last
+        let joined = highlights(onPage: lp.pdfIndex).compactMap { ex -> (Highlight, ClosedRange<Int>)? in
+            guard ex.role == nil, let r = lp.range(of: ex) else { return nil }
+            // The pen's color — or, with auto switch, the color it just switched away from.
+            let sameColor = ex.color == color
+                || (palette.autoSwitch && ex.id == latest?.id && palette.next(after: ex.color) == color)
+            guard sameColor else { return nil }
+            let overlaps = range.lowerBound <= r.upperBound && range.upperBound >= r.lowerBound
+            let inside = range.lowerBound >= r.lowerBound && range.upperBound <= r.upperBound
+            let around = range.lowerBound < r.lowerBound && range.upperBound > r.upperBound
+            guard overlaps, !inside, !(around && ex.isKeyword) else { return nil }
+            return (ex, r)
+        }
+        guard let first = joined.first?.0 else { return false }
+        let lower = joined.map { $0.1.lowerBound }.reduce(range.lowerBound, min)
+        let upper = joined.map { $0.1.upperBound }.reduce(range.upperBound, max)
+        let union = lower...upper
+        guard let index = highlights.firstIndex(where: { $0.id == first.id }) else { return false }
+        pushUndo()
+        var h = highlights[index]
+        h.spans = lp.spans(for: union)
+        h.rects = lp.lineRects(for: union)
+        h.text = lp.string(for: union)
+        // The others it bridged fold in: their tags and notes come along.
+        let others = joined.dropFirst().map { $0.0 }
+        if !others.isEmpty {
+            var tags = h.tagKeys
+            for o in others { tags += o.tagKeys.filter { !tags.contains($0) } }
+            h.tags = tags.isEmpty ? nil : tags
+            let notes = ([h] + others).compactMap(\.noteText)
+            h.note = notes.isEmpty ? nil : notes.joined(separator: "\n")
+            let ids = Set(others.map(\.id))
+            highlights.removeAll { ids.contains($0.id) }
+        }
+        if let i = highlights.firstIndex(where: { $0.id == h.id }) { highlights[i] = h }
+        highlightsChanged()
+        return true
     }
 
     /// The analysis tags (cause, effect, premise…), each with the highlights tagged with

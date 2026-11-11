@@ -641,7 +641,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         let tokens = lp.tokens.enumerated().map { (index: $0.offset, rect: $0.element.rect) }
         switch StrokeShapeDetector.action(points, tokens: tokens) {
         case .term(let r): s.addTerm(on: lp, range: r); return
-        case .highlight(let r): s.addHighlight(on: lp, range: r); return
+        case .highlight(let r): s.addHighlight(on: lp, range: trimmed(r, lp, points)); return
         // A line under words only means something right after circling a word: it's
         // that word's definition. Otherwise it's an ordinary highlight stroke.
         case .underline(let r) where s.pendingTerm != nil:
@@ -650,8 +650,30 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         case .underline, .none: break
         }
         if let sel = PageHitTester.selection(for: points, in: pages) {
-            s.addHighlight(on: sel.page, range: sel.range)
+            s.addHighlight(on: sel.page, range: trimmed(sel.range, sel.page, points))
         }
+    }
+
+    /// Precise ends: a word at either end that the stroke only grazes (under ~30% of its
+    /// width) isn't part of the highlight — so starting just past a highlighted word
+    /// doesn't drag it in (and extend that highlight) when you meant the next word.
+    private static func trimmed(_ r: ClosedRange<Int>, _ lp: LogicalPage, _ points: [CGPoint]) -> ClosedRange<Int> {
+        guard r.upperBound < lp.tokens.count, let minX = points.map(\.x).min(), let maxX = points.map(\.x).max(),
+              let minY = points.map(\.y).min(), let maxY = points.map(\.y).max() else { return r }
+        // A down-the-margin stroke takes whole lines: nothing to trim.
+        if maxY - minY > (maxX - minX) * 1.5 { return r }
+        func covered(_ i: Int) -> CGFloat {
+            let t = lp.tokens[i].rect
+            guard t.width > 0 else { return 1 }
+            let band = t.insetBy(dx: 0, dy: -t.height * 0.6)
+            let xs = points.filter { $0.y >= band.minY && $0.y <= band.maxY }.map(\.x)
+            guard let a = xs.min(), let b = xs.max() else { return 1 } // not on that line: leave it
+            return max(0, min(b, t.maxX) - max(a, t.minX)) / t.width
+        }
+        var lo = r.lowerBound, hi = r.upperBound
+        while lo < hi, covered(lo) < 0.3 { lo += 1 }
+        while hi > lo, covered(hi) < 0.3 { hi -= 1 }
+        return lo...hi
     }
 
     private func cancelStroke() {
