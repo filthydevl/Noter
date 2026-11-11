@@ -23,6 +23,8 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     private let inkPath = UIBezierPath()
     private let pencil = PencilStrokeRecognizer(target: nil, action: nil)
     private lazy var readTap = UITapGestureRecognizer(target: self, action: #selector(handleReadTap(_:)))
+    /// Double-tap a word: read aloud from there (PDFKit's double-tap zoom is off).
+    private lazy var readDoubleTap = UITapGestureRecognizer(target: self, action: #selector(handleReadDoubleTap(_:)))
     /// While scribbling, a finger tap that can't jump the voice shows "!" on the pen button.
     private lazy var hintTap = UITapGestureRecognizer(target: self, action: #selector(handleHintTap(_:)))
     /// A tap (finger or pencil) on the ✓ next to a circled word. Caught here because PDFKit
@@ -100,6 +102,10 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         readTap.allowedTouchTypes = fingerTouchTypes
         readTap.delegate = self
         pdfView.addGestureRecognizer(readTap)
+        readDoubleTap.numberOfTapsRequired = 2
+        readDoubleTap.allowedTouchTypes = fingerTouchTypes
+        readDoubleTap.delegate = self
+        pdfView.addGestureRecognizer(readDoubleTap)
         hintTap.allowedTouchTypes = fingerTouchTypes
         hintTap.delegate = self
         pdfView.addGestureRecognizer(hintTap)
@@ -139,9 +145,11 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
             // the ✓ takes pencil taps: leave them alone.
             if v is PKCanvasView || v is ShapeOverlayView || v is RoomyButton { return }
             for g in v.gestureRecognizers ?? []
-            where g !== pencil && g !== readTap && g !== hintTap && g !== confirmTap
+            where g !== pencil && g !== readTap && g !== hintTap && g !== confirmTap && g !== readDoubleTap
                 && !(g is UIHoverGestureRecognizer) {
                 g.allowedTouchTypes = fingerTouchTypes
+                // PDFKit's double-tap zoom: a double tap reads aloud instead (pinch still zooms).
+                if let tap = g as? UITapGestureRecognizer, tap.numberOfTapsRequired == 2 { tap.isEnabled = false }
             }
             if let sv = v as? UIScrollView, hookedScrollViews.insert(ObjectIdentifier(sv)).inserted {
                 sv.panGestureRecognizer.addTarget(self, action: #selector(userScrolled(_:)))
@@ -167,7 +175,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
 
     func gestureRecognizer(_ g: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        g === readTap || g === hintTap || g === confirmTap
+        g === readTap || g === hintTap || g === confirmTap || g === readDoubleTap
     }
 
     /// Whether a point in the PDF view is on (or right next to) a ✓.
@@ -686,7 +694,17 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
 
     @objc private func handleReadTap(_ g: UITapGestureRecognizer) {
         guard let s = session, s.speech.isActive else { return }
-        let p = g.location(in: pdfView)
+        readAloud(from: g.location(in: pdfView))
+    }
+
+    @objc private func handleReadDoubleTap(_ g: UITapGestureRecognizer) {
+        guard g.state == .ended else { return }
+        readAloud(from: g.location(in: pdfView))
+    }
+
+    /// Reads aloud from the word at a point in the PDF view.
+    private func readAloud(from p: CGPoint) {
+        guard let s = session else { return }
         guard let page = pdfView.page(for: p, nearest: false) else { return }
         let index = s.pdf.index(for: page)
         guard let pages = s.logicalPages(index) else { return }

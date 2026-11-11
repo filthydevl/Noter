@@ -10,6 +10,8 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
     private var collectionView: UICollectionView!
     private let pencil = PencilStrokeRecognizer(target: nil, action: nil)
     private lazy var readTap = UITapGestureRecognizer(target: self, action: #selector(handleReadTap(_:)))
+    /// Double-tap a word: read aloud from there.
+    private lazy var readDoubleTap = UITapGestureRecognizer(target: self, action: #selector(handleReadDoubleTap(_:)))
     private let inkLayer = CAShapeLayer()
     private let inkPath = UIBezierPath()
     private var didInitialScroll = false
@@ -73,6 +75,10 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         readTap.allowedTouchTypes = fingerTouchTypes
         readTap.delegate = self
         collectionView.addGestureRecognizer(readTap)
+        readDoubleTap.numberOfTapsRequired = 2
+        readDoubleTap.allowedTouchTypes = fingerTouchTypes
+        readDoubleTap.delegate = self
+        collectionView.addGestureRecognizer(readDoubleTap)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -455,7 +461,17 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
     /// While reading aloud, tapping a word with a finger jumps the voice there.
     @objc private func handleReadTap(_ g: UITapGestureRecognizer) {
         guard let s = session, s.speech.isActive else { return }
-        let p = g.location(in: collectionView)
+        readAloud(from: g.location(in: collectionView))
+    }
+
+    @objc private func handleReadDoubleTap(_ g: UITapGestureRecognizer) {
+        guard g.state == .ended else { return }
+        readAloud(from: g.location(in: collectionView))
+    }
+
+    /// Reads aloud from the word at a point in the list.
+    private func readAloud(from p: CGPoint) {
+        guard let s = session else { return }
         guard let ip = collectionView.indexPathForItem(at: p),
               let cell = collectionView.cellForItem(at: ip) as? TranscriptCell, let lp = cell.page,
               let hit = cell.hit(at: cell.textView.convert(p, from: collectionView)) else { return }
