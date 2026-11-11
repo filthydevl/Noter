@@ -417,11 +417,31 @@ final class DocumentSession: ObservableObject {
     }
 
     private func bookOrder(_ items: [Highlight]) -> [Highlight] {
-        items.sorted { a, b in
-            let ka = (a.page, half(of: a), a.rects.first?.minY ?? 0, a.rects.first?.minX ?? 0)
-            let kb = (b.page, half(of: b), b.rects.first?.minY ?? 0, b.rects.first?.minX ?? 0)
-            return ka < kb
+        // Reading order: the page, its half, then where the highlight starts in the
+        // page's text. Without the text yet: its top line (two highlights on the same
+        // line, even a hair apart in height, go left to right).
+        struct Key {
+            let h: Highlight
+            let page: Int
+            let half: Int
+            let start: Int?
+            let top: CGRect
         }
+        let keys = items.map { h -> Key in
+            let side = self.half(of: h)
+            let start = logicalPage(SlotKey(pdfIndex: h.page, half: side))?.range(of: h)?.lowerBound
+            let top = h.rects.min { $0.minY < $1.minY } ?? .zero
+            return Key(h: h, page: h.page, half: side, start: start, top: top)
+        }
+        return keys.sorted { a, b in
+            if a.page != b.page { return a.page < b.page }
+            if a.half != b.half { return a.half < b.half }
+            if let x = a.start, let y = b.start, x != y { return x < y }
+            let sameLine = abs(a.top.minY - b.top.minY) < max(min(a.top.height, b.top.height) * 0.5, 0.002)
+            if !sameLine { return a.top.minY < b.top.minY }
+            return a.top.minX < b.top.minX
+        }
+        .map(\.h)
     }
 
     /// Adds a highlight for a word range. Every stroke is its own highlight (nothing is

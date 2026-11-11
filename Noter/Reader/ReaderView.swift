@@ -56,6 +56,7 @@ struct ReaderView: View {
     @ObservedObject var session: DocumentSession
     @State private var panel: SidePanel?
     @State private var savedPDF: ShareItem?
+    @State private var viewWidth: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -70,16 +71,10 @@ struct ReaderView: View {
                 .opacity(session.viewMode == .transcript ? 1 : 0)
                 .allowsHitTesting(session.viewMode == .transcript)
         }
-        .overlay(alignment: .topTrailing) {
-            VStack(alignment: .trailing, spacing: 10) {
-                SpeechControlView(speech: session.speech) { session.showReadingPosition() }
-                // Under the player, Undo lined up with the tool rail below it.
-                UndoRedoControls(session: session)
-                    .padding(.trailing, (Self.railWidth - 46) / 2)
-            }
-            .padding(.top, 10)
-            .padding(.trailing, railTrailing)
-        }
+        // Landscape with a panel open: the page moves over to the left, beside the panel
+        // and the rail, instead of sitting under them.
+        .padding(.trailing, pushesPageLeft ? 376 + Self.railWidth + 8 : 0)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .overlay(alignment: .trailing) {
             // At the very edge of the screen, below Undo (scrolls if the screen is short).
             ViewThatFits(in: .vertical) {
@@ -88,6 +83,17 @@ struct ReaderView: View {
             }
             .padding(.top, 122)
             .padding(.bottom, scribbleBar ? 76 : 10)
+            .padding(.trailing, railTrailing)
+        }
+        // Above the rail, so nothing ever covers the player.
+        .overlay(alignment: .topTrailing) {
+            VStack(alignment: .trailing, spacing: 10) {
+                SpeechControlView(speech: session.speech) { session.showReadingPosition() }
+                // Under the player, Undo lined up with the tool rail below it.
+                UndoRedoControls(session: session)
+                    .padding(.trailing, (Self.railWidth - 46) / 2)
+            }
+            .padding(.top, 10)
             .padding(.trailing, railTrailing)
         }
         .overlay(alignment: .bottom) {
@@ -155,16 +161,16 @@ struct ReaderView: View {
         .animation(.snappy(duration: 0.28), value: panel)
         // Jumping to a highlight centers it in the part of the page you can see.
         .onChange(of: panel) { _, p in
-            session.pdfController?.coveredRight = p == nil ? Self.railWidth + 8 : 372 + Self.railWidth + 12
             session.panelOpen = p != nil
+            updateCoveredRight()
         }
         // In portrait an open panel would cover the spot you jump to: it closes.
         .onChange(of: session.closePanelSignal) { _, _ in panel = nil }
         .background {
             GeometryReader { g in
                 Color.clear
-                    .onAppear { session.narrowLayout = g.size.width < 1140 }
-                    .onChange(of: g.size.width) { _, w in session.narrowLayout = w < 1140 }
+                    .onAppear { widthChanged(g.size.width) }
+                    .onChange(of: g.size.width) { _, w in widthChanged(w) }
             }
         }
         .animation(.snappy(duration: 0.25), value: session.pendingTerm)
@@ -221,6 +227,31 @@ struct ReaderView: View {
     }
 
     static let railWidth: CGFloat = 56
+
+    /// Wide (landscape) with a panel open: the page sits to the left of it.
+    private var pushesPageLeft: Bool { panel != nil && viewWidth >= 1140 }
+
+    private func widthChanged(_ w: CGFloat) {
+        // The page area's own width doesn't count (it shrinks beside a panel).
+        guard w > 0 else { return }
+        viewWidth = w
+        session.narrowLayout = w < 1140
+        updateCoveredRight()
+    }
+
+    /// How much of the page's right side is under the rail / a panel, for centering a
+    /// highlight you jump to.
+    private func updateCoveredRight() {
+        let covered: CGFloat
+        if panel == nil {
+            covered = Self.railWidth + 8
+        } else if pushesPageLeft {
+            covered = 8 // the panel and rail are beside the page, not over it
+        } else {
+            covered = 372 + Self.railWidth + 12
+        }
+        session.pdfController?.coveredRight = covered
+    }
 
     /// The tool rail's distance from the right edge: at the edge, or beside an open panel.
     private var railTrailing: CGFloat { panel == nil ? 4 : 376 }
