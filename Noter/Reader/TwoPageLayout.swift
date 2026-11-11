@@ -27,8 +27,11 @@ final class TwoPageLayout: UICollectionViewLayout {
         attributes = [:]
         rows = []
         let width = cv.bounds.width - cv.adjustedContentInset.left - cv.adjustedContentInset.right
-        columnWidth = max(min(maxTextWidth, (width - gap - 56) / 2), 200)
-        let side = max((width - columnWidth * 2 - gap) / 2, 0)
+        // Clear of the page slider on the left and the tool rail on the right.
+        let leftReserve: CGFloat = 44, rightReserve: CGFloat = 68
+        let usable = width - leftReserve - rightReserve
+        columnWidth = max(min(maxTextWidth, (usable - gap) / 2), 200)
+        let side = leftReserve + max((usable - columnWidth * 2 - gap) / 2, 0)
 
         var items: [IndexPath] = []
         for section in 0..<cv.numberOfSections {
