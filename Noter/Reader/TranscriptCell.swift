@@ -40,12 +40,24 @@ final class TranscriptCell: UICollectionViewCell {
         -> UICollectionViewLayoutAttributes {
         guard attributes is TwoPageLayout.Attributes else { return super.preferredLayoutAttributesFitting(attributes) }
         let a = attributes.copy() as! UICollectionViewLayoutAttributes
+        // Measuring a whole page of text is slow: once per text and width (read-aloud
+        // scrolling asks again and again).
+        let width = attributes.frame.width
+        if let m = measured, abs(m.width - width) < 0.5 {
+            a.frame.size.height = m.height
+            return a
+        }
         let size = contentView.systemLayoutSizeFitting(
-            CGSize(width: attributes.frame.width, height: UIView.layoutFittingCompressedSize.height),
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
         a.frame.size.height = ceil(size.height)
+        measured = (width, a.frame.size.height)
         return a
     }
+    /// This page's measured height at a width (two-page layout).
+    private var measured: (width: CGFloat, height: CGFloat)?
+    /// The text width the overlays were last measured at (-1: measure again).
+    private var overlayWidth: CGFloat = -1
     private static let speechColor = UIColor(named: "AccentColor") ?? .systemIndigo
 
     let header = UILabel()
@@ -146,6 +158,8 @@ final class TranscriptCell: UICollectionViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        measured = nil
+        overlayWidth = -1
         page = nil
         highlights = []
         marks = []
@@ -172,13 +186,15 @@ final class TranscriptCell: UICollectionViewCell {
         // Let the text re-wrap to its final width first (a two-page column is narrower
         // than the list), so highlights are measured on the lines you actually see.
         textView.layoutIfNeeded()
-        redrawOverlays()
+        // Only when the width or the page changed: redrawing every highlight on every
+        // layout pass slowed read-aloud down.
+        if abs(textView.bounds.width - overlayWidth) > 0.5 { redrawOverlays() }
         layoutConfirm()
     }
 
     override func apply(_ layoutAttributes: UICollectionViewLayoutAttributes) {
         super.apply(layoutAttributes)
-        setNeedsLayout()
+        if layoutAttributes.size != bounds.size { setNeedsLayout() }
     }
 
     /// Highlights, marks, the read-along tint, flash and pen preview, measured on the
@@ -189,6 +205,7 @@ final class TranscriptCell: UICollectionViewCell {
             textView.textContainer.size = CGSize(width: width, height: textView.textContainer.size.height)
         }
         textView.layoutManager.ensureLayout(for: textView.textContainer)
+        overlayWidth = textView.bounds.width
         // Geometry depends on the final width, so redraw overlays after layout.
         withoutAnimation {
             for layer in [highlightLayer, markLayer, markUnderlineLayer, speechPhraseLayer, speechWordLayer,
@@ -228,6 +245,8 @@ final class TranscriptCell: UICollectionViewCell {
     func configure(page: LogicalPage, header text: String, highlights: [TextHighlight],
                    skipped: [NSRange], marks: [NSRange], fontSize: CGFloat, appearance: TextAppearance) {
         self.page = page
+        measured = nil
+        overlayWidth = -1
         header.text = text
         header.textColor = appearance.theme.secondary
         if page.text.isEmpty {
@@ -254,6 +273,8 @@ final class TranscriptCell: UICollectionViewCell {
 
     func configurePlaceholder(header text: String, fontSize: CGFloat, appearance: TextAppearance) {
         page = nil
+        measured = nil
+        overlayWidth = -1
         header.text = text
         header.textColor = appearance.theme.secondary
         textView.attributedText = NSAttributedString(string: "Recognizing text…",
