@@ -57,6 +57,13 @@ struct ReaderView: View {
     @State private var panel: SidePanel?
     @State private var savedPDF: ShareItem?
     @State private var viewWidth: CGFloat = 0
+    /// The page area is laid out beside the open panel (landscape). Changes only when
+    /// the slide has finished, so the PDF is re-laid out once, not every frame.
+    @State private var pageBesidePanel = false
+    /// The glide while the panel slides in / out: the page shrinks toward the left (a
+    /// cheap visual scale) to exactly where the re-laid-out page will be.
+    @State private var pageGlide: CGFloat = 1
+    @State private var glideID = UUID()
 
     var body: some View {
         ZStack {
@@ -73,9 +80,12 @@ struct ReaderView: View {
         }
         // Landscape with a panel open: the page moves over to the left, beside the panel
         // and the rail, instead of sitting under them.
-        .padding(.trailing, pushesPageLeft ? 376 + Self.railWidth + 8 : 0)
+        .padding(.trailing, pageBesidePanel ? Self.besidePanelInset : 0)
         // Resized in one step: animating it re-laid out the whole PDF every frame (laggy).
         .transaction { $0.animation = nil }
+        // …the motion is this scale instead, like Instagram's video sliding over for
+        // comments: smooth, in step with the panel.
+        .scaleEffect(pageGlide, anchor: .topLeading)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .overlay(alignment: .trailing) {
             // At the very edge of the screen, below the player (scrolls inside its own
@@ -156,11 +166,12 @@ struct ReaderView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .animation(.snappy(duration: 0.28), value: panel)
+        .animation(Self.panelSpring, value: panel)
         // Jumping to a highlight centers it in the part of the page you can see.
         .onChange(of: panel) { _, p in
             session.panelOpen = p != nil
             updateCoveredRight()
+            glidePage()
         }
         // In portrait an open panel would cover the spot you jump to: it closes.
         .onChange(of: session.closePanelSignal) { _, _ in panel = nil }
@@ -184,7 +195,7 @@ struct ReaderView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(.snappy(duration: 0.28), value: panel)
+        .animation(Self.panelSpring, value: panel)
         .background(PencilInteractionHost { session.pencilButton() })
         .overlay(alignment: .bottom) {
             if let toast = session.toast {
@@ -229,12 +240,59 @@ struct ReaderView: View {
     /// Wide (landscape) with a panel open: the page sits to the left of it.
     private var pushesPageLeft: Bool { panel != nil && viewWidth >= 1140 }
 
+    /// The panel's slide, shared by the page's glide.
+    static let panelSpring = Animation.spring(duration: 0.4, bounce: 0.12)
+    /// Room the panel and the rail beside it take on the right.
+    static let besidePanelInset: CGFloat = 376 + railWidth + 8
+
+    /// Opening: the page glides (shrinks toward the left) as the panel slides in, then
+    /// is laid out beside the panel for real. Closing: laid out full width again at
+    /// once, shown at the small size, and glides back out.
+    private func glidePage() {
+        let want = pushesPageLeft
+        guard want != pageBesidePanel, viewWidth > Self.besidePanelInset else { return }
+        let small = (viewWidth - Self.besidePanelInset) / viewWidth
+        let id = UUID()
+        glideID = id
+        var still = Transaction()
+        still.disablesAnimations = true
+        if want {
+            withAnimation(Self.panelSpring) { pageGlide = small }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+                guard glideID == id, pushesPageLeft else { return }
+                withTransaction(still) {
+                    pageBesidePanel = true
+                    pageGlide = 1
+                }
+            }
+        } else {
+            withTransaction(still) {
+                pageBesidePanel = false
+                pageGlide = small
+            }
+            DispatchQueue.main.async {
+                guard glideID == id else { return }
+                withAnimation(Self.panelSpring) { pageGlide = 1 }
+            }
+        }
+    }
+
     private func widthChanged(_ w: CGFloat) {
         // The page area's own width doesn't count (it shrinks beside a panel).
         guard w > 0 else { return }
         viewWidth = w
         session.narrowLayout = w < 1140
         updateCoveredRight()
+        // Rotated with a panel open: just lay the page out for the new shape.
+        if pushesPageLeft != pageBesidePanel {
+            glideID = UUID()
+            var still = Transaction()
+            still.disablesAnimations = true
+            withTransaction(still) {
+                pageBesidePanel = pushesPageLeft
+                pageGlide = 1
+            }
+        }
     }
 
     /// How much of the page's right side is under the rail / a panel, for centering a
