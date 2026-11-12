@@ -132,7 +132,7 @@ final class NoterSmokeTests: XCTestCase {
         let mark = app.switches["Mark on pages"]
         if mark.exists { mark.tap() }
         sleep(1)
-        if found { question.tap() }
+        if found { reveal(question, in: app); question.tap() }
         sleep(3)
         snapshot(app, "8-question-jump")
         assertRunning(app, "after jumping to a question")
@@ -159,7 +159,7 @@ final class NoterSmokeTests: XCTestCase {
                 app.buttons["Questions"].tap()
                 _ = question.waitForExistence(timeout: 5)
             }
-            if question.exists { question.tap() }
+            if question.exists { reveal(question, in: app); question.tap() }
         }
         sleep(3)
         assertRunning(app, "after jumping to a question in the text view")
@@ -187,7 +187,7 @@ final class NoterSmokeTests: XCTestCase {
             let searchFound = hit.waitForExistence(timeout: 20)
             print("NOTER-SMOKE: search found 'BROWN fox': \(searchFound)")
             snapshot(app, "9-search")
-            if searchFound { hit.tap() }
+            if searchFound { reveal(hit, in: app); hit.tap() }
             sleep(3)
             if app.buttons["Close search"].exists { app.buttons["Close search"].tap() }
             sleep(1)
@@ -250,6 +250,22 @@ final class NoterSmokeTests: XCTestCase {
             print("NOTER-SMOKE: save PDF button missing")
         }
         assertRunning(app, "at the end of the smoke test")
+    }
+
+    /// Scrolls the list an element is in (the portrait bottom card is short) until it
+    /// can be tapped.
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        guard element.exists, !element.isHittable else { return }
+        let list = app.scrollViews.containing(NSPredicate(format: "label == %@", element.label)).firstMatch
+        for i in 0..<8 where !element.isHittable {
+            if list.exists {
+                if i < 4 { list.swipeDown() } else { list.swipeUp() }
+            } else {
+                if i < 4 { app.swipeDown() } else { app.swipeUp() }
+            }
+            sleep(1)
+        }
+        print("NOTER-SMOKE: revealed '\(element.label.prefix(30))': \(element.isHittable)")
     }
 
     private func assertRunning(_ app: XCUIApplication, _ when: String) {
