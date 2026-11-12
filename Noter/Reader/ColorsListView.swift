@@ -99,7 +99,6 @@ struct ColorsListView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .frame(maxHeight: .infinity)
-        .background(.regularMaterial)
     }
 }
 

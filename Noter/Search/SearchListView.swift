@@ -84,7 +84,6 @@ struct SearchListView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .background(.regularMaterial)
         .onAppear {
             focused = search.query.isEmpty
             if !search.query.isEmpty, search.hits.isEmpty, !search.isSearching { search.run() }

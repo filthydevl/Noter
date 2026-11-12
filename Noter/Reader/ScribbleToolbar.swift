@@ -13,6 +13,9 @@ struct ScribbleToolbar: View {
         ViewThatFits(in: .horizontal) {
             bar(compact: false)
             bar(compact: true)
+            // Still too narrow (a panel open): it scrolls sideways rather than spill over.
+            ScrollView(.horizontal, showsIndicators: false) { bar(compact: true).padding(.vertical, 14) }
+                .padding(.vertical, -14)
         }
         .padding(.horizontal, 16)
         .confirmationDialog("Clear all ink and tidied text on this page?", isPresented: $confirmClear,

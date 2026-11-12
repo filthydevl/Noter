@@ -120,7 +120,6 @@ struct NotesListView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .background(.regularMaterial)
         .sheet(item: $share) { ShareSheet(url: $0.url) }
     }
 

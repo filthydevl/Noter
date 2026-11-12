@@ -91,7 +91,6 @@ struct HighlightsListView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .background(.regularMaterial)
         .onAppear { HighlightExporter.export(session) }
         .sheet(item: $share) { ShareSheet(url: $0.url) }
     }

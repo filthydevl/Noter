@@ -101,7 +101,9 @@ struct ReaderView: View {
         .overlay(alignment: .bottom) {
             if scribbleBar {
                 ScribbleToolbar(session: session, settings: session.scribble)
-                    .padding(.horizontal, 50) // clear of the page slider and the rail
+                    // Between the page slider and an open panel, never under it.
+                    .padding(.leading, 44)
+                    .padding(.trailing, panel == nil ? 16 : Self.panelWidth + 12)
                     .padding(.bottom, 18)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -180,13 +182,22 @@ struct ReaderView: View {
         .animation(.snappy(duration: 0.25), value: session.penMode)
         .overlay(alignment: .trailing) {
             if let panel {
+                // Top to bottom, flush with the right edge (like a sheet). The list itself
+                // starts below the top buttons' bar (taps there would go to the bar).
                 sidePanel(panel)
-                    .frame(width: 360)
                     .avoidingKeyboard()
-                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                    .shadow(color: .black.opacity(0.18), radius: 24, y: 8)
-                    .padding(12)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .frame(width: Self.panelWidth)
+                    .frame(maxHeight: .infinity)
+                    .background {
+                        UnevenRoundedRectangle(topLeadingRadius: 26, bottomLeadingRadius: 26, style: .continuous)
+                            .fill(.regularMaterial)
+                            .overlay(UnevenRoundedRectangle(topLeadingRadius: 26, bottomLeadingRadius: 26,
+                                                            style: .continuous)
+                                .stroke(Color.primary.opacity(0.06), lineWidth: 1))
+                            .shadow(color: .black.opacity(0.22), radius: 20, x: -4)
+                            .ignoresSafeArea()
+                    }
+                .transition(.move(edge: .trailing))
             }
         }
         .animation(Self.panelSpring, value: panel)
@@ -237,7 +248,7 @@ struct ReaderView: View {
     /// The panel's slide, shared by the page's glide.
     static let panelSpring = Animation.spring(duration: 0.4, bounce: 0.12)
     /// Room the panel and the rail beside it take on the right.
-    static let besidePanelInset: CGFloat = 376 + railWidth + 8
+    static let besidePanelInset: CGFloat = panelWidth + 8 + railWidth + 8
 
     /// Like Instagram's video sliding over for comments: a picture of the page glides
     /// to its new place in step with the panel (smooth — it's just a picture), while the
@@ -282,13 +293,16 @@ struct ReaderView: View {
         } else if pushesPageLeft {
             covered = 8 // the panel and rail are beside the page, not over it
         } else {
-            covered = 372 + Self.railWidth + 12
+            covered = Self.panelWidth + Self.railWidth + 16
         }
         session.pdfController?.coveredRight = covered
     }
 
     /// The tool rail's distance from the right edge: at the edge, or beside an open panel.
-    private var railTrailing: CGFloat { panel == nil ? 4 : 376 }
+    private var railTrailing: CGFloat { panel == nil ? 4 : Self.panelWidth + 8 }
+
+    static let panelWidth: CGFloat = 380
+
 
     private var scribbleBar: Bool { session.penMode == .scribble && session.viewMode != .transcript }
 
@@ -303,16 +317,17 @@ struct ReaderView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
+        // All on the left, beside Back: an open list panel never covers them.
+        ToolbarItem(placement: .topBarLeading) {
             Picker("View", selection: $session.viewMode) {
                 Text(ViewMode.pdf.title).tag(ViewMode.pdf)
                 Text(ViewMode.transcript.title).tag(ViewMode.transcript)
             }
             .pickerStyle(.segmented)
-            .frame(width: 220)
+            .frame(width: 180)
         }
 
-        ToolbarItemGroup(placement: .topBarTrailing) {
+        ToolbarItemGroup(placement: .topBarLeading) {
             if session.ocrDone < session.pageCount {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)

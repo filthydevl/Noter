@@ -112,7 +112,6 @@ struct QuestionsListView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .background(.regularMaterial)
         .onAppear { index.start() }
         .sheet(item: $share) { ShareSheet(url: $0.url) }
     }
