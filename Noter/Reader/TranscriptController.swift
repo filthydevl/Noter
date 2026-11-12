@@ -95,6 +95,11 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         return bounds.width > bounds.height && bounds.width >= 900
     }
 
+    /// A picture of the text that glides while the page area changes size.
+    func glideCover() -> GlideCover? {
+        GlideCover(over: self, background: collectionView.backgroundColor ?? .systemBackground)
+    }
+
     /// Switches between one and two pages across when the option or the shape changes,
     /// keeping your place.
     private func updatePageLayout() {

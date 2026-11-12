@@ -60,10 +60,6 @@ struct ReaderView: View {
     /// The page area is laid out beside the open panel (landscape). Changes only when
     /// the slide has finished, so the PDF is re-laid out once, not every frame.
     @State private var pageBesidePanel = false
-    /// The glide while the panel slides in / out: the page shrinks toward the left (a
-    /// cheap visual scale) to exactly where the re-laid-out page will be.
-    @State private var pageGlide: CGFloat = 1
-    @State private var glideID = UUID()
 
     var body: some View {
         ZStack {
@@ -83,9 +79,7 @@ struct ReaderView: View {
         .padding(.trailing, pageBesidePanel ? Self.besidePanelInset : 0)
         // Resized in one step: animating it re-laid out the whole PDF every frame (laggy).
         .transaction { $0.animation = nil }
-        // …the motion is this scale instead, like Instagram's video sliding over for
-        // comments: smooth, in step with the panel.
-        .scaleEffect(pageGlide, anchor: .topLeading)
+        // …the motion is a picture of the page gliding instead (see `glidePage`).
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .overlay(alignment: .trailing) {
             // At the very edge of the screen, below the player (scrolls inside its own
@@ -245,35 +239,23 @@ struct ReaderView: View {
     /// Room the panel and the rail beside it take on the right.
     static let besidePanelInset: CGFloat = 376 + railWidth + 8
 
-    /// Opening: the page glides (shrinks toward the left) as the panel slides in, then
-    /// is laid out beside the panel for real. Closing: laid out full width again at
-    /// once, shown at the small size, and glides back out.
+    /// Like Instagram's video sliding over for comments: a picture of the page glides
+    /// to its new place in step with the panel (smooth — it's just a picture), while the
+    /// real PDF / text view is resized once, underneath, out of sight; then the picture
+    /// fades into it. Opening shrinks it toward the left; closing grows it back.
     private func glidePage() {
         let want = pushesPageLeft
-        guard want != pageBesidePanel, viewWidth > Self.besidePanelInset else { return }
-        let small = (viewWidth - Self.besidePanelInset) / viewWidth
-        let id = UUID()
-        glideID = id
+        guard want != pageBesidePanel else { return }
+        let small = (viewWidth - Self.besidePanelInset) / max(viewWidth, 1)
+        let cover = session.viewMode == .pdf
+            ? session.pdfController?.glideCover() : session.transcriptController?.glideCover()
         var still = Transaction()
         still.disablesAnimations = true
-        if want {
-            withAnimation(Self.panelSpring) { pageGlide = small }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
-                guard glideID == id, pushesPageLeft else { return }
-                withTransaction(still) {
-                    pageBesidePanel = true
-                    pageGlide = 1
-                }
-            }
+        withTransaction(still) { pageBesidePanel = want }
+        if small > 0.05 {
+            cover?.run(scale: want ? small : 1 / small)
         } else {
-            withTransaction(still) {
-                pageBesidePanel = false
-                pageGlide = small
-            }
-            DispatchQueue.main.async {
-                guard glideID == id else { return }
-                withAnimation(Self.panelSpring) { pageGlide = 1 }
-            }
+            cover?.run(scale: 1)
         }
     }
 
@@ -285,13 +267,9 @@ struct ReaderView: View {
         updateCoveredRight()
         // Rotated with a panel open: just lay the page out for the new shape.
         if pushesPageLeft != pageBesidePanel {
-            glideID = UUID()
             var still = Transaction()
             still.disablesAnimations = true
-            withTransaction(still) {
-                pageBesidePanel = pushesPageLeft
-                pageGlide = 1
-            }
+            withTransaction(still) { pageBesidePanel = pushesPageLeft }
         }
     }
 

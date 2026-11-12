@@ -320,6 +320,11 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         }
     }
 
+    /// A picture of the page that glides while the page area changes size.
+    func glideCover() -> GlideCover? {
+        GlideCover(over: self, background: pdfView.backgroundColor ?? .systemGroupedBackground)
+    }
+
     /// PDFKit's scroll view, inside the PDF view.
     private var scrollView: UIScrollView? {
         func find(_ v: UIView) -> UIScrollView? {
