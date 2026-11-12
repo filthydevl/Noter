@@ -6,6 +6,9 @@ struct SpeechControlView: View {
     @ObservedObject var speech: SpeechController
     /// The bookmark button: show where the voice is reading.
     var locate: () -> Void = {}
+    @State private var showSpeechify = false
+
+    private var speechifyOn: Bool { speech.voiceEngine == .speechify && speech.hasSpeechifyKey }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -44,6 +47,35 @@ struct SpeechControlView: View {
                     }
                 }
                 Section {
+                    Picker("Voices", selection: $speech.voiceEngine) {
+                        ForEach(VoiceEngine.allCases) { Text($0.title).tag($0) }
+                    }
+                    Button {
+                        showSpeechify = true
+                    } label: {
+                        Label(speech.hasSpeechifyKey ? "Speechify voices & key…" : "Set up Speechify…",
+                              systemImage: "waveform")
+                    }
+                }
+                if speechifyOn {
+                    Menu("Speechify voice") {
+                        ForEach(speech.speechifyLanguageVoices) { v in
+                            Button {
+                                speech.chooseSpeechifyVoice(v.id)
+                            } label: {
+                                if v.id == speech.speechifyVoiceID {
+                                    Label("\(v.name) · \(v.detail)", systemImage: "checkmark")
+                                } else {
+                                    Text("\(v.name) · \(v.detail)")
+                                }
+                            }
+                        }
+                    }
+                    if let problem = speech.speechifyProblem {
+                        Text(problem)
+                    }
+                }
+                Section {
                     Toggle(isOn: $speech.followVoiceOver) {
                         Label("Use VoiceOver's voice", systemImage: "accessibility")
                     }
@@ -71,7 +103,7 @@ struct SpeechControlView: View {
                 } label: {
                     Label("Skip while reading", systemImage: "forward")
                 }
-                Menu("Voice") {
+                Menu(speechifyOn ? "Built-in voice (backup)" : "Voice") {
                     ForEach(speech.voiceSections, id: \.title) { section in
                         Section(section.title) {
                             ForEach(section.voices, id: \.identifier) { v in
@@ -98,7 +130,10 @@ struct SpeechControlView: View {
                     .font(.system(size: 14, weight: .semibold).monospacedDigit())
                     .frame(minWidth: 34)
             }
-            .onAppear { speech.refreshVoices() }
+            .onAppear {
+                speech.refreshVoices()
+                speech.warmUpSpeechify()
+            }
         }
         .font(.system(size: 15, weight: .semibold))
         .padding(.horizontal, 14)
@@ -106,6 +141,9 @@ struct SpeechControlView: View {
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
         .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+        .sheet(isPresented: $showSpeechify) {
+            SpeechifySettingsView(speech: speech)
+        }
     }
 
     static func speedLabel(_ s: Double) -> String {

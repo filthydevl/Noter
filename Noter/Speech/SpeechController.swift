@@ -1,9 +1,27 @@
 import AVFoundation
 import UIKit
 
-/// Read-aloud using Apple's on-device voices (Premium / Enhanced "neural" voices when
-/// installed). Speaks one book page per utterance, queues the next page ahead of time,
-/// and reports the word being spoken so both views can follow along line by line.
+/// Which voices read aloud.
+enum VoiceEngine: String, CaseIterable, Identifiable {
+    /// Speechify's AI voices (needs your API key and an internet connection).
+    case speechify
+    /// Apple's on-device voices.
+    case apple
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .speechify: "Speechify AI voices"
+        case .apple: "Built-in voices"
+        }
+    }
+}
+
+/// Read-aloud with Speechify's AI voices (see `SpeechifyPlayer`) or Apple's on-device
+/// voices (Premium / Enhanced when installed). If Speechify can't be reached, reading
+/// carries on with the built-in voice from the same word.
+/// The Apple path speaks one book page per utterance, queues the next page ahead of
+/// time, and reports the word being spoken so both views can follow along line by line.
 @MainActor
 final class SpeechController: NSObject, ObservableObject {
     @Published private(set) var isActive = false
@@ -13,13 +31,15 @@ final class SpeechController: NSObject, ObservableObject {
     @Published var speed: Double {
         didSet {
             UserDefaults.standard.set(speed, forKey: Self.speedKey)
-            if isActive, oldValue != speed { restart() }
+            guard isActive, oldValue != speed else { return }
+            // Speechify changes speed on the device, instantly; Apple re-queues.
+            if usingSpeechify { speechify.setSpeed(speed) } else { restart() }
         }
     }
     @Published var voiceID: String {
         didSet {
             UserDefaults.standard.set(voiceID, forKey: Self.voiceKey)
-            if isActive, oldValue != voiceID { restart() }
+            if isActive, !usingSpeechify, oldValue != voiceID { restart() }
         }
     }
 
@@ -29,7 +49,7 @@ final class SpeechController: NSObject, ObservableObject {
     @Published var followVoiceOver: Bool {
         didSet {
             UserDefaults.standard.set(followVoiceOver, forKey: Self.followVoiceOverKey)
-            if isActive, oldValue != followVoiceOver { restart() }
+            if isActive, !usingSpeechify, oldValue != followVoiceOver { restart() }
         }
     }
     @Published private(set) var voiceOverRunning = UIAccessibility.isVoiceOverRunning
@@ -43,6 +63,32 @@ final class SpeechController: NSObject, ObservableObject {
         }
     }
 
+    // MARK: Speechify state
+
+    @Published var voiceEngine: VoiceEngine {
+        didSet {
+            guard oldValue != voiceEngine else { return }
+            UserDefaults.standard.set(voiceEngine.rawValue, forKey: Self.engineKey)
+            if isActive { restart() }
+        }
+    }
+    @Published private(set) var speechifyVoices: [SpeechifyVoice] = []
+    @Published private(set) var speechifyVoiceID: String
+    @Published private(set) var hasSpeechifyKey = false
+    /// Last problem talking to Speechify, shown in its settings.
+    @Published private(set) var speechifyProblem: String?
+    /// Reading right now with Speechify (false: Apple voice, including fallback).
+    @Published private(set) var usingSpeechify = false
+
+    private var speechifyKey: String?
+    private lazy var speechify: SpeechifyPlayer = {
+        let p = SpeechifyPlayer()
+        p.host = self
+        return p
+    }()
+    private var previewPlayer: AVPlayer?
+    private var voicesFetchedAt: Date?
+
     weak var session: DocumentSession?
 
     static let speeds: [Double] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
@@ -53,6 +99,10 @@ final class SpeechController: NSObject, ObservableObject {
     /// (v2: on by default.)
     private static let followVoiceOverKey = "noter.followVoiceOver.v2"
     private static let skipKey = "noter.skip"
+    private static let engineKey = "noter.voiceEngine"
+    fileprivate static let speechifyVoiceKeyName = "noter.speechifyVoice"
+    fileprivate static let speechifyVoicesKeyName = "noter.speechifyVoices"
+    fileprivate static let speechifyKeyAccountName = "speechify-api-key"
 
     private let synth = AVSpeechSynthesizer()
     private struct Chunk {
@@ -64,7 +114,7 @@ final class SpeechController: NSObject, ObservableObject {
 
     /// The spoken string is the page text minus skipped parts; each segment is a run
     /// of page text copied verbatim (UTF-16 offsets).
-    private struct SpokenMap {
+    struct SpokenMap {
         struct Segment {
             let spoken: Int
             let text: Int
@@ -91,7 +141,15 @@ final class SpeechController: NSObject, ObservableObject {
         voiceID = defaults.string(forKey: Self.voiceKey) ?? ""
         followVoiceOver = defaults.object(forKey: Self.followVoiceOverKey) as? Bool ?? true
         skip = (defaults.object(forKey: Self.skipKey) as? Int).map(SkipOptions.init(rawValue:)) ?? .defaults
+        voiceEngine = defaults.string(forKey: Self.engineKey).flatMap(VoiceEngine.init(rawValue:)) ?? .speechify
+        speechifyVoiceID = defaults.string(forKey: Self.speechifyVoiceKeyName) ?? ""
         super.init()
+        speechifyKey = Keychain.string(Self.speechifyKeyAccountName)
+        hasSpeechifyKey = !(speechifyKey ?? "").isEmpty
+        if let data = defaults.data(forKey: Self.speechifyVoicesKeyName),
+           let cached = try? JSONDecoder().decode([SpeechifyVoice].self, from: data) {
+            speechifyVoices = cached
+        }
         synth.delegate = self
         refreshVoices()
         // Newly downloaded voices show up without restarting the app.
@@ -116,7 +174,7 @@ final class SpeechController: NSObject, ObservableObject {
                 self.followVoiceOver = true
                 return // its didSet already re-queued the reading
             }
-            guard self.followVoiceOver, self.isActive else { return }
+            guard self.followVoiceOver, self.isActive, !self.usingSpeechify else { return }
             if self.isPlaying {
                 self.restart()
             } else {
@@ -229,36 +287,91 @@ final class SpeechController: NSObject, ObservableObject {
             guard let s = session else { return }
             play(from: s.readingStartSlot(), token: 0)
         } else if isPlaying {
-            synth.pauseSpeaking(at: .word)
+            if usingSpeechify { speechify.pause() } else { synth.pauseSpeaking(at: .word) }
             isPlaying = false
         } else {
             activateAudio()
-            if synth.isPaused { synth.continueSpeaking() } else { restart() }
+            if usingSpeechify {
+                do { try speechify.resume() } catch { restart() }
+            } else if synth.isPaused {
+                synth.continueSpeaking()
+            } else {
+                restart()
+            }
             isPlaying = true
         }
     }
 
     func play(from slot: SlotKey, token: Int) {
+        if speechifyReady {
+            playSpeechify(from: slot, token: token)
+        } else if voiceEngine == .speechify, hasSpeechifyKey, speechifyVoiceID.isEmpty {
+            // Key saved but no voice picked yet: fetch the voices first (once).
+            isActive = true
+            isPlaying = true
+            isLoading = true
+            Task { [weak self] in
+                guard let self else { return }
+                await self.refreshSpeechifyVoices()
+                guard self.isActive else { return }
+                if self.speechifyReady {
+                    self.playSpeechify(from: slot, token: token)
+                } else {
+                    self.playApple(from: slot, token: token)
+                }
+            }
+        } else {
+            playApple(from: slot, token: token)
+        }
+    }
+
+    private var speechifyReady: Bool {
+        voiceEngine == .speechify && hasSpeechifyKey && !speechifyVoiceID.isEmpty
+    }
+
+    private func stopApple() {
         generation += 1
         chunks.removeAll()
         lastQueued = nil
         fetching = 0
         if synth.isSpeaking || synth.isPaused { synth.stopSpeaking(at: .immediate) }
+    }
+
+    private func playApple(from slot: SlotKey, token: Int) {
+        speechify.stop()
+        usingSpeechify = false
+        isLoading = false
+        stopApple()
         activateAudio()
         isActive = true
         isPlaying = true
         queue(slot, token: token)
     }
 
+    private func playSpeechify(from slot: SlotKey, token: Int) {
+        stopApple()
+        previewPlayer?.pause()
+        activateAudio()
+        let voice = speechifyVoices.first { $0.id == speechifyVoiceID }
+        usingSpeechify = true
+        isActive = true
+        isPlaying = true
+        do {
+            try speechify.start(slot: slot, token: token, voice: speechifyVoiceID, model: voice?.bestModel,
+                                key: speechifyKey ?? "", speed: speed)
+        } catch {
+            playApple(from: slot, token: token)
+        }
+    }
+
     func stop() {
-        generation += 1
-        chunks.removeAll()
-        fetching = 0
-        if synth.isSpeaking || synth.isPaused { synth.stopSpeaking(at: .immediate) }
+        stopApple()
+        speechify.stop()
+        usingSpeechify = false
         finish()
     }
 
-    private func restart() {
+    func restart() {
         if let p = position {
             play(from: p.slot, token: p.token)
         } else if let s = session {
@@ -283,7 +396,7 @@ final class SpeechController: NSObject, ObservableObject {
 
     // MARK: Queue
 
-    private func next(after slot: SlotKey) -> SlotKey? {
+    func nextSlot(after slot: SlotKey) -> SlotKey? {
         guard let s = session else { return nil }
         if slot.half + 1 < s.halfCount(slot.pdfIndex) { return SlotKey(pdfIndex: slot.pdfIndex, half: slot.half + 1) }
         if slot.pdfIndex + 1 < s.pageCount { return SlotKey(pdfIndex: slot.pdfIndex + 1, half: 0) }
@@ -308,7 +421,7 @@ final class SpeechController: NSObject, ObservableObject {
             self.isLoading = false
             if let lp = s.logicalPage(slot) {
                 self.speak(lp, token: token)
-            } else if let n = self.next(after: slot) {
+            } else if let n = self.nextSlot(after: slot) {
                 self.queue(n, token: 0)
             } else if self.chunks.isEmpty {
                 self.finish()
@@ -316,10 +429,11 @@ final class SpeechController: NSObject, ObservableObject {
         }
     }
 
-    private func speak(_ lp: LogicalPage, token: Int) {
+    /// The page text from `token` on, leaving out skipped ranges, plus the map from
+    /// positions in that string back to the page text.
+    func spokenText(_ lp: LogicalPage, fromToken token: Int) -> (text: String, map: SpokenMap) {
         let ns = lp.text as NSString
         let start = token < lp.tokenRanges.count ? lp.tokenRanges[max(token, 0)].location : ns.length
-        // Copy the page text from `start`, leaving out skipped ranges.
         let spoken = NSMutableString()
         var map = SpokenMap()
         func copy(_ from: Int, _ to: Int) {
@@ -334,11 +448,15 @@ final class SpeechController: NSObject, ObservableObject {
             cursor = max(cursor, NSMaxRange(r))
         }
         copy(cursor, ns.length)
-        let text = spoken as String
+        return (spoken as String, map)
+    }
+
+    private func speak(_ lp: LogicalPage, token: Int) {
+        let (text, map) = spokenText(lp, fromToken: token)
         lastQueued = lp.slot
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             // Blank page — move on.
-            if let n = next(after: lp.slot) {
+            if let n = nextSlot(after: lp.slot) {
                 queue(n, token: 0)
             } else if chunks.isEmpty && fetching == 0 {
                 finish()
@@ -360,7 +478,7 @@ final class SpeechController: NSObject, ObservableObject {
         guard let c = chunks[id] else { return }
         isLoading = false
         // Queue the next page while this one is being read, so there's no pause.
-        if lastQueued == c.slot, let n = next(after: c.slot) { queue(n, token: 0) }
+        if lastQueued == c.slot, let n = nextSlot(after: c.slot) { queue(n, token: 0) }
     }
 
     fileprivate func willSpeak(_ id: ObjectIdentifier, range: NSRange) {
@@ -377,11 +495,190 @@ final class SpeechController: NSObject, ObservableObject {
         guard chunks.removeValue(forKey: id) != nil else { return }
         guard chunks.isEmpty, fetching == 0, isActive else { return }
         // Nothing left in the queue: continue with the following page, or stop at the end.
-        if let n = lastQueued.flatMap({ next(after: $0) }) {
+        if let n = lastQueued.flatMap({ nextSlot(after: $0) }) {
             queue(n, token: 0)
         } else {
             finish()
         }
+    }
+}
+
+// MARK: - Speechify
+
+extension SpeechController {
+    // MARK: Player callbacks
+
+    /// The book page, recognizing its text first if needed.
+    func page(for slot: SlotKey) async -> LogicalPage? {
+        guard let s = session else { return nil }
+        if let lp = s.logicalPage(slot) { return lp }
+        _ = await s.ocr.ensure(slot.pdfIndex)
+        return s.logicalPage(slot)
+    }
+
+    func speechifyMoved(slot: SlotKey, textOffset: Int) {
+        guard usingSpeechify, let lp = session?.logicalPage(slot),
+              let token = lp.tokenIndex(atUTF16: textOffset) else { return }
+        let p = SpeechPosition(pdfIndex: slot.pdfIndex, half: slot.half, token: token)
+        guard p != position else { return }
+        position = p
+        session?.speechMoved(p)
+    }
+
+    func speechifyLoading(_ loading: Bool) {
+        guard usingSpeechify, isLoading != loading else { return }
+        isLoading = loading
+    }
+
+    func speechifyFinished() {
+        usingSpeechify = false
+        finish()
+    }
+
+    func speechifyNeedsRestart() {
+        if isActive, usingSpeechify { restart() }
+    }
+
+    /// Speechify couldn't be reached (or refused): keep reading with the built-in
+    /// voice from the same word, so reading never just stops.
+    func speechifyFailed(_ error: Error, slot: SlotKey, textOffset: Int?) {
+        guard usingSpeechify else { return }
+        let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        speechifyProblem = (error as? SpeechifyError)?.isAuthProblem == true
+            ? "Your API key was rejected. Paste it again below."
+            : "Last error: \(reason)."
+        session?.showToast("Speechify: \(reason). Reading with the built-in voice.")
+        var from = SlotKey(pdfIndex: slot.pdfIndex, half: slot.half)
+        var token = 0
+        if let p = position {
+            from = p.slot
+            token = p.token
+        } else if let offset = textOffset, let lp = session?.logicalPage(slot),
+                  let t = lp.tokenIndex(atUTF16: offset) {
+            token = t
+        }
+        playApple(from: from, token: token)
+    }
+
+    // MARK: Key and voices
+
+    /// Saves the API key (in the Keychain) after checking it with Speechify.
+    /// Returns a message to show, or nil when everything worked.
+    func saveSpeechifyKey(_ raw: String) async -> String? {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return "Paste your API key first." }
+        do {
+            let voices = try await SpeechifyClient.shared.voices(key: key)
+            storeKey(key)
+            setSpeechifyVoices(voices)
+            return nil
+        } catch let error as SpeechifyError where error.isAuthProblem {
+            return "Speechify rejected this key. Check it and try again."
+        } catch {
+            // Offline or Speechify unreachable: keep the key and check it later.
+            storeKey(key)
+            let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return "Saved, but couldn't reach Speechify to check it (\(reason))."
+        }
+    }
+
+    private func storeKey(_ key: String) {
+        Keychain.set(key, Self.speechifyKeyAccountName)
+        speechifyKey = key
+        hasSpeechifyKey = true
+        speechifyProblem = nil
+        if voiceEngine != .speechify { voiceEngine = .speechify }
+    }
+
+    func removeSpeechifyKey() {
+        if usingSpeechify { stop() }
+        Keychain.set(nil, Self.speechifyKeyAccountName)
+        speechifyKey = nil
+        hasSpeechifyKey = false
+    }
+
+    /// Loads the voice list (at most hourly unless forced). Also warms up the
+    /// connection, so the first clip arrives faster when you press play.
+    func refreshSpeechifyVoices(force: Bool = false) async {
+        guard let key = speechifyKey, !key.isEmpty else { return }
+        if !force, let fetched = voicesFetchedAt, Date().timeIntervalSince(fetched) < 3600, !speechifyVoices.isEmpty {
+            return
+        }
+        do {
+            setSpeechifyVoices(try await SpeechifyClient.shared.voices(key: key))
+            speechifyProblem = nil
+        } catch {
+            if (error as? SpeechifyError)?.isAuthProblem == true {
+                speechifyProblem = "Your API key was rejected. Paste it again below."
+            }
+        }
+    }
+
+    func warmUpSpeechify() {
+        guard voiceEngine == .speechify, hasSpeechifyKey else { return }
+        Task { await refreshSpeechifyVoices() }
+    }
+
+    private func setSpeechifyVoices(_ voices: [SpeechifyVoice]) {
+        voicesFetchedAt = Date()
+        let language = String((Locale.preferredLanguages.first ?? "en").prefix(2))
+        let sorted = voices.sorted { a, b in
+            let la = a.locale.hasPrefix(language), lb = b.locale.hasPrefix(language)
+            if la != lb { return la }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+        speechifyVoices = sorted
+        if let data = try? JSONEncoder().encode(sorted) {
+            UserDefaults.standard.set(data, forKey: Self.speechifyVoicesKeyName)
+        }
+        if speechifyVoiceID.isEmpty || !sorted.contains(where: { $0.id == speechifyVoiceID }) {
+            let favorites = ["george", "henry", "carly", "kristy", "oliver"]
+            let pick = favorites.lazy.compactMap { id in sorted.first { $0.id.lowercased() == id } }.first
+                ?? sorted.first { $0.locale.hasPrefix(language) }
+                ?? sorted.first
+            setSpeechifyVoice(pick?.id ?? "")
+        }
+    }
+
+    private func setSpeechifyVoice(_ id: String) {
+        speechifyVoiceID = id
+        UserDefaults.standard.set(id, forKey: Self.speechifyVoiceKeyName)
+    }
+
+    /// Voices in your language (all voices if none match).
+    var speechifyLanguageVoices: [SpeechifyVoice] {
+        let language = String((Locale.preferredLanguages.first ?? "en").prefix(2))
+        let matching = speechifyVoices.filter { $0.locale.hasPrefix(language) }
+        return matching.isEmpty ? speechifyVoices : matching
+    }
+
+    var currentSpeechifyVoice: SpeechifyVoice? {
+        speechifyVoices.first { $0.id == speechifyVoiceID }
+    }
+
+    /// Picks a Speechify voice. While reading, switches from the current word;
+    /// otherwise plays the voice's free preview clip.
+    func chooseSpeechifyVoice(_ id: String) {
+        let changed = id != speechifyVoiceID
+        setSpeechifyVoice(id)
+        if voiceEngine != .speechify {
+            voiceEngine = .speechify // its didSet restarts reading if needed
+            if !isActive { playPreview(id) }
+            return
+        }
+        if isActive {
+            if changed, usingSpeechify { restart() }
+        } else {
+            playPreview(id)
+        }
+    }
+
+    func playPreview(_ id: String) {
+        guard !isActive, let link = speechifyVoices.first(where: { $0.id == id })?.preview,
+              let url = URL(string: link) else { return }
+        activateAudio()
+        previewPlayer = AVPlayer(url: url)
+        previewPlayer?.play()
     }
 }
 

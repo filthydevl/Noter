@@ -45,12 +45,33 @@ A no-frills iPad reader for scanned books and PDFs, built around the Apple Penci
 The toolbar also has undo, the highlighter/eraser toggle and the highlight color (set once;
 it's remembered).
 
-## Natural-sounding voice
+## Speechify AI voices
 
-iOS only lets apps use voices installed on the device. For the best ("neural") voice, go to
-**Settings › Accessibility › Spoken Content › Voices › English** and download a voice marked
-**Premium** (or Enhanced). Noter picks the best installed voice automatically; you can change
-it from the speed menu in the read-aloud control. Siri's own voices aren't available to apps.
+Read-aloud uses Speechify's AI voices when you've added your Speechify API key:
+
+1. Tap the speed button on the read-aloud control › **Set up Speechify…**
+2. Paste your API key › **Save key**. It's stored only in the iPad's Keychain, never in
+   the app's code or files.
+3. Pick a voice (tapping one plays its preview).
+
+To keep it from lagging:
+
+- The first clip is one short sentence, so audio starts almost immediately.
+- While it plays, the next clips (including the next pages) are fetched in the background
+  and queued back-to-back, so there are no gaps between sentences or pages.
+- Speed changes happen on the iPad, instantly, without fetching anything again.
+- Clips are cached on the iPad, so anything you've already heard replays instantly and
+  isn't billed again.
+
+If Speechify can't be reached or the key is rejected, Noter keeps reading with the
+built-in Apple voice from the same word. You can also switch to **Built-in voices** in the
+same menu at any time.
+
+### Built-in voices
+
+iOS only lets apps use voices installed on the device. For the best built-in voice, go to
+**Settings › Accessibility › Spoken Content › Voices › English** and download a voice
+marked **Premium** (or Enhanced).
 
 ## Building
 
