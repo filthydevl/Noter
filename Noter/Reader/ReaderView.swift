@@ -366,8 +366,13 @@ struct ReaderView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        // All on the left, beside Back: an open list panel never covers them.
-        ToolbarItem(placement: .topBarLeading) {
+        // No title in the middle: just the floating buttons.
+        ToolbarItem(placement: .principal) {
+            Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+        }
+
+        // On the right (over the top of an open list, which starts below them).
+        ToolbarItem(placement: .topBarTrailing) {
             Picker("View", selection: $session.viewMode) {
                 Text(ViewMode.pdf.title).tag(ViewMode.pdf)
                 Text(ViewMode.transcript.title).tag(ViewMode.transcript)
@@ -376,7 +381,7 @@ struct ReaderView: View {
             .frame(width: 180)
         }
 
-        ToolbarItemGroup(placement: .topBarLeading) {
+        ToolbarItemGroup(placement: .topBarTrailing) {
             if session.ocrDone < session.pageCount {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)

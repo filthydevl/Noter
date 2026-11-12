@@ -6,6 +6,7 @@ import SwiftUI
 enum AnalysisTag: String, CaseIterable, Identifiable {
     case thesis, claim, argument, premise, evidence, example, assumption
     case cause, effect, counterargument, rebuttal, contrast, context, theme, significance, conclusion
+    case people, event, policy
 
     var id: String { key }
 
@@ -42,6 +43,9 @@ enum AnalysisTag: String, CaseIterable, Identifiable {
         case .theme: "A recurring idea"
         case .significance: "Why it matters"
         case .conclusion: "Where the reasoning lands"
+        case .people: "A person or group who matters here"
+        case .event: "Something that happened (when, where)"
+        case .policy: "A law, decision or course of action"
         }
     }
 
@@ -63,6 +67,9 @@ enum AnalysisTag: String, CaseIterable, Identifiable {
         case .theme: "repeat"
         case .significance: "exclamationmark.circle"
         case .conclusion: "flag.checkered"
+        case .people: "person.2"
+        case .event: "calendar"
+        case .policy: "building.columns"
         }
     }
 
@@ -86,6 +93,9 @@ enum AnalysisTag: String, CaseIterable, Identifiable {
         case .theme: hex = "#C0657A"
         case .significance: hex = "#C7402F"
         case .conclusion: hex = "#2C6E8F"
+        case .people: hex = "#D2763A"
+        case .event: hex = "#3E8E7E"
+        case .policy: hex = "#6A5ACD"
         }
         return HighlightColor(rawValue: hex) ?? .yellow
     }
@@ -96,6 +106,7 @@ enum AnalysisTag: String, CaseIterable, Identifiable {
         ("Support", [.evidence, .example]),
         ("Cause & effect", [.cause, .effect]),
         ("Debate", [.counterargument, .rebuttal, .contrast]),
+        ("People & events", [.people, .event, .policy]),
         ("Reading", [.context, .theme, .significance]),
     ]
 
