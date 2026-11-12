@@ -58,6 +58,9 @@ struct ReaderView: View {
     @State private var savedPDF: ShareItem?
     @State private var viewWidth: CGFloat = 0
     @State private var viewHeight: CGFloat = 0
+    /// How far the on-screen keyboard reaches up into the reader (0: no keyboard).
+    @State private var keyboardLift: CGFloat = 0
+    @State private var bottomSafeInset: CGFloat = 0
     /// The page area is laid out beside the open panel (landscape). Changes only when
     /// the slide has finished, so the PDF is re-laid out once, not every frame.
     @State private var pageBesidePanel = false
@@ -172,10 +175,24 @@ struct ReaderView: View {
         }
         // In portrait an open panel would cover the spot you jump to: it closes.
         .onChange(of: session.closePanelSignal) { _, _ in panel = nil }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
+            guard let frame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let screen = UIScreen.main.bounds.height
+            let lift = frame.minY >= screen - 1 || frame.height < 60 ? 0 : screen - frame.minY - bottomSafeInset
+            withAnimation(.easeOut(duration: 0.25)) { keyboardLift = max(lift, 0) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.25)) { keyboardLift = 0 }
+        }
         .background {
             GeometryReader { g in
                 Color.clear
-                    .onAppear { viewHeight = g.size.height; widthChanged(g.size.width) }
+                    .onAppear {
+                        viewHeight = g.size.height
+                        bottomSafeInset = g.safeAreaInsets.bottom
+                        widthChanged(g.size.width)
+                    }
+                    .onChange(of: g.safeAreaInsets.bottom) { _, b in bottomSafeInset = b }
                     .onChange(of: g.size.width) { _, w in widthChanged(w) }
                     .onChange(of: g.size.height) { _, h in viewHeight = h; updateCoveredRight() }
             }
@@ -188,7 +205,8 @@ struct ReaderView: View {
                     // Portrait: a floating card along the bottom; the page stays above it.
                     sidePanel(panel)
                         .frame(maxWidth: .infinity)
-                        .frame(height: sheetHeight)
+                        // Above the keyboard when typing: shorter if needed, never off the top.
+                        .frame(height: max(min(sheetHeight, viewHeight - keyboardLift - 90), 160))
                         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
                         .background {
                             RoundedRectangle(cornerRadius: 26, style: .continuous)
@@ -198,8 +216,7 @@ struct ReaderView: View {
                                 .shadow(color: .black.opacity(0.22), radius: 22, y: -4)
                         }
                         .padding(.horizontal, 12)
-                        .padding(.bottom, 12)
-                        .avoidingKeyboard() // the whole card rises above the keyboard
+                        .padding(.bottom, 12 + keyboardLift)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
                     // Landscape: top to bottom, flush with the right edge (like a sheet).
@@ -238,6 +255,8 @@ struct ReaderView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: session.toast)
         .sheet(item: $savedPDF) { ShareSheet(url: $0.url) }
+        // The keyboard never shoves the reader around: the panels make room themselves.
+        .ignoresSafeArea(.keyboard)
         .navigationTitle(session.info.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
