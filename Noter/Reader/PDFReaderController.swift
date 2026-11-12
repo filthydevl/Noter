@@ -287,7 +287,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         let inset = sv.adjustedContentInset
         let visible = sv.bounds.inset(by: inset)
         var offset = CGPoint(x: r.midX - inset.left - max(visible.width - coveredRight, 100) / 2,
-                             y: r.midY - inset.top - visible.height / 2)
+                             y: r.midY - inset.top - max(visible.height - coveredBottom, 100) / 2)
         let maxX = max(-inset.left, sv.contentSize.width - sv.bounds.width + inset.right)
         let maxY = max(-inset.top, sv.contentSize.height - sv.bounds.height + inset.bottom)
         offset.x = min(max(offset.x, -inset.left), maxX)
@@ -298,11 +298,14 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
 
     /// Width on the right covered by the tool rail and an open side panel.
     var coveredRight: CGFloat = 64
+    /// Height at the bottom covered by the list card (portrait).
+    var coveredBottom: CGFloat = 0
 
     /// The part of the PDF view you can see past the bars, the rail and a panel.
     private var visibleArea: CGRect {
         var r = pdfView.bounds.inset(by: pdfView.safeAreaInsets)
         r.size.width = max(r.width - coveredRight, 0)
+        r.size.height = max(r.height - coveredBottom, 0)
         return r
     }
 

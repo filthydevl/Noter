@@ -57,6 +57,7 @@ struct ReaderView: View {
     @State private var panel: SidePanel?
     @State private var savedPDF: ShareItem?
     @State private var viewWidth: CGFloat = 0
+    @State private var viewHeight: CGFloat = 0
     /// The page area is laid out beside the open panel (landscape). Changes only when
     /// the slide has finished, so the PDF is re-laid out once, not every frame.
     @State private var pageBesidePanel = false
@@ -89,7 +90,7 @@ struct ReaderView: View {
                 rail(scrolls: true)
             }
             .padding(.top, 62)
-            .padding(.bottom, scribbleBar ? 76 : 10)
+            .padding(.bottom, (scribbleBar ? 76 : 10) + sheetRoom)
             .padding(.trailing, railTrailing)
         }
         // Above the rail, so nothing ever covers the player.
@@ -103,8 +104,8 @@ struct ReaderView: View {
                 ScribbleToolbar(session: session, settings: session.scribble)
                     // Between the page slider and an open panel, never under it.
                     .padding(.leading, 44)
-                    .padding(.trailing, panel == nil ? 16 : Self.panelWidth + 12)
-                    .padding(.bottom, 18)
+                    .padding(.trailing, panel == nil || bottomSheet ? 16 : Self.panelWidth + 12)
+                    .padding(.bottom, 18 + sheetRoom)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -114,7 +115,7 @@ struct ReaderView: View {
                 PageScrubber(session: session, outline: session.outline)
                     .padding(.leading, 4)
                     .padding(.top, 8)
-                    .padding(.bottom, scribbleBar ? 76 : 16)
+                    .padding(.bottom, (scribbleBar ? 76 : 16) + sheetRoom)
                     .transition(.opacity)
             }
         }
@@ -174,30 +175,51 @@ struct ReaderView: View {
         .background {
             GeometryReader { g in
                 Color.clear
-                    .onAppear { widthChanged(g.size.width) }
+                    .onAppear { viewHeight = g.size.height; widthChanged(g.size.width) }
                     .onChange(of: g.size.width) { _, w in widthChanged(w) }
+                    .onChange(of: g.size.height) { _, h in viewHeight = h; updateCoveredRight() }
             }
         }
         .animation(.snappy(duration: 0.25), value: session.pendingTerm)
         .animation(.snappy(duration: 0.25), value: session.penMode)
-        .overlay(alignment: .trailing) {
+        .overlay(alignment: bottomSheet ? .bottom : .trailing) {
             if let panel {
-                // Top to bottom, flush with the right edge (like a sheet). The list itself
-                // starts below the top buttons' bar (taps there would go to the bar).
-                sidePanel(panel)
-                    .avoidingKeyboard()
-                    .frame(width: Self.panelWidth)
-                    .frame(maxHeight: .infinity)
-                    .background {
-                        UnevenRoundedRectangle(topLeadingRadius: 26, bottomLeadingRadius: 26, style: .continuous)
-                            .fill(.regularMaterial)
-                            .overlay(UnevenRoundedRectangle(topLeadingRadius: 26, bottomLeadingRadius: 26,
-                                                            style: .continuous)
-                                .stroke(Color.primary.opacity(0.06), lineWidth: 1))
-                            .shadow(color: .black.opacity(0.22), radius: 20, x: -4)
-                            .ignoresSafeArea()
-                    }
-                .transition(.move(edge: .trailing))
+                if bottomSheet {
+                    // Portrait: a floating card along the bottom; the page stays above it.
+                    sidePanel(panel)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: sheetHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                        .background {
+                            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                .fill(.regularMaterial)
+                                .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.06), lineWidth: 1))
+                                .shadow(color: .black.opacity(0.22), radius: 22, y: -4)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 12)
+                        .avoidingKeyboard() // the whole card rises above the keyboard
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    // Landscape: top to bottom, flush with the right edge (like a sheet).
+                    // The list itself starts below the top buttons' bar (taps there would
+                    // go to the bar).
+                    sidePanel(panel)
+                        .avoidingKeyboard()
+                        .frame(width: Self.panelWidth)
+                        .frame(maxHeight: .infinity)
+                        .background {
+                            UnevenRoundedRectangle(topLeadingRadius: 26, bottomLeadingRadius: 26, style: .continuous)
+                                .fill(.regularMaterial)
+                                .overlay(UnevenRoundedRectangle(topLeadingRadius: 26, bottomLeadingRadius: 26,
+                                                                style: .continuous)
+                                    .stroke(Color.primary.opacity(0.06), lineWidth: 1))
+                                .shadow(color: .black.opacity(0.22), radius: 20, x: -4)
+                                .ignoresSafeArea()
+                        }
+                        .transition(.move(edge: .trailing))
+                }
             }
         }
         .animation(Self.panelSpring, value: panel)
@@ -209,7 +231,7 @@ struct ReaderView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, 84)
+                    .padding(.bottom, 84 + sheetRoom)
                     .transition(.opacity)
                     .allowsHitTesting(false)
             }
@@ -274,7 +296,8 @@ struct ReaderView: View {
         // The page area's own width doesn't count (it shrinks beside a panel).
         guard w > 0 else { return }
         viewWidth = w
-        session.narrowLayout = w < 1140
+        // The portrait card leaves the page above it visible: jumping keeps it open.
+        session.narrowLayout = false
         updateCoveredRight()
         // Rotated with a panel open: just lay the page out for the new shape.
         if pushesPageLeft != pageBesidePanel {
@@ -287,8 +310,9 @@ struct ReaderView: View {
     /// How much of the page's right side is under the rail / a panel, for centering a
     /// highlight you jump to.
     private func updateCoveredRight() {
+        session.pdfController?.coveredBottom = sheetRoom
         let covered: CGFloat
-        if panel == nil {
+        if panel == nil || bottomSheet {
             covered = Self.railWidth + 8
         } else if pushesPageLeft {
             covered = 8 // the panel and rail are beside the page, not over it
@@ -299,7 +323,13 @@ struct ReaderView: View {
     }
 
     /// The tool rail's distance from the right edge: at the edge, or beside an open panel.
-    private var railTrailing: CGFloat { panel == nil ? 4 : Self.panelWidth + 8 }
+    private var railTrailing: CGFloat { panel == nil || bottomSheet ? 4 : Self.panelWidth + 8 }
+
+    /// Portrait (narrow): the list is a floating card along the bottom.
+    private var bottomSheet: Bool { viewWidth > 0 && viewWidth < 1140 }
+    private var sheetHeight: CGFloat { min(max(viewHeight * 0.42, 320), 560) }
+    /// Room the bottom card takes (portrait, a list open), for what sits above it.
+    private var sheetRoom: CGFloat { panel != nil && bottomSheet ? sheetHeight + 24 : 0 }
 
     static let panelWidth: CGFloat = 380
 
