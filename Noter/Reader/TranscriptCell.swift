@@ -84,6 +84,23 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
     private var inkProgrammatic = false
     /// You drew or erased here: the book page's ink, in page points.
     var onInkChanged: (([PKStroke]) -> Void)?
+    private var inkLeading: NSLayoutConstraint!
+    private var inkTrailing: NSLayoutConstraint!
+
+    /// How far the scribble canvas reaches into the margins beside the text.
+    func setInkMargin(_ margin: CGFloat) {
+        guard abs(inkLeading.constant + margin) > 0.5 else { return }
+        inkLeading.constant = -margin
+        inkTrailing.constant = margin
+        setNeedsLayout()
+        overlayWidth = -1 // the ink is placed again once the canvas has its new frame
+    }
+
+    /// The canvas reaches past the cell's edges, so touches there are the cell's too.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if inkCanvas.isUserInteractionEnabled, inkCanvas.frame.contains(point) { return true }
+        return super.point(inside: point, with: event)
+    }
     private var highlights: [TextHighlight] = []
     private var marks: [NSRange] = []
     private var flashRange: NSRange?
@@ -143,11 +160,13 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
         inkCanvas.delegate = self
         inkCanvas.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(inkCanvas)
+        // …and out into the margins either side of the column of text.
+        inkLeading = inkCanvas.leadingAnchor.constraint(equalTo: contentView.leadingAnchor)
+        inkTrailing = inkCanvas.trailingAnchor.constraint(equalTo: contentView.trailingAnchor)
         NSLayoutConstraint.activate([
             inkCanvas.topAnchor.constraint(equalTo: contentView.topAnchor),
             inkCanvas.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            inkCanvas.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            inkCanvas.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            inkLeading, inkTrailing,
         ])
         // The text re-wraps when its width settles (a two-page column is narrower than
         // the list): measure the highlights again then, or they sit on the old lines.
@@ -262,7 +281,8 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
     private func inkRect(_ token: Int) -> CGRect? {
         guard let page, token >= 0, token < page.tokenRanges.count, page.tokenRanges[token].length > 0,
               let r = rect(for: page.tokenRanges[token]) else { return nil }
-        return r.offsetBy(dx: textView.frame.minX, dy: textView.frame.minY)
+        return r.offsetBy(dx: textView.frame.minX - inkCanvas.frame.minX,
+                          dy: textView.frame.minY - inkCanvas.frame.minY)
     }
 
     /// The page's ink (page points) to show here.
@@ -307,7 +327,8 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
             let onPage = inkTable[key] ?? TextInk.toPage(
                 stroke, lp: page, pageSize: inkPageSize,
                 tokenAt: { p in
-                    let inText = CGPoint(x: p.x - self.textView.frame.minX, y: p.y - self.textView.frame.minY)
+                    let inText = CGPoint(x: p.x + self.inkCanvas.frame.minX - self.textView.frame.minX,
+                                         y: p.y + self.inkCanvas.frame.minY - self.textView.frame.minY)
                     return self.nearestShownToken(to: inText)
                 },
                 textRect: { self.inkRect($0) })

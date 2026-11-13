@@ -123,8 +123,12 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         // Squeezed to nothing for a moment while the iPad rotates: keep the last size
         // (a zero-wide page lays the text out at a NaN size).
         guard bounds.width >= 2, bounds.height >= 2, bounds.isFiniteRect else { return }
+        let resized = collectionView.frame.size != bounds.size
         collectionView.frame = bounds
         updatePageLayout()
+        if resized {
+            for case let cell as TranscriptCell in collectionView.visibleCells { cell.setInkMargin(inkMargin) }
+        }
         if !didInitialScroll, !initialScrollScheduled, bounds.height > 0, let s = session {
             initialScrollScheduled = true
             DispatchQueue.main.async { [weak self] in self?.scroll(toPage: s.currentPage) }
@@ -187,9 +191,16 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         return s.scribble.lasso ? PKLassoTool() : s.scribble.inkTool
     }
 
+    /// Room beside the column of text that scribbles can use: the whole margin in the
+    /// list, a sliver between the two pages of the book layout.
+    private var inkMargin: CGFloat {
+        showingTwoPages ? 10 : max(28, (collectionView.bounds.width - maxTextWidth) / 2) - 2
+    }
+
     private func configureInk(_ cell: TranscriptCell, _ lp: LogicalPage) {
         guard let s = session, let page = s.pdf.page(at: lp.pdfIndex) else { return }
         let size = TextInk.pageSize(page)
+        cell.setInkMargin(inkMargin)
         cell.setInk(strokes(ink(lp.pdfIndex)).filter { TextInk.belongs($0, to: lp, pageSize: size) }, pageSize: size)
         cell.setInkActive(s.penMode == .scribble, tool: inkTool, undo: s.inkUndo)
         cell.onInkChanged = { [weak self] changed in self?.inkChanged(lp, changed, pageSize: size) }
@@ -217,6 +228,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         pencil.isEnabled = !scribbling
         if scribbling { cancelStroke() }
         for case let cell as TranscriptCell in collectionView.visibleCells {
+            cell.setInkMargin(inkMargin)
             cell.setInkActive(scribbling, tool: inkTool, undo: s.inkUndo)
         }
     }
