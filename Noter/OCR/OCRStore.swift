@@ -84,14 +84,27 @@ final class OCRStore {
 
     // MARK: Worker
 
+    /// Which worker is current (an older, cancelled one finishing late is ignored).
+    private var workerID = 0
+    private var workerIsBackground = false
+
     func start() {
+        // Opened while the background was reading it at the lowest priority: start
+        // again at normal priority (iOS barely runs lowest-priority work).
+        if worker != nil, workerIsBackground, !firstPassOnly {
+            worker?.cancel()
+            worker = nil
+        }
         guard worker == nil, !isComplete || !waiters.isEmpty || (!firstPassOnly && staleCount > 0) else { return }
         let id = docID
         let url = Storage.pdfURL(id)
+        workerID += 1
+        let token = workerID
+        workerIsBackground = firstPassOnly
         // Books that aren't open are read at the lowest priority: never in the way.
         worker = Task.detached(priority: firstPassOnly ? .background : .utility) { [weak self] in
             guard let pdf = CGPDFDocument(url as CFURL) else {
-                await self?.workerEnded()
+                await self?.workerEnded(token)
                 return
             }
             while !Task.isCancelled {
@@ -106,7 +119,7 @@ final class OCRStore {
                 // speech between pages.
                 if job.refine { try? await Task.sleep(nanoseconds: 350_000_000) }
             }
-            await self?.workerEnded()
+            await self?.workerEnded(token)
         }
     }
 
@@ -164,7 +177,8 @@ final class OCRStore {
         Storage.save(versions, to: Storage.ocrVersionsURL(docID))
     }
 
-    private func workerEnded() {
+    private func workerEnded(_ token: Int) {
+        guard token == workerID else { return } // replaced by a newer worker
         worker = nil
         if saveTask != nil {
             saveTask?.cancel()
