@@ -281,6 +281,7 @@ struct ReaderView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: session.toast)
         .sheet(item: $savedPDF) { ShareSheet(url: $0.url) }
+        .sheet(isPresented: $session.showSourceDetails) { SourceDetailsView(session: session) }
         // The keyboard never shoves the reader around: the panels make room themselves.
         .ignoresSafeArea(.keyboard)
         .navigationTitle(session.info.title)
@@ -429,7 +430,9 @@ struct ReaderView: View {
         case .colors:
             ColorsListView(session: session, palette: session.palette) { self.panel = nil }
         case .bracket:
-            BracketNotesView(session: session, notes: session.bracket) { self.panel = nil }
+            BracketNotesView(session: session, notes: session.bracket, position: session.readerPosition) {
+                self.panel = nil
+            }
         }
     }
 

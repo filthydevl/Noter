@@ -110,7 +110,9 @@ extension HighlightsListView {
             delete: { session.removeHighlights([h.id]) },
             note: h.noteText,
             colorName: session.palette.name(h.color),
-            showAnalysis: showAnalysis)
+            showAnalysis: showAnalysis,
+            cite: { style, quote in session.cite(h, style: style, withQuote: quote) },
+            editSource: { session.showSourceDetails = true })
     }
 }
 
@@ -305,6 +307,10 @@ struct HighlightRow: View {
     var colorName: String? = nil
     /// Offer the analysis tags (cause, effect, premise…) in the tag menu.
     var showAnalysis = true
+    /// Copy a citation for this highlight (style, with the quote or not).
+    var cite: ((CitationStyle, Bool) -> Void)? = nil
+    /// Open the book's details for citations.
+    var editSource: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -446,6 +452,32 @@ struct HighlightRow: View {
                         .background(Color.primary.opacity(0.07), in: Capsule())
                 }
                 .accessibilityLabel("Tag with key word or analysis tag")
+                if let cite {
+                    Menu {
+                        Section("Chicago") {
+                            Button { cite(.chicago, false) } label: { Label("Footnote", systemImage: "text.append") }
+                            Button { cite(.chicago, true) } label: { Label("Quote + footnote", systemImage: "text.quote") }
+                        }
+                        Section("MLA") {
+                            Button { cite(.mla, false) } label: {
+                                Label("In-text + works cited", systemImage: "text.append")
+                            }
+                            Button { cite(.mla, true) } label: {
+                                Label("Quote + citation", systemImage: "text.quote")
+                            }
+                        }
+                        if let editSource {
+                            Button(action: editSource) { Label("Source details…", systemImage: "book.closed") }
+                        }
+                    } label: {
+                        Image(systemName: "quote.closing")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 30, height: 24)
+                            .background(Color.primary.opacity(0.07), in: Capsule())
+                    }
+                    .accessibilityLabel("Cite")
+                }
             }
             .frame(maxWidth: 120, alignment: .trailing)
         }

@@ -98,7 +98,9 @@ struct NotesListView: View {
                                         editNote: { session.setNote($0, on: h.id) },
                                         noteFocused: { if $0 { editing = h.id } },
                                         colorName: session.palette.name(h.color),
-                                        showAnalysis: showAnalysis)
+                                        showAnalysis: showAnalysis,
+            cite: { style, quote in session.cite(h, style: style, withQuote: quote) },
+            editSource: { session.showSourceDetails = true })
                                 }
                                 .id(h.id)
                             }

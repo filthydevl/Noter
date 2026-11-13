@@ -1076,13 +1076,64 @@ final class DocumentSession: ObservableObject {
         transcriptController?.showSpeech(position)
     }
 
-    /// Goes up each time you start scrolling the PDF or Text view yourself (Bracket
-    /// Notes comes back to your page then).
-    @Published private(set) var readerScrolls = 0
-
     func readerScrollBegan() {
-        readerScrolls &+= 1
         noteUserActivity()
+    }
+
+    /// The sentence at the top of the PDF / Text view, for Bracket Notes to follow.
+    let readerPosition = ReaderPosition()
+    private var lastPositionReport = Date.distantPast
+    private var positionReportPending = false
+
+    /// The reader scrolled: report where it is now — only while Bracket Notes is open,
+    /// and at most a few times a second.
+    func readerMoved(now: Bool = false) {
+        guard bracket.isShowing else { return }
+        let wait = 0.15 - Date().timeIntervalSince(lastPositionReport)
+        if wait > 0, !now {
+            guard !positionReportPending else { return }
+            positionReportPending = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+                self?.positionReportPending = false
+                self?.readerMoved(now: true)
+            }
+            return
+        }
+        lastPositionReport = Date()
+        let anchor = viewMode == .transcript ? transcriptController?.topAnchor() : pdfController?.topAnchor()
+        if let anchor, anchor != readerPosition.anchor { readerPosition.anchor = anchor }
+    }
+
+    // MARK: - Citations
+
+    /// Shows the sheet where the book's details (author, title, publisher…) are kept.
+    @Published var showSourceDetails = false
+    private(set) lazy var source: SourceInfo = SourceInfo.load(for: self)
+
+    func saveSource(_ s: SourceInfo) {
+        source = s
+        Storage.save(s, to: SourceInfo.url(info.id))
+    }
+
+    /// The page number printed in the book for a highlight (nil: none recognized).
+    func printedPage(for h: Highlight) -> String? {
+        labels[SlotKey(pdfIndex: h.page, half: half(of: h))]
+    }
+
+    /// Copies a citation for a highlight (formatted text, with a plain copy for apps
+    /// that don't take formatting).
+    func cite(_ h: Highlight, style: CitationStyle, withQuote: Bool) {
+        guard source.isUsable else {
+            showSourceDetails = true
+            showToast("Fill in the book's details once, then cite")
+            return
+        }
+        let page = printedPage(for: h)
+        let text = Citation.make(source, page: page, style: style, quote: withQuote ? h.text : nil)
+        Citation.copy(text)
+        showToast(page == nil
+                  ? "Copied — no printed page number was found, so add it yourself"
+                  : "Copied \(style.title) citation, p. \(page ?? "")")
     }
 
     func noteUserActivity() {

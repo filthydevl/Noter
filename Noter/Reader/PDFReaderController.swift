@@ -180,6 +180,14 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
             session?.readerScrollBegan()
         } else if g.state == .changed {
             session?.noteUserActivity()
+            session?.readerMoved()
+        } else if g.state == .ended {
+            // The page keeps gliding after your finger lifts.
+            for delay in [0.3, 0.8, 1.6] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.session?.readerMoved()
+                }
+            }
         }
     }
 
@@ -223,6 +231,7 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     }
 
     @objc private func visiblePagesChanged() {
+        session?.readerMoved()
         repairBrokenZoom()
         restrictPencilToHighlighting()
     }

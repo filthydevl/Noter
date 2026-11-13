@@ -9,11 +9,11 @@ enum BracketError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .badKey: "The Anthropic API key was rejected"
-        case .busy: "Claude is busy right now (too many requests)"
-        case .declined: "Claude declined to transpose this page"
-        case .server(let code, let message): message.isEmpty ? "Claude error \(code)" : message
-        case .empty: "Claude sent back nothing"
+        case .badKey: "The API key was rejected"
+        case .busy: "Too many requests right now"
+        case .declined: "The model declined to transpose this page"
+        case .server(let code, let message): message.isEmpty ? "Error \(code)" : message
+        case .empty: "The model sent back nothing"
         }
     }
 }

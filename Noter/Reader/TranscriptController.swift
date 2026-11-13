@@ -333,6 +333,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard didInitialScroll, let s = session, s.viewMode == .transcript, let slot = topVisibleSlot() else { return }
         s.setCurrentPage(slot.pdfIndex)
+        s.readerMoved()
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
@@ -474,17 +475,27 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
     private func crossPageParts(_ st: Stroke) -> [(cell: TranscriptCell, page: LogicalPage, range: ClosedRange<Int>)] {
         var hits = st.others
         hits[st.indexPath] = st.hits
-        let items = hits.keys.sorted { $0.item < $1.item }
-        guard let first = items.first, let last = items.last, first != last else { return [] }
+        // (A section is a PDF page, an item one book page on it.)
+        func before(_ a: IndexPath, _ b: IndexPath) -> Bool {
+            a.section != b.section ? a.section < b.section : a.item < b.item
+        }
+        let touchedPaths = hits.keys.sorted(by: before)
+        guard let first = touchedPaths.first, let last = touchedPaths.last, first != last else { return [] }
+        var all: [IndexPath] = []
+        for section in first.section...last.section {
+            for item in 0..<collectionView.numberOfItems(inSection: section) {
+                let ip = IndexPath(item: item, section: section)
+                if !before(ip, first), !before(last, ip) { all.append(ip) }
+            }
+        }
         var parts: [(cell: TranscriptCell, page: LogicalPage, range: ClosedRange<Int>)] = []
-        for item in first.item...last.item {
-            let ip = IndexPath(item: item, section: first.section)
+        for ip in all {
             guard let cell = collectionView.cellForItem(at: ip) as? TranscriptCell, let lp = cell.page,
                   !lp.tokens.isEmpty else { continue }
             let end = lp.tokens.count - 1
             let touched = Snapper.range(for: hits[ip] ?? [], referenceWidth: cell.textWidth)
-            let lower = item == first.item ? (touched?.lowerBound ?? end) : 0
-            let upper = item == last.item ? (touched?.upperBound ?? 0) : end
+            let lower = ip == first ? (touched?.lowerBound ?? end) : 0
+            let upper = ip == last ? (touched?.upperBound ?? 0) : end
             guard lower <= upper else { continue }
             parts.append((cell, lp, lower...upper))
         }

@@ -7,6 +7,8 @@ import UIKit
 struct BracketNotesView: View {
     @ObservedObject var session: DocumentSession
     @ObservedObject var notes: BracketNotes
+    /// Where the PDF / Text view is (the sentence at its top), while this panel is open.
+    @ObservedObject var position: ReaderPosition
     var onClose: () -> Void
     @AppStorage("noter.bracketScope") private var scopeRaw = BracketNotes.Scope.page.rawValue
     @State private var showSetup = false
@@ -42,8 +44,7 @@ struct BracketNotesView: View {
         var page: Int
         var scope: String
         var focus: String
-        var hasKey: Bool
-        var apple: Bool
+        var engine: String
         var ocrDone: Int
     }
 
@@ -91,7 +92,7 @@ struct BracketNotesView: View {
                     Button {
                         showSetup = true
                     } label: {
-                        Label(notes.hasKey ? "Claude settings…" : "Set up Claude…", systemImage: "gearshape")
+                        Label("Engines & keys…", systemImage: "gearshape")
                     }
                 } label: {
                     PanelIcon(symbol: "ellipsis")
@@ -127,7 +128,7 @@ struct BracketNotesView: View {
         // Turning the page, highlighting, or saving a key (re)makes the notes, a moment
         // after the last change.
         .task(id: Trigger(page: page, scope: scopeRaw, focus: notes.focusSignature(page: page),
-                          hasKey: notes.hasKey, apple: notes.appleReady, ocrDone: session.ocr.meta[page] == nil ? 0 : 1)) {
+                          engine: notes.wanted, ocrDone: session.ocr.meta[page] == nil ? 0 : 1)) {
             // Long enough that flicking past a page doesn't send it to Claude.
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
@@ -169,16 +170,18 @@ struct BracketNotesView: View {
                     proxy.scrollTo(Self.lineID(spoken.page, spoken.line), anchor: .center)
                 }
             }
-            .onAppear { proxy.scrollTo(page, anchor: .top) }
-            .onChange(of: page) { _, p in
-                withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(p, anchor: .top) }
+            .onAppear {
+                notes.isShowing = true
+                session.readerMoved(now: true)
+                follow(proxy, animated: false)
             }
-            .onChange(of: scopeRaw) { _, _ in proxy.scrollTo(page, anchor: .top) }
-            // You moved the notes away, then scrolled the book again (even within the
-            // same page): the notes come back to the page you're reading.
-            .onChange(of: session.readerScrolls) { _, _ in
-                withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(session.currentPage, anchor: .top) }
-            }
+            .onDisappear { notes.isShowing = false }
+            // The notes keep to the sentence at the top of the PDF / Text view: scroll
+            // the book and they follow, line by line. (Scrolling the notes themselves
+            // leaves the book where it is, until you scroll the book again.)
+            .onChange(of: position.anchor) { _, _ in follow(proxy, animated: true) }
+            .onChange(of: page) { _, _ in follow(proxy, animated: true) }
+            .onChange(of: scopeRaw) { _, _ in follow(proxy, animated: false) }
         }
     }
 
@@ -216,8 +219,7 @@ struct BracketNotesView: View {
                 }
                 .opacity(working ? 0.5 : 1)
             } else if working || (current && entry == nil) {
-                Text(notes.hasKey ? "Transposing with Claude…"
-                     : (notes.appleReady ? "Transposing on the iPad…" : "Transposing…"))
+                Text("Transposing with \(BracketNotes.name(notes.wanted))…")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else if current {
@@ -229,6 +231,35 @@ struct BracketNotesView: View {
             }
         }
         .textSelection(.enabled)
+    }
+
+    /// Scrolls the notes to the line for the sentence at the top of the reader (the
+    /// page's notes, if that sentence can't be placed).
+    private func follow(_ proxy: ScrollViewProxy, animated: Bool) {
+        var page = session.currentPage
+        var line: Int?
+        if let anchor = position.anchor, let entry = notes.entry(page: anchor.slot.pdfIndex, scope: scope),
+           !entry.text.isEmpty, let pages = session.logicalPages(anchor.slot.pdfIndex) {
+            page = anchor.slot.pdfIndex
+            let before = pages.prefix(anchor.slot.half).reduce(0) { $0 + $1.tokens.count }
+            let words = pages.flatMap { $0.tokens.map(\.text) }
+            let map = BracketAlign.lines(for: words, notes: entry.text, key: "\(page)-\(scopeRaw)")
+            let index = before + anchor.token
+            // The first words of a page: its heading line, so the page number shows.
+            if index > 8, index < map.count, map[index] > 0 { line = map[index] }
+        }
+        let go = {
+            if let line {
+                proxy.scrollTo(Self.lineID(page, line), anchor: .top)
+            } else {
+                proxy.scrollTo(page, anchor: .top)
+            }
+        }
+        if animated {
+            withAnimation(.easeOut(duration: 0.2)) { go() }
+        } else {
+            go()
+        }
     }
 
     static func clampZoom(_ z: Double) -> Double { min(max(z, 0.6), 2.6) }
@@ -254,13 +285,7 @@ struct BracketNotesView: View {
 
     private func subtitle(page: Int, entry: BracketNotes.Entry?) -> String {
         let label = session.label(for: SlotKey(pdfIndex: page, half: 0))
-        let by = entry.map { e -> String in
-            switch e.engine {
-            case "claude": "Claude"
-            case "apple": "Apple Intelligence"
-            default: "simple rules"
-            }
-        }
+        let by = entry.map { BracketNotes.name($0.engine) }
         return [label, by].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -308,30 +333,77 @@ struct BracketNotesView: View {
     }
 }
 
-/// Paste an Anthropic API key once (kept in the iPad's Keychain) so Claude writes the
-/// bracket notes.
+/// Who writes the bracket notes: keys for Gemini and Claude (kept in the iPad's
+/// Keychain) and Apple Intelligence for offline.
 struct BracketSetupView: View {
     @ObservedObject var notes: BracketNotes
     @Environment(\.dismiss) private var dismiss
     @State private var key = ""
+    @State private var geminiKey = ""
+    @State private var geminiModel = GeminiClient.model
+    @State private var checking = false
+    @State private var message: String?
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Toggle("Use Apple Intelligence", isOn: $notes.useApple)
-                        .disabled(!BracketApple.isAvailable)
-                } header: {
-                    Text("On this iPad")
-                } footer: {
-                    Text(BracketApple.isAvailable
-                         ? "Without a Claude key (or offline), Apple's on-device model writes the notes: free, private, rougher than Claude. To spare the battery it only runs for the page you stop on, keeps every page it has done, and rests in Low Power Mode or when the iPad is warm."
-                         : "Apple Intelligence isn't available here (it needs iPadOS 26 or later with Apple Intelligence turned on in Settings). Without a Claude key, notes are made by simple rules.")
+                if notes.hasGemini, notes.hasKey {
+                    Section {
+                        Picker("Write notes with", selection: $notes.preferred) {
+                            ForEach(BracketNotes.Online.allCases) { Text($0.title).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    } footer: {
+                        Text("You have keys for both. The other one isn't used.")
+                    }
                 }
+
+                Section {
+                    if notes.hasGemini {
+                        HStack {
+                            Label("Gemini key saved", systemImage: "checkmark.seal.fill")
+                                .foregroundStyle(.green)
+                            Spacer()
+                            Button("Remove", role: .destructive) { notes.removeGeminiKey() }
+                        }
+                    }
+                    SecureField(notes.hasGemini ? "Replace key" : "Paste your Gemini API key", text: $geminiKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button {
+                        let k = geminiKey
+                        checking = true
+                        message = nil
+                        Task { @MainActor in
+                            message = await notes.saveGeminiKey(k)
+                            if notes.hasGemini { geminiKey = "" }
+                            geminiModel = GeminiClient.model
+                            if message == nil { message = "Key saved. Using \(GeminiClient.model)." }
+                            checking = false
+                        }
+                    } label: {
+                        if checking { ProgressView() } else { Text("Save key") }
+                    }
+                    .disabled(geminiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || checking)
+                    if notes.hasGemini {
+                        TextField("Model", text: $geminiModel)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onSubmit { GeminiClient.model = geminiModel.trimmingCharacters(in: .whitespaces) }
+                    }
+                    if let message {
+                        Text(message).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Gemini (free tier)")
+                } footer: {
+                    Text("Get a free key at aistudio.google.com. The text of the page you open (and your highlights) is sent to Google; on the free tier Google may use what you send to improve its products, and there's a limit of a few requests a minute. The page is redone around new highlights as you make them.")
+                }
+
                 Section {
                     if notes.hasKey {
                         HStack {
-                            Label("API key saved", systemImage: "checkmark.seal.fill")
+                            Label("Claude key saved", systemImage: "checkmark.seal.fill")
                                 .foregroundStyle(.green)
                             Spacer()
                             Button("Remove", role: .destructive) { notes.removeKey() }
@@ -346,16 +418,30 @@ struct BracketSetupView: View {
                     }
                     .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 } header: {
-                    Text("Claude (best match to your style)")
+                    Text("Claude (paid)")
                 } footer: {
-                    Text("With a key, Claude writes the bracket notes in your style: the text of the page you open (and your highlights) is sent to Anthropic. Each page and each highlight is billed to your key once, then kept on the iPad and never sent again unless you choose Redo. Without a key, simpler notes are made on the iPad and nothing is sent. The key is stored only in this iPad's Keychain.")
+                    Text("The page's text and your highlights are sent to Anthropic and billed to your key. To save credits, a page Claude has written isn't sent again for new highlights (they're tinted instead); Redo sends it again.")
+                }
+
+                Section {
+                    Toggle("Use Apple Intelligence", isOn: $notes.useApple)
+                        .disabled(!BracketApple.isAvailable)
+                } header: {
+                    Text("Offline, on this iPad")
+                } footer: {
+                    Text(BracketApple.isAvailable
+                         ? "Without a key, or when the internet can't be reached, Apple's on-device model writes the notes: free, private, rougher. To spare the battery it only runs for the page you stop on, keeps every page it has done, and rests in Low Power Mode or when the iPad is warm."
+                         : "Apple Intelligence isn't available here (it needs iPadOS 26 or later with Apple Intelligence turned on in Settings). Offline, notes are made by simple rules.")
                 }
             }
             .navigationTitle("Bracket Notes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        if notes.hasGemini { GeminiClient.model = geminiModel.trimmingCharacters(in: .whitespaces) }
+                        dismiss()
+                    }
                 }
             }
         }
