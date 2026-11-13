@@ -78,7 +78,7 @@ final class SpeechifyPlayer {
         startToken = token
         firstPage = true
         wire()
-        timePitch.rate = Float(speed)
+        setSpeed(speed)
         if !engine.isRunning { try engine.start() }
         node.play()
         isPaused = false
@@ -100,8 +100,13 @@ final class SpeechifyPlayer {
         isPaused = false
     }
 
+    /// At 1× the voice plays untouched (the time-stretch effect is bypassed: left on, it
+    /// made normal speed sound robotic after a change); other speeds use the effect at
+    /// its best quality.
     func setSpeed(_ speed: Double) {
+        timePitch.overlap = 32 // highest quality
         timePitch.rate = Float(speed)
+        timePitch.bypass = abs(speed - 1) < 0.01
     }
 
     func stop() {

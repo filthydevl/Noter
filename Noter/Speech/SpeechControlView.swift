@@ -41,89 +41,91 @@ struct SpeechControlView: View {
             }
 
             Menu {
-                Picker("Speed", selection: $speech.speed) {
-                    ForEach(SpeechController.speeds, id: \.self) { s in
-                        Text(Self.speedLabel(s)).tag(s)
+                // Speed
+                Section("Speed") {
+                    Picker("Speed", selection: $speech.speed) {
+                        ForEach(SpeechController.speeds, id: \.self) { s in
+                            Text(Self.speedLabel(s)).tag(s)
+                        }
                     }
+                    .pickerStyle(.menu)
                 }
-                Section {
+
+                // Voice: which kind, then which one.
+                Section("Voice") {
                     Picker("Voices", selection: $speech.voiceEngine) {
                         ForEach(VoiceEngine.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    if speechifyOn {
+                        Menu {
+                            ForEach(speech.speechifyLanguageVoices) { v in
+                                Button {
+                                    speech.chooseSpeechifyVoice(v.id)
+                                } label: {
+                                    if v.id == speech.speechifyVoiceID {
+                                        Label("\(v.name) · \(v.detail)", systemImage: "checkmark")
+                                    } else {
+                                        Text("\(v.name) · \(v.detail)")
+                                    }
+                                }
+                            }
+                        } label: {
+                            Label("Speechify voice", systemImage: "waveform")
+                        }
+                    } else {
+                        Menu {
+                            ForEach(speech.voiceSections, id: \.title) { section in
+                                Section(section.title) {
+                                    ForEach(section.voices, id: \.identifier) { v in
+                                        Button {
+                                            speech.chooseVoice(v.identifier)
+                                        } label: {
+                                            if v.identifier == speech.voiceID {
+                                                Label(SpeechController.voiceTitle(v), systemImage: "checkmark")
+                                            } else {
+                                                Text(SpeechController.voiceTitle(v))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Text("More voices: Settings › Accessibility › Spoken Content › Voices.")
+                        } label: {
+                            Label("Built-in voice", systemImage: "person.wave.2")
+                        }
                     }
                     Button {
                         showSpeechify = true
                     } label: {
-                        Label(speech.hasSpeechifyKey ? "Speechify voices & key…" : "Set up Speechify…",
-                              systemImage: "waveform")
+                        Label(speech.hasSpeechifyKey ? "Speechify settings…" : "Set up Speechify…",
+                              systemImage: "gearshape")
                     }
-                }
-                if speechifyOn {
-                    Menu("Speechify voice") {
-                        ForEach(speech.speechifyLanguageVoices) { v in
-                            Button {
-                                speech.chooseSpeechifyVoice(v.id)
-                            } label: {
-                                if v.id == speech.speechifyVoiceID {
-                                    Label("\(v.name) · \(v.detail)", systemImage: "checkmark")
-                                } else {
-                                    Text("\(v.name) · \(v.detail)")
-                                }
-                            }
-                        }
-                    }
-                    if let problem = speech.speechifyProblem {
+                    if speechifyOn, let problem = speech.speechifyProblem {
                         Text(problem)
                     }
                 }
+
+                // What to leave out.
                 Section {
-                    Toggle(isOn: $speech.followVoiceOver) {
-                        Label("Use VoiceOver's voice", systemImage: "accessibility")
-                    }
-                    if speech.followVoiceOver {
-                        Text(speech.voiceOverRunning
-                             ? "VoiceOver is on: reading with its voice and speed."
-                             : "Turn on VoiceOver to read with its voice (set it to a Siri voice in VoiceOver › Speech).")
-                    }
-                }
-                Menu {
-                    ForEach(SkipOptions.items) { item in
-                        Toggle(item.title, isOn: Binding(
-                            get: { speech.skip.contains(item.option) },
-                            set: { on in
-                                var options = speech.skip
-                                if on {
-                                    options.insert(item.option)
-                                } else {
-                                    options.remove(item.option)
-                                }
-                                speech.skip = options
-                            }))
-                    }
-                    Text("Skipped text is dimmed in the Text view.")
-                } label: {
-                    Label("Skip while reading", systemImage: "forward")
-                }
-                Menu(speechifyOn ? "Built-in voice (backup)" : "Voice") {
-                    ForEach(speech.voiceSections, id: \.title) { section in
-                        Section(section.title) {
-                            ForEach(section.voices, id: \.identifier) { v in
-                                Button {
-                                    speech.chooseVoice(v.identifier)
-                                } label: {
-                                    if v.identifier == speech.voiceID {
-                                        Label(SpeechController.voiceTitle(v), systemImage: "checkmark")
+                    Menu {
+                        ForEach(SkipOptions.items) { item in
+                            Toggle(item.title, isOn: Binding(
+                                get: { speech.skip.contains(item.option) },
+                                set: { on in
+                                    var options = speech.skip
+                                    if on {
+                                        options.insert(item.option)
                                     } else {
-                                        Text(SpeechController.voiceTitle(v))
+                                        options.remove(item.option)
                                     }
-                                }
-                            }
+                                    speech.skip = options
+                                }))
                         }
+                        Text("Skipped text is dimmed in the Text view.")
+                    } label: {
+                        Label("Skip while reading", systemImage: "forward")
                     }
-                }
-                if speech.hasNaturalVoice {
-                    Text("More voices: Settings › Accessibility › Spoken Content › Voices › English.")
-                } else {
-                    Text("These voices sound robotic. Download a Premium voice in Settings › Accessibility › Spoken Content › Voices › English.")
                 }
             } label: {
                 Text(Self.speedLabel(speech.speed))

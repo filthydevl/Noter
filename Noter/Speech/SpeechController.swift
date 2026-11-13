@@ -43,16 +43,6 @@ final class SpeechController: NSObject, ObservableObject {
         }
     }
 
-    /// Experimental: let VoiceOver's speech settings (its voice, e.g. a Siri voice, and
-    /// its rate) take over while VoiceOver is running. Apple only applies these settings
-    /// while an assistive technology is active; otherwise the voice picked here is used.
-    @Published var followVoiceOver: Bool {
-        didSet {
-            UserDefaults.standard.set(followVoiceOver, forKey: Self.followVoiceOverKey)
-            if isActive, !usingSpeechify, oldValue != followVoiceOver { restart() }
-        }
-    }
-    @Published private(set) var voiceOverRunning = UIAccessibility.isVoiceOverRunning
     /// What not to read aloud (headers, footnotes, citations…).
     @Published var skip: SkipOptions {
         didSet {
@@ -96,8 +86,6 @@ final class SpeechController: NSObject, ObservableObject {
     private static let voiceKey = "noter.voice"
     /// Set once you pick a voice yourself; until then Noter always uses the best one installed.
     private static let voiceChosenKey = "noter.voiceChosen"
-    /// (v2: on by default.)
-    private static let followVoiceOverKey = "noter.followVoiceOver.v2"
     private static let skipKey = "noter.skip"
     private static let engineKey = "noter.voiceEngine"
     fileprivate static let speechifyVoiceKeyName = "noter.speechifyVoice"
@@ -139,7 +127,6 @@ final class SpeechController: NSObject, ObservableObject {
         let defaults = UserDefaults.standard
         speed = defaults.object(forKey: Self.speedKey) as? Double ?? 1.0
         voiceID = defaults.string(forKey: Self.voiceKey) ?? ""
-        followVoiceOver = defaults.object(forKey: Self.followVoiceOverKey) as? Bool ?? true
         skip = (defaults.object(forKey: Self.skipKey) as? Int).map(SkipOptions.init(rawValue:)) ?? .defaults
         voiceEngine = defaults.string(forKey: Self.engineKey).flatMap(VoiceEngine.init(rawValue:)) ?? .speechify
         speechifyVoiceID = defaults.string(forKey: Self.speechifyVoiceKeyName) ?? ""
@@ -151,40 +138,11 @@ final class SpeechController: NSObject, ObservableObject {
             speechifyVoices = cached
         }
         synth.delegate = self
-        refreshVoices()
+        refreshVoices() // in the background: listing voices is slow and held up opening a book
         // Newly downloaded voices show up without restarting the app.
         NotificationCenter.default.addObserver(
             self, selector: #selector(availableVoicesChanged),
             name: AVSpeechSynthesizer.availableVoicesDidChangeNotification, object: nil)
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(voiceOverStatusChanged),
-            name: UIAccessibility.voiceOverStatusDidChangeNotification, object: nil)
-    }
-
-    /// The setting is read when an utterance starts, so when VoiceOver is switched on or
-    /// off mid-page, re-queue from the current word to switch voices right away.
-    @objc nonisolated private func voiceOverStatusChanged() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let running = UIAccessibility.isVoiceOverRunning
-            guard running != self.voiceOverRunning else { return }
-            self.voiceOverRunning = running
-            // Turning VoiceOver on means you want its voice.
-            if running, !self.followVoiceOver {
-                self.followVoiceOver = true
-                return // its didSet already re-queued the reading
-            }
-            guard self.followVoiceOver, self.isActive, !self.usingSpeechify else { return }
-            if self.isPlaying {
-                self.restart()
-            } else {
-                // Paused: drop the paused utterance so ▶ restarts from the current word
-                // with the new voice.
-                self.generation += 1
-                self.chunks.removeAll()
-                if self.synth.isSpeaking || self.synth.isPaused { self.synth.stopSpeaking(at: .immediate) }
-            }
-        }
     }
 
     @objc nonisolated private func availableVoicesChanged() {
@@ -193,12 +151,27 @@ final class SpeechController: NSObject, ObservableObject {
 
     // MARK: Voices
 
+    private var listingVoices = false
+
     /// Natural-sounding voices only (Premium, then Enhanced) in your language; the basic
-    /// compact voices are listed only when no natural voice is installed.
+    /// compact voices are listed only when no natural voice is installed. Listed off the
+    /// main thread (it's slow), then applied.
     func refreshVoices() {
+        guard !listingVoices else { return }
+        listingVoices = true
+        Task.detached(priority: .utility) { [weak self] in
+            let all = AVSpeechSynthesisVoice.speechVoices()
+            let region = AVSpeechSynthesisVoice.currentLanguageCode()
+            await MainActor.run { [weak self] in
+                self?.listingVoices = false
+                self?.applyVoices(all, region: region)
+            }
+        }
+    }
+
+    private func applyVoices(_ all: [AVSpeechSynthesisVoice], region: String) {
         let language = String((Locale.preferredLanguages.first ?? "en").prefix(2))
-        let region = AVSpeechSynthesisVoice.currentLanguageCode()
-        let usable = AVSpeechSynthesisVoice.speechVoices().filter {
+        let usable = all.filter {
             !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice)
         }
         let matching = usable.filter { $0.language.hasPrefix(language) }
@@ -261,7 +234,6 @@ final class SpeechController: NSObject, ObservableObject {
         let sample = AVSpeechUtterance(string: "Hi, I'm \(v.name). This is how I'll read to you.")
         sample.voice = v
         sample.rate = rate
-        sample.prefersAssistiveTechnologySettings = followVoiceOver
         synth.speak(sample) // not a page chunk, so the delegate ignores it
     }
 
@@ -467,7 +439,6 @@ final class SpeechController: NSObject, ObservableObject {
         u.voice = AVSpeechSynthesisVoice(identifier: voiceID) ?? voices.first
         u.rate = rate
         u.postUtteranceDelay = 0.15
-        u.prefersAssistiveTechnologySettings = followVoiceOver
         chunks[ObjectIdentifier(u)] = Chunk(utterance: u, slot: lp.slot, map: map)
         synth.speak(u)
     }
@@ -616,7 +587,11 @@ extension SpeechController {
 
     func warmUpSpeechify() {
         guard voiceEngine == .speechify, hasSpeechifyKey else { return }
-        Task { await refreshSpeechifyVoices() }
+        // A moment after the book opens, so it doesn't compete with opening it.
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await self?.refreshSpeechifyVoices()
+        }
     }
 
     private func setSpeechifyVoices(_ voices: [SpeechifyVoice]) {

@@ -366,20 +366,17 @@ struct ReaderView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        // No title in the middle: just the floating buttons.
+        // PDF / Text in the middle.
         ToolbarItem(placement: .principal) {
-            Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
-        }
-
-        // On the right (over the top of an open list, which starts below them).
-        ToolbarItem(placement: .topBarTrailing) {
             Picker("View", selection: $session.viewMode) {
                 Text(ViewMode.pdf.title).tag(ViewMode.pdf)
                 Text(ViewMode.transcript.title).tag(ViewMode.transcript)
             }
             .pickerStyle(.segmented)
-            .frame(width: 180)
+            .frame(width: 200)
         }
+
+        // Save PDF and More on the right (an open list starts below them).
 
         ToolbarItemGroup(placement: .topBarTrailing) {
             if session.ocrDone < session.pageCount {
