@@ -5,6 +5,13 @@ enum GeminiClient {
     static let keyAccount = "gemini-api-key"
     static let fallbackModel = "gemini-2.5-flash"
     private static let modelKey = "noter.geminiModel"
+    private static let othersKey = "noter.geminiOtherModels"
+
+    /// Other models the key can use, tried when the main one is overloaded.
+    static var others: [String] {
+        get { UserDefaults.standard.stringArray(forKey: othersKey) ?? ["gemini-2.5-flash-lite", "gemini-2.0-flash"] }
+        set { UserDefaults.standard.set(newValue, forKey: othersKey) }
+    }
     private static let base = "https://generativelanguage.googleapis.com/v1beta"
 
     /// The model in use: the one you typed in, else the newest "flash" model your key
@@ -42,25 +49,49 @@ enum GeminiClient {
             func version(_ n: String) -> Double {
                 Double(n.dropFirst("gemini-".count).dropLast("-flash".count)) ?? 0
             }
-            if let best = plain.max(by: { version($0) < version($1) }) {
+            let ranked = plain.sorted { version($0) > version($1) }
+            if let best = ranked.first {
                 model = best
             } else if !names.contains(model) {
                 model = fallbackModel
             }
+            // Stand-ins for when it is overloaded: its lighter sibling, then older ones.
+            var spare = names.filter { $0 == "\(model)-lite" }
+            spare += ranked.dropFirst().prefix(2)
+            spare += names.filter { $0.hasPrefix("gemini-") && $0.hasSuffix("-flash-lite") && !spare.contains($0) }
+                .sorted(by: >).prefix(1)
+            if !spare.isEmpty { others = spare }
             return nil
         } catch {
             return "Saved, but couldn't reach Google to check the key."
         }
     }
 
-    /// One page's notes.
+    /// One page's notes. When the model is overloaded or over its free limit, the
+    /// other models are tried straight away instead of waiting.
     static func transpose(system: String, request: String, key: String) async throws -> String {
+        var failure: Error = BracketError.empty
+        for (n, name) in ([model] + others.filter { $0 != model }).prefix(3).enumerated() {
+            do {
+                return try await transpose(model: name, retries: n == 0 ? 1 : 0, system: system,
+                                           request: request, key: key)
+            } catch BracketError.busy {
+                failure = BracketError.busy
+            } catch BracketError.server(let code, let message) where code >= 500 {
+                failure = BracketError.server(code, message)
+            }
+        }
+        throw failure
+    }
+
+    private static func transpose(model: String, retries: Int, system: String, request: String,
+                                  key: String) async throws -> String {
         guard let url = URL(string: "\(base)/models/\(model):generateContent") else {
             throw BracketError.server(0, "Bad Gemini model name")
         }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.timeoutInterval = 120
+        req.timeoutInterval = 60
         req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
         req.setValue("application/json", forHTTPHeaderField: "content-type")
         let body: [String: Any] = [
@@ -97,13 +128,14 @@ enum GeminiClient {
             case 400 where message.localizedCaseInsensitiveContains("API key"):
                 throw BracketError.badKey
             case 429, 500...599:
-                // The free tier allows a few requests a minute: wait and try again.
-                guard attempt < 2 else {
+                // Busy, or over the free tier's few requests a minute: one short wait,
+                // then the caller moves on to another model.
+                guard attempt < retries else {
                     throw status == 429 ? BracketError.busy : BracketError.server(status, message)
                 }
                 attempt += 1
                 let asked = http?.value(forHTTPHeaderField: "retry-after").flatMap(Double.init)
-                try await Task.sleep(nanoseconds: UInt64(min(asked ?? Double(attempt * 6), 30) * 1_000_000_000))
+                try await Task.sleep(nanoseconds: UInt64(min(asked ?? 3, 8) * 1_000_000_000))
             default:
                 throw BracketError.server(status, message)
             }

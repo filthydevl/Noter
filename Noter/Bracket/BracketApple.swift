@@ -15,6 +15,27 @@ import FoundationModels
 ///   rules are used then);
 /// * the page is fed in small pieces with a firm cap on the reply, no sampling, and a
 ///   pause between pieces, and turning the page stops it at once.
+#if canImport(FoundationModels)
+/// What the on-device model is asked to fill in: each line of the notes with its
+/// depth as a number. (Asked for plain text, it left out the tabs and every line came
+/// out flush left; a number it can't leave out.)
+@available(iOS 26.0, *)
+@Generable
+struct BracketAppleLine {
+    @Guide(description: "How far this phrase is indented: 0 for the phrase that starts a sentence or topic, 1 for a phrase that explains or follows from it, 2 for one that hangs from that, and so on. Items of a list share the same depth.", .range(0...8))
+    var depth: Int
+    @Guide(description: "One short phrase of the text, in the author's words.")
+    var text: String
+}
+
+@available(iOS 26.0, *)
+@Generable
+struct BracketAppleNotes {
+    @Guide(description: "The text as bracket notes, one phrase per line, in the text's order.")
+    var lines: [BracketAppleLine]
+}
+#endif
+
 enum BracketApple {
     struct Unavailable: Error {}
 
@@ -53,10 +74,11 @@ enum BracketApple {
                 if n > 0 { try await Task.sleep(nanoseconds: 300_000_000) } // let the chip breathe
                 // A fresh, small session per piece: nothing piles up in its memory.
                 let session = LanguageModelSession(instructions: BracketStyle.compact)
-                let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: 700)
+                let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: 1100)
                 do {
-                    let reply = try await session.respond(to: piece, options: options)
-                    let notes = clean(reply.content)
+                    let reply = try await session.respond(to: piece, generating: BracketAppleNotes.self,
+                                                          options: options)
+                    let notes = stepped(reply.content.lines.map { (depth: $0.depth, text: $0.text) })
                     blocks.append(notes.isEmpty ? BracketRules.transpose(piece) : notes)
                 } catch is CancellationError {
                     throw CancellationError()
@@ -105,11 +127,37 @@ enum BracketApple {
         return out
     }
 
-    /// Small models like to wrap replies in code fences or add a lead-in line.
-    private static func clean(_ reply: String) -> String {
-        var lines = reply.components(separatedBy: "\n")
-        lines.removeAll { $0.trimmingCharacters(in: .whitespaces).hasPrefix("```") }
-        if let first = lines.first, first.hasSuffix(":"), first.lowercased().contains("notes") { lines.removeFirst() }
-        return lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+    /// The model's lines as tab-indented text. Depths can't jump more than one step
+    /// deeper at a time, and if the model left nearly everything flush left, each
+    /// sentence is stepped down phrase by phrase so the notes still read as brackets.
+    static func stepped(_ lines: [(depth: Int, text: String)]) -> String {
+        var rows = lines.map { (depth: max($0.depth, 0), text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            .filter { !$0.text.isEmpty }
+        guard !rows.isEmpty else { return "" }
+        let flat = rows.filter { $0.depth == 0 }.count
+        if rows.count >= 3, flat * 10 >= rows.count * 8 {
+            var depth = 0
+            var previous = ""
+            for i in rows.indices {
+                let t = rows[i].text
+                let endsSentence = previous.isEmpty || ".!?".contains(previous.last ?? " ")
+                if endsSentence {
+                    depth = 0
+                } else if !(previous.hasSuffix(",") && t.hasSuffix(",")) {
+                    depth = min(depth + 1, 6) // items of a list stay side by side
+                }
+                rows[i].depth = depth
+                previous = t
+            }
+        }
+        var out: [String] = []
+        var last = -1
+        for row in rows {
+            let depth = min(row.depth, last + 1)
+            if depth == 0, last >= 0, ".!?".contains(out.last?.last ?? " ") { out.append("") }
+            out.append(String(repeating: "\t", count: depth) + row.text)
+            last = depth
+        }
+        return out.joined(separator: "\n")
     }
 }

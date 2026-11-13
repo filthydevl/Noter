@@ -114,12 +114,23 @@ struct BracketNotesView: View {
             .padding(.bottom, 10)
 
             if let problem = notes.problem {
-                Text(problem)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 8)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(problem)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    if notes.online != nil {
+                        Button {
+                            notes.refresh(page: page, scope: scope)
+                        } label: {
+                            Label("Try \(notes.online?.title ?? "") again", systemImage: "arrow.clockwise")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .disabled(working)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
             }
 
             content(page: page, entry: entry, working: working)
@@ -298,17 +309,17 @@ struct BracketNotesView: View {
     static func lines(_ text: String) -> [Line] {
         text.components(separatedBy: "\n").map { raw in
             var depth = 0
+            var spaces = 0
             var rest = Substring(raw)
-            while true {
-                if rest.hasPrefix("\t") {
-                    depth += 1
-                    rest = rest.dropFirst()
-                } else if rest.hasPrefix("    ") {
-                    depth += 1
-                    rest = rest.dropFirst(4)
-                } else {
-                    break
-                }
+            while let c = rest.first, c == "\t" || c == " " {
+                if c == "\t" { depth += 1 } else { spaces += 1 }
+                rest = rest.dropFirst()
+            }
+            // Spaces instead of tabs: two (or four) to a step.
+            depth += spaces / (spaces % 4 == 0 ? 4 : 2)
+            // A stray list marker in front of the phrase.
+            for marker in ["- ", "* ", "• ", "– "] where rest.hasPrefix(marker) {
+                rest = rest.dropFirst(marker.count)
             }
             return Line(depth: depth, text: rest.trimmingCharacters(in: .whitespaces))
         }

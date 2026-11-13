@@ -131,14 +131,16 @@ enum BracketStyle {
     Rules:
     - One short phrase per line. Go sentence by sentence, in order. Leave nothing out \
     and add nothing.
-    - A phrase that explains or follows from the line above goes one tab deeper. \
-    Indent with tab characters only.
+    - Every line has a depth. The phrase that starts a sentence is depth 0. A phrase \
+    that explains or follows from the line above is one deeper than it, so a sentence \
+    steps down: 0, 1, 2, 3. Never put a whole sentence at depth 0.
     - Items of a list go on separate lines at the same depth.
-    - "But" or "However" gets its own line; what follows goes under it.
+    - "But" or "However" gets its own line; what follows goes one deeper.
     - Drop filler words like "the", "that", "which was". Keep names, dates and terms.
-    - Start a new topic at the left margin after a blank line.
     - Fix words broken by OCR ("con ict" is "conflict", "scal" is "fiscal").
-    - Plain text only: no bullets, no numbering, no markdown, no comments.
+    - No bullets, no numbering, no comments.
+
+    In the example, each tab at the start of a line is one step of depth.
 
     Example text:
     The Italian states were no exception. On the eve of the revolution in France, \
