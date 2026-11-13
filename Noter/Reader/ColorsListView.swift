@@ -76,7 +76,7 @@ struct ColorsListView: View {
                     }
                     .padding(12)
                     .background(Color(.systemBackground).opacity(0.75),
-                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                in: Rectangle())
 
                     // Circled words.
                     VStack(alignment: .leading, spacing: 6) {
@@ -160,6 +160,6 @@ private struct ColorRow: View {
             }
         }
         .padding(12)
-        .background(Color(.systemBackground).opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color(.systemBackground).opacity(0.75), in: Rectangle())
     }
 }

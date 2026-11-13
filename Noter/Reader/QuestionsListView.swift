@@ -162,7 +162,7 @@ private struct QuestionRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
-        .background(Color(.systemBackground).opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color(.systemBackground).opacity(0.75), in: Rectangle())
         .contentShape(Rectangle())
     }
 }

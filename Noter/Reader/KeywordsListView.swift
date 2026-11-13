@@ -192,6 +192,6 @@ private struct KeywordRow: View {
             }
         }
         .padding(12)
-        .background(Color(.systemBackground).opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color(.systemBackground).opacity(0.75), in: Rectangle())
     }
 }

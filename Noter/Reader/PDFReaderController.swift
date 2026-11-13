@@ -79,6 +79,8 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
         pdfView.displaysPageBreaks = true
+        // Pages run edge to edge: no strips of background beside them.
+        pdfView.pageBreakMargins = UIEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
         pdfView.autoScales = true
         pdfView.backgroundColor = .systemGroupedBackground
         pdfView.pageOverlayViewProvider = self // must be set before the document
@@ -266,21 +268,20 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         center(pr, on: page, animated: true)
     }
 
-    /// Fits the whole page you're on to the screen.
+    /// Fits the page you're on to the screen's width, edge to edge (no background
+    /// showing beside it), from the top of the page.
     func fitPage() {
         guard let page = pdfView.currentPage else { return }
         let size = Self.displayedSize(page)
-        let view = visibleArea
-        guard size.width > 1, size.height > 1, view.width > 10, view.height > 10 else { return }
-        let scale = min(view.width / size.width, view.height / size.height) * 0.97
+        let width = pdfView.bounds.inset(by: pdfView.safeAreaInsets).width
+        guard size.width > 1, size.height > 1, width > 10 else { return }
+        let scale = width / size.width
         guard scale.isFinite, scale > 0 else { return }
         pdfView.autoScales = false
         pdfView.minScaleFactor = min(pdfView.minScaleFactor, scale)
         pdfView.scaleFactor = min(scale, pdfView.maxScaleFactor)
         pdfView.layoutIfNeeded()
         pdfView.go(to: page)
-        pdfView.layoutIfNeeded()
-        center(page.bounds(for: pdfView.displayBox), on: page, animated: true)
     }
 
     /// Scrolls so a rect (page coordinates) sits in the middle of the screen.

@@ -48,7 +48,7 @@ struct SearchListView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(Color.primary.opacity(0.07), in: Rectangle())
             .padding(.horizontal, 16)
             .padding(.bottom, 10)
 
@@ -124,7 +124,7 @@ private struct SearchRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.primary.opacity(0.05), in: Rectangle())
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(label): \(hit.before)\(hit.match)\(hit.after)")

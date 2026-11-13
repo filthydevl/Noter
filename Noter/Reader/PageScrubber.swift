@@ -20,12 +20,12 @@ struct PageScrubber: View {
                 Button {
                     session.pdfController?.fitPage()
                 } label: {
-                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                    Image(systemName: "arrow.left.and.right")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color.accentColor)
-                        .frame(width: 20, height: 20)
-                        .background(.thinMaterial, in: Circle())
-                        .frame(width: 32, height: 30) // easy to tap, small to look at
+                        .frame(width: 18, height: 20)
+                        .background(.thinMaterial, in: Rectangle())
+                        .frame(width: 32, height: 30, alignment: .leading) // easy to tap, small to look at
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -53,32 +53,35 @@ struct PageScrubber: View {
     private func track(_ page: Int) -> some View {
         GeometryReader { g in
             let h = g.size.height
-            ZStack(alignment: .top) {
-                // A hairline track (with a soft halo so it shows on any page) and progress.
-                Capsule().fill(.thinMaterial).frame(width: 7)
-                Capsule().fill(Color.primary.opacity(0.18)).frame(width: 2)
-                Capsule().fill(Color.accentColor).frame(width: 2, height: max(y(Double(page), h), 2))
+            ZStack(alignment: .topLeading) {
+                // Flush with the screen's left edge: a thin track (with a soft halo so it
+                // shows on any page) and progress.
+                Rectangle().fill(.thinMaterial).frame(width: 6)
+                Rectangle().fill(Color.primary.opacity(0.18)).frame(width: 2).offset(x: 2)
+                Rectangle().fill(Color.accentColor).frame(width: 2, height: max(y(Double(page), h), 2))
+                    .offset(x: 2)
 
                 highlightTicks(h)
 
                 // Parts, only while dragging.
                 if dragging != nil {
                     ForEach(outline.entries) { e in
-                        Capsule()
+                        Rectangle()
                             .fill(Color.primary.opacity(0.6))
-                            .frame(width: 8, height: 1.5)
+                            .frame(width: 10, height: 1.5)
                             .offset(y: y(e.position, h) - 1)
                     }
                 }
 
-                // Thumb.
-                let r: CGFloat = dragging == nil ? 5 : 9
-                Circle()
+                // Thumb: a bar against the edge (bigger while you drag it).
+                let w: CGFloat = dragging == nil ? 6 : 10
+                let tall: CGFloat = dragging == nil ? 22 : 34
+                Rectangle()
                     .fill(Color.accentColor)
-                    .overlay(Circle().strokeBorder(.white, lineWidth: 2))
-                    .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
-                    .frame(width: r * 2, height: r * 2)
-                    .offset(y: y(Double(page), h) - r)
+                    .overlay(Rectangle().strokeBorder(.white.opacity(0.9), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.2), radius: 2, x: 1)
+                    .frame(width: w, height: tall)
+                    .offset(y: min(max(y(Double(page), h) - tall / 2, 0), max(h - tall, 0)))
             }
             .frame(width: g.size.width, height: h)
             .overlay(alignment: .topLeading) {
@@ -129,12 +132,11 @@ struct PageScrubber: View {
                 let n = perPage[m.page, default: 0]
                 perPage[m.page] = n + 1
                 // The first color across the track; more colors on that page beside it.
-                let mid = size.width / 2
                 let rect = n == 0
-                    ? CGRect(x: mid - 5, y: y(Double(m.page), size.height) - 1, width: 10, height: 2)
-                    : CGRect(x: mid + 6 + CGFloat(min(n - 1, 2)) * 3, y: y(Double(m.page), size.height) - 1,
+                    ? CGRect(x: 0, y: y(Double(m.page), size.height) - 1, width: 10, height: 2)
+                    : CGRect(x: 11 + CGFloat(min(n - 1, 2)) * 3, y: y(Double(m.page), size.height) - 1,
                              width: 2, height: 2)
-                ctx.fill(Path(roundedRect: rect, cornerRadius: 1.5), with: .color(m.color))
+                ctx.fill(Path(rect), with: .color(m.color))
             }
         }
         .frame(height: h)
@@ -161,7 +163,7 @@ struct PageScrubber: View {
                 .frame(maxWidth: 200, alignment: .leading)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .background(.thinMaterial, in: Rectangle())
                 .fixedSize()
                 .offset(x: 30, y: min(max(y(e.position, h) - 9, 0), max(h - 18, 0)))
                 .allowsHitTesting(false)
@@ -183,8 +185,8 @@ struct PageScrubber: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.accentColor.opacity(0.5)))
+        .background(.regularMaterial, in: Rectangle())
+        .overlay(Rectangle().strokeBorder(Color.accentColor.opacity(0.5)))
         .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
         .frame(width: 320, alignment: .leading) // long headings wrap, never cut off
         .offset(x: outline.entries.isEmpty ? 30 : 240, y: min(max(y(Double(page), h) - 30, 0), max(h - 90, 0)))

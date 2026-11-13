@@ -6,12 +6,16 @@ struct SpeechControlView: View {
     @ObservedObject var speech: SpeechController
     /// The bookmark button: show where the voice is reading.
     var locate: () -> Void = {}
+    /// Stacked down the top of the tool strip (beside an open panel) instead of a
+    /// floating capsule.
+    var docked = false
     @State private var showSpeechify = false
 
     private var speechifyOn: Bool { speech.voiceEngine == .speechify && speech.hasSpeechifyKey }
 
     var body: some View {
-        HStack(spacing: 12) {
+        let stack = docked ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 12))
+        return stack {
             Button {
                 speech.togglePlay()
             } label: {
@@ -23,6 +27,7 @@ struct SpeechControlView: View {
                     }
                 }
                 .frame(width: 20, height: 20)
+                .frame(width: docked ? 38 : 20, height: docked ? 30 : 20)
             }
             .accessibilityLabel(speech.isPlaying ? "Pause reading" : "Read aloud")
 
@@ -30,12 +35,12 @@ struct SpeechControlView: View {
                 Button {
                     speech.stop()
                 } label: {
-                    Image(systemName: "stop.fill").frame(width: 18, height: 20)
+                    Image(systemName: "stop.fill").frame(width: docked ? 38 : 18, height: docked ? 30 : 20)
                 }
                 .accessibilityLabel("Stop reading")
 
                 Button(action: locate) {
-                    Image(systemName: "bookmark.fill").frame(width: 18, height: 20)
+                    Image(systemName: "bookmark.fill").frame(width: docked ? 38 : 18, height: docked ? 30 : 20)
                 }
                 .accessibilityLabel("Go to reading position")
             }
@@ -129,8 +134,10 @@ struct SpeechControlView: View {
                 }
             } label: {
                 Text(Self.speedLabel(speech.speed))
-                    .font(.system(size: 14, weight: .semibold).monospacedDigit())
-                    .frame(minWidth: 34)
+                    .font(.system(size: docked ? 12 : 14, weight: .semibold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(minWidth: docked ? 38 : 34, minHeight: docked ? 30 : 0)
             }
             .onAppear {
                 speech.refreshVoices()
@@ -138,11 +145,15 @@ struct SpeechControlView: View {
             }
         }
         .font(.system(size: 15, weight: .semibold))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
-        .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+        .padding(.horizontal, docked ? 0 : 14)
+        .padding(.vertical, docked ? 4 : 8)
+        .background {
+            if !docked {
+                Capsule().fill(.regularMaterial)
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+                    .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+            }
+        }
         .sheet(isPresented: $showSpeechify) {
             SpeechifySettingsView(speech: speech)
         }

@@ -187,8 +187,8 @@ struct WordWithDefinition<Row: View>: View {
             }
         }
         .padding(8)
-        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(color.opacity(0.3)))
+        .background(color.opacity(0.08), in: Rectangle())
+        .overlay(Rectangle().strokeBorder(color.opacity(0.3)))
         .accessibilityElement(children: .contain)
     }
 }
@@ -224,8 +224,8 @@ struct ConnectedIdeas<Row: View>: View {
             }
         }
         .padding(8)
-        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(color.opacity(0.35)))
+        .background(color.opacity(0.10), in: Rectangle())
+        .overlay(Rectangle().strokeBorder(color.opacity(0.35)))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(run.count) connected highlights, \(name ?? run[0].color.name)")
     }
@@ -323,14 +323,14 @@ struct HighlightRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(10)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(Color.primary.opacity(0.05), in: Rectangle())
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Note: \(note)")
             }
         }
         .padding(14)
         .background(Color(.systemBackground).opacity(0.75),
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    in: Rectangle())
     }
 
     private var card: some View {
@@ -489,7 +489,7 @@ struct NoteEditor: View {
                 .accessibilityLabel("Note")
         }
         .padding(10)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color.primary.opacity(0.05), in: Rectangle())
         .onAppear {
             if !loaded {
                 text = initial

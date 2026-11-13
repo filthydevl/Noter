@@ -86,28 +86,53 @@ struct ReaderView: View {
         // …the motion is a picture of the page gliding instead (see `glidePage`).
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .overlay(alignment: .trailing) {
-            // At the very edge of the screen, below the player (scrolls inside its own
-            // frame if the screen is short, never cut off).
-            ViewThatFits(in: .vertical) {
-                rail(scrolls: false)
-                rail(scrolls: true)
+            if docked {
+                // Beside an open panel: one flat strip from the top of the screen to the
+                // bottom, between the page and the panel — the player at its top, the
+                // lists at its bottom, no gaps.
+                ViewThatFits(in: .vertical) {
+                    rail(scrolls: false)
+                    rail(scrolls: true)
+                }
+                .frame(width: Self.railWidth)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.top, 4)
+                .background {
+                    Rectangle().fill(.regularMaterial)
+                        .overlay(alignment: .leading) { hairline }
+                        .ignoresSafeArea()
+                }
+                .padding(.trailing, Self.panelWidth)
+                .transition(.opacity)
+            } else {
+                // At the very edge of the screen, below the player (scrolls inside its own
+                // frame if the screen is short, never cut off).
+                ViewThatFits(in: .vertical) {
+                    rail(scrolls: false)
+                    rail(scrolls: true)
+                }
+                .padding(.top, 62)
+                .padding(.bottom, (scribbleBar ? 76 : 10) + sheetRoom)
+                .padding(.trailing, 4)
+                .transition(.opacity)
             }
-            .padding(.top, 62)
-            .padding(.bottom, (scribbleBar ? 76 : 10) + sheetRoom)
-            .padding(.trailing, railTrailing)
         }
-        // Above the rail, so nothing ever covers the player.
+        // Above the rail, so nothing ever covers the player (it moves into the strip
+        // beside an open panel).
         .overlay(alignment: .topTrailing) {
-            SpeechControlView(speech: session.speech) { session.showReadingPosition() }
-            .padding(.top, 10)
-            .padding(.trailing, railTrailing)
+            if !docked {
+                SpeechControlView(speech: session.speech) { session.showReadingPosition() }
+                    .padding(.top, 10)
+                    .padding(.trailing, 4)
+                    .transition(.opacity)
+            }
         }
         .overlay(alignment: .bottom) {
             if scribbleBar {
                 ScribbleToolbar(session: session, settings: session.scribble)
                     // Between the page slider and an open panel, never under it.
                     .padding(.leading, 44)
-                    .padding(.trailing, panel == nil || bottomSheet ? 16 : Self.panelWidth + 12)
+                    .padding(.trailing, docked ? Self.besidePanelInset + 12 : 16)
                     .padding(.bottom, 18 + sheetRoom)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -116,7 +141,6 @@ struct ReaderView: View {
             if session.pageCount > 1 {
                 // Up the very left edge of the screen.
                 PageScrubber(session: session, outline: session.outline)
-                    .padding(.leading, 4)
                     .padding(.top, 8)
                     .padding(.bottom, (scribbleBar ? 76 : 16) + sheetRoom)
                     .transition(.opacity)
@@ -202,37 +226,34 @@ struct ReaderView: View {
         .overlay(alignment: bottomSheet ? .bottom : .trailing) {
             if let panel {
                 if bottomSheet {
-                    // Portrait: a floating card along the bottom; the page stays above it.
+                    // Portrait: square, flush along the bottom, edge to edge; the page
+                    // stays above it.
                     sidePanel(panel)
                         .frame(maxWidth: .infinity)
                         // Above the keyboard when typing: shorter if needed, never off the top.
                         .frame(height: max(min(sheetHeight, viewHeight - keyboardLift - 90), 160))
-                        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                        .clipped()
                         .background {
-                            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                                .fill(.regularMaterial)
-                                .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
-                                    .stroke(Color.primary.opacity(0.06), lineWidth: 1))
-                                .shadow(color: .black.opacity(0.22), radius: 22, y: -4)
+                            Rectangle().fill(.regularMaterial)
+                                .overlay(alignment: .top) {
+                                    Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
+                                }
+                                .shadow(color: .black.opacity(0.15), radius: 12, y: -2)
+                                .ignoresSafeArea(edges: .bottom)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 12 + keyboardLift)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.bottom, keyboardLift)
+                        .transition(.move(edge: .bottom))
                 } else {
-                    // Landscape: top to bottom, flush with the right edge (like a sheet).
-                    // The list itself starts below the top buttons' bar (taps there would
-                    // go to the bar).
+                    // Landscape: square, top to bottom, flush with the right edge, the tool
+                    // strip right beside it. The list itself starts below the top buttons'
+                    // bar (taps there would go to the bar).
                     sidePanel(panel)
                         .avoidingKeyboard()
                         .frame(width: Self.panelWidth)
                         .frame(maxHeight: .infinity)
                         .background {
-                            UnevenRoundedRectangle(topLeadingRadius: 26, bottomLeadingRadius: 26, style: .continuous)
-                                .fill(.regularMaterial)
-                                .overlay(UnevenRoundedRectangle(topLeadingRadius: 26, bottomLeadingRadius: 26,
-                                                                style: .continuous)
-                                    .stroke(Color.primary.opacity(0.06), lineWidth: 1))
-                                .shadow(color: .black.opacity(0.22), radius: 20, x: -4)
+                            Rectangle().fill(.regularMaterial)
+                                .overlay(alignment: .leading) { hairline }
                                 .ignoresSafeArea()
                         }
                         .transition(.move(edge: .trailing))
@@ -288,8 +309,16 @@ struct ReaderView: View {
 
     /// The panel's slide, shared by the page's glide.
     static let panelSpring = Animation.spring(duration: 0.4, bounce: 0.12)
-    /// Room the panel and the rail beside it take on the right.
-    static let besidePanelInset: CGFloat = panelWidth + 8 + railWidth + 8
+    /// Room the panel and the strip beside it take on the right.
+    static let besidePanelInset: CGFloat = panelWidth + railWidth
+
+    /// The tools are a flat strip beside an open panel (landscape).
+    private var docked: Bool { pushesPageLeft }
+
+    /// The thin line between the page, the strip and the panel.
+    private var hairline: some View {
+        Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 1)
+    }
 
     /// Like Instagram's video sliding over for comments: a picture of the page glides
     /// to its new place in step with the panel (smooth — it's just a picture), while the
@@ -334,21 +363,18 @@ struct ReaderView: View {
         if panel == nil || bottomSheet {
             covered = Self.railWidth + 8
         } else if pushesPageLeft {
-            covered = 8 // the panel and rail are beside the page, not over it
+            covered = 0 // the panel and strip are beside the page, not over it
         } else {
             covered = Self.panelWidth + Self.railWidth + 16
         }
         session.pdfController?.coveredRight = covered
     }
 
-    /// The tool rail's distance from the right edge: at the edge, or beside an open panel.
-    private var railTrailing: CGFloat { panel == nil || bottomSheet ? 4 : Self.panelWidth + 8 }
-
     /// Portrait (narrow): the list is a floating card along the bottom.
     private var bottomSheet: Bool { viewWidth > 0 && viewWidth < 1140 }
     private var sheetHeight: CGFloat { min(max(viewHeight * 0.42, 320), 560) }
     /// Room the bottom card takes (portrait, a list open), for what sits above it.
-    private var sheetRoom: CGFloat { panel != nil && bottomSheet ? sheetHeight + 24 : 0 }
+    private var sheetRoom: CGFloat { panel != nil && bottomSheet ? sheetHeight + 8 : 0 }
 
     static let panelWidth: CGFloat = 380
 
@@ -357,7 +383,7 @@ struct ReaderView: View {
 
     private func rail(scrolls: Bool) -> some View {
         ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel,
-                 scrolls: scrolls)
+                 scrolls: scrolls, docked: docked)
     }
 
     private var layoutBinding: Binding<LayoutMode> {
@@ -498,6 +524,8 @@ private struct ToolRail: View {
     @Binding var panel: SidePanel?
     /// Too tall for the screen: the buttons scroll inside the rail's frame.
     var scrolls = false
+    /// A flat strip beside an open panel, with the player at its top.
+    var docked = false
     @State private var showColors = false
     @State private var showTextOptions = false
 
@@ -505,17 +533,30 @@ private struct ToolRail: View {
     private var penColor: Color { scribbling ? scribble.color.color : session.color.color }
 
     var body: some View {
+        if docked {
+            VStack(spacing: 4) {
+                SpeechControlView(speech: session.speech, locate: { session.showReadingPosition() }, docked: true)
+                divider
+                tools
+            }
+        } else {
+            tools
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.06)))
+                .shadow(color: .black.opacity(0.1), radius: 12, y: 4)
+        }
+    }
+
+    private var tools: some View {
         Group {
             if scrolls {
                 ScrollView(.vertical, showsIndicators: false) { items }
-                    .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: docked ? 0 : 19, style: .continuous))
             } else {
                 items
             }
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
-        .shadow(color: .black.opacity(0.1), radius: 12, y: 4)
         // Redo pops out to the left of Undo.
         .overlay(alignment: .topLeading) {
             RedoBubble(session: session)
@@ -629,6 +670,9 @@ private struct ToolRail: View {
                                       : "Manual colors")
                 }
             }
+
+            // In the strip: the lists sit at its bottom, no empty space below them.
+            if docked && !scrolls { Spacer(minLength: 0) }
 
             divider
 
