@@ -18,6 +18,7 @@ struct BracketNotesView: View {
         var scope: String
         var focus: String
         var hasKey: Bool
+        var apple: Bool
         var ocrDone: Int
     }
 
@@ -89,7 +90,7 @@ struct BracketNotesView: View {
         // Turning the page, highlighting, or saving a key (re)makes the notes, a moment
         // after the last change.
         .task(id: Trigger(page: page, scope: scopeRaw, focus: notes.focusSignature(page: page),
-                          hasKey: notes.hasKey, ocrDone: session.ocr.meta[page] == nil ? 0 : 1)) {
+                          hasKey: notes.hasKey, apple: notes.appleReady, ocrDone: session.ocr.meta[page] == nil ? 0 : 1)) {
             // Long enough that flicking past a page doesn't send it to Claude.
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
@@ -126,7 +127,8 @@ struct BracketNotesView: View {
             }
             .opacity(working ? 0.5 : 1)
         } else if working || entry == nil {
-            ProgressView(notes.hasKey ? "Transposing with Claude…" : "Transposing…")
+            ProgressView(notes.hasKey ? "Transposing with Claude…"
+                         : (notes.appleReady ? "Transposing on the iPad…" : "Transposing…"))
                 .frame(maxHeight: .infinity)
         } else if scope == .highlights {
             ContentUnavailableView("No highlights on this page", systemImage: "highlighter",
@@ -140,7 +142,13 @@ struct BracketNotesView: View {
 
     private func subtitle(page: Int, entry: BracketNotes.Entry?) -> String {
         let label = session.label(for: SlotKey(pdfIndex: page, half: 0))
-        let by = entry.map { $0.engine == "claude" ? "Claude" : "made on iPad" }
+        let by = entry.map { e -> String in
+            switch e.engine {
+            case "claude": "Claude"
+            case "apple": "Apple Intelligence"
+            default: "simple rules"
+            }
+        }
         return [label, by].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -199,6 +207,16 @@ struct BracketSetupView: View {
         NavigationStack {
             Form {
                 Section {
+                    Toggle("Use Apple Intelligence", isOn: $notes.useApple)
+                        .disabled(!BracketApple.isAvailable)
+                } header: {
+                    Text("On this iPad")
+                } footer: {
+                    Text(BracketApple.isAvailable
+                         ? "Without a Claude key (or offline), Apple's on-device model writes the notes: free, private, rougher than Claude. To spare the battery it only runs for the page you stop on, keeps every page it has done, and rests in Low Power Mode or when the iPad is warm."
+                         : "Apple Intelligence isn't available here (it needs iPadOS 26 or later with Apple Intelligence turned on in Settings). Without a Claude key, notes are made by simple rules.")
+                }
+                Section {
                     if notes.hasKey {
                         HStack {
                             Label("API key saved", systemImage: "checkmark.seal.fill")
@@ -216,7 +234,7 @@ struct BracketSetupView: View {
                     }
                     .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 } header: {
-                    Text("Anthropic API key")
+                    Text("Claude (best match to your style)")
                 } footer: {
                     Text("With a key, Claude writes the bracket notes in your style: the text of the page you open (and your highlights) is sent to Anthropic. Each page and each highlight is billed to your key once, then kept on the iPad and never sent again unless you choose Redo. Without a key, simpler notes are made on the iPad and nothing is sent. The key is stored only in this iPad's Keychain.")
                 }

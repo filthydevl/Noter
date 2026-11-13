@@ -124,6 +124,45 @@ enum BracketStyle {
     </example_notes>
     """
 
+    /// The same style, short enough for the small on-device model (its instructions,
+    /// the text and its reply share about 4,000 tokens).
+    static let compact = """
+    Rewrite the text you are given as bracket notes, keeping the author's words.
+    Rules:
+    - One short phrase per line. Go sentence by sentence, in order. Leave nothing out \
+    and add nothing.
+    - A phrase that explains or follows from the line above goes one tab deeper. \
+    Indent with tab characters only.
+    - Items of a list go on separate lines at the same depth.
+    - "But" or "However" gets its own line; what follows goes under it.
+    - Drop filler words like "the", "that", "which was". Keep names, dates and terms.
+    - Start a new topic at the left margin after a blank line.
+    - Fix words broken by OCR ("con ict" is "conflict", "scal" is "fiscal").
+    - Plain text only: no bullets, no numbering, no markdown, no comments.
+
+    Example text:
+    The Italian states were no exception. On the eve of the revolution in France, \
+    Italy consisted of a mosaic of principalities, duchies, kingdoms, and ancient \
+    republics that re ected centuries of foreign intervention and occupation. The \
+    acquisition of the former Spanish Duchy of Lombardy made the Habsburgs the \
+    dominant power in northern Italy.
+
+    Example notes:
+    Italian states were no exception.
+    eve of the revolutions in France,
+    \tItaly
+    \ta mosaic
+    \t\tprincipalities,
+    \t\tduchies,
+    \t\tkingdoms,
+    \t\tancient republics
+    \treflected centuries of foreign intervention
+    \t\tand occupation
+
+    acquisition of Spanish Duchy of Lombardy
+    \tmade Habsburgs dominant power in northern Italy.
+    """
+
     /// The request for one highlighted passage by itself.
     static func passage(_ text: String) -> String {
         "The reader highlighted this passage: it is what they are focusing on. Write bracket notes "
