@@ -149,7 +149,7 @@ struct SpeechControlView: View {
         }
         .font(.system(size: 15, weight: .semibold))
         .padding(.horizontal, docked ? 0 : 14)
-        .padding(.vertical, docked ? 4 : 8)
+        .padding(.vertical, docked ? 4 : 10) // 40 tall, like the top bar's buttons
         .background {
             if !docked {
                 Capsule().fill(.regularMaterial)

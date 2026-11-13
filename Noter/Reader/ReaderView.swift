@@ -107,7 +107,8 @@ struct ReaderView: View {
                         .ignoresSafeArea()
                 }
                 .padding(.trailing, Self.panelWidth)
-                .transition(.opacity)
+                // Leaves and arrives with the list: slides off to the right beside it.
+                .transition(.offset(x: Self.besidePanelInset))
             } else {
                 // At the very edge of the screen, below the player (scrolls inside its own
                 // frame if the screen is short, never cut off).
@@ -286,6 +287,9 @@ struct ReaderView: View {
         .toolbar(.hidden, for: .navigationBar)
     }
 
+    /// Every round button in the top bar, and the height of PDF / Text and the player.
+    static let barButton: CGFloat = 40
+
     /// Room the top bar takes below the status bar.
     static let topBarHeight: CGFloat = 58
 
@@ -294,13 +298,27 @@ struct ReaderView: View {
     private var topBar: some View {
         ZStack(alignment: .top) {
             VStack(spacing: 4) {
-                Picker("View", selection: $session.viewMode) {
-                    Text(ViewMode.pdf.title).tag(ViewMode.pdf)
-                    Text(ViewMode.transcript.title).tag(ViewMode.transcript)
+                // PDF / Text: a capsule as tall as the round buttons beside it.
+                HStack(spacing: 0) {
+                    ForEach([ViewMode.pdf, ViewMode.transcript], id: \.self) { mode in
+                        let on = session.viewMode == mode
+                        Button {
+                            session.viewMode = mode
+                        } label: {
+                            Text(mode.title)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(on ? Color.primary : Color.secondary)
+                                .frame(width: 92, height: Self.barButton - 8)
+                                .background(on ? Color.primary.opacity(0.16) : Color.clear, in: Capsule())
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 200)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .padding(4)
+                .frame(height: Self.barButton)
+                .background(.regularMaterial, in: Capsule())
                 ReadingTimeLabel(session: session, speech: session.speech, outline: session.outline)
             }
             HStack(spacing: 10) {

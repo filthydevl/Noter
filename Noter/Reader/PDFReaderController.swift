@@ -128,7 +128,16 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         // PDFKit then fits the page at a zoom of 0 / NaN and draws garbage (the flood of
         // CoreGraphics "NaN" / "no current point" messages). Keep the last real size.
         guard bounds.width >= 2, bounds.height >= 2, bounds.isFiniteRect else { return }
+        // A page that filled the width keeps filling it when the page area changes
+        // size (a list opening or closing, rotating): never bars beside it afterwards.
+        let oldWidth = pdfView.bounds.width
+        let refit = abs(oldWidth - bounds.width) > 1 && fillsWidth(oldWidth)
+        var place: CGFloat?
+        if refit, let sv = scrollView, sv.contentSize.height > 1 {
+            place = (sv.contentOffset.y + sv.adjustedContentInset.top) / sv.contentSize.height
+        }
         pdfView.frame = bounds
+        if refit { fitWidth(keeping: place) }
         repairBrokenZoom()
         inkOverlay.frame = bounds
         inkLayer.frame = inkOverlay.bounds
@@ -282,6 +291,33 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         pdfView.scaleFactor = min(scale, pdfView.maxScaleFactor)
         pdfView.layoutIfNeeded()
         pdfView.go(to: page)
+    }
+
+    /// The page is (about) as wide as a page area of this width: fitted, not zoomed.
+    private func fillsWidth(_ width: CGFloat) -> Bool {
+        guard width > 10, let page = pdfView.currentPage else { return false }
+        if pdfView.autoScales { return true }
+        let shown = Self.displayedSize(page).width * pdfView.scaleFactor
+        return shown.isFinite && abs(shown - width) < width * 0.04
+    }
+
+    /// Fits the page to the width in one step, staying at the same place in the book.
+    private func fitWidth(keeping place: CGFloat?) {
+        guard let page = pdfView.currentPage else { return }
+        let size = Self.displayedSize(page)
+        let width = pdfView.bounds.inset(by: pdfView.safeAreaInsets).width
+        guard size.width > 1, width > 10 else { return }
+        let scale = width / size.width
+        guard scale.isFinite, scale > 0 else { return }
+        pdfView.autoScales = false
+        pdfView.minScaleFactor = min(pdfView.minScaleFactor, scale)
+        pdfView.scaleFactor = min(scale, pdfView.maxScaleFactor)
+        pdfView.layoutIfNeeded()
+        guard let place, let sv = scrollView, sv.contentSize.height > 1 else { return }
+        let inset = sv.adjustedContentInset
+        let maxY = max(-inset.top, sv.contentSize.height - sv.bounds.height + inset.bottom)
+        let y = min(max(place * sv.contentSize.height - inset.top, -inset.top), maxY)
+        if y.isFinite { sv.contentOffset.y = y }
     }
 
     /// Scrolls so a rect (page coordinates) sits in the middle of the screen.
