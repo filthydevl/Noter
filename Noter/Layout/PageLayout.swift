@@ -401,15 +401,31 @@ enum PageLayout {
             let s = v.sorted()
             return s.isEmpty ? 0 : s[s.count / 2]
         }
+        /// The usual distance from one line to the next among these rows (top to bottom).
+        func pitch(_ list: [Int]) -> CGFloat {
+            guard list.count >= 2 else { return 0 }
+            var steps: [CGFloat] = []
+            for k in 1..<list.count {
+                let d = rows[list[k]].rect.midY - rows[list[k - 1]].rect.midY
+                if d > 0.002 { steps.append(d) }
+            }
+            return median(steps)
+        }
         // (Also when a later note was already found: an earlier, longer one above it
         // still has to be picked up.)
         if kept.count >= 4 {
             for pos in 1..<kept.count where startsWithMarker(kept[pos]) && rows[kept[pos]].rect.midY > 0.15 {
                 let above = kept[..<pos].map(rowH), below = kept[pos...].map(rowH)
-                let aboveH = median(above)
-                guard aboveH > 0, below.count >= 2, median(below) <= aboveH * 0.9 else { continue }
+                let aboveH = median(above), belowH = median(below)
+                guard aboveH > 0, below.count >= 2 else { continue }
+                // Smaller type shows in the words' heights — and, more dependably (word
+                // boxes vary with the letters in them), in lines set closer together.
                 let small = below.filter { $0 <= aboveH * 0.95 }.count
-                guard Double(small) >= Double(below.count) * 0.85 else { continue }
+                let smaller = belowH <= aboveH * 0.9 && Double(small) >= Double(below.count) * 0.8
+                let abovePitch = pitch(Array(kept[..<pos])), belowPitch = pitch(Array(kept[pos...]))
+                let tighter = abovePitch > 0 && belowPitch > 0 && belowPitch <= abovePitch * 0.85
+                    && belowH <= aboveH * 1.02
+                guard smaller || tighter else { continue }
                 notes.formUnion(kept[pos...])
                 break
             }
