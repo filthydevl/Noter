@@ -49,7 +49,7 @@ final class SessionHolder: ObservableObject {
 
 /// The slide-in panel on the right.
 enum SidePanel {
-    case highlights, notes, keywords, questions, search, colors
+    case highlights, notes, keywords, questions, search, colors, bracket
 }
 
 struct ReaderView: View {
@@ -410,6 +410,8 @@ struct ReaderView: View {
             SearchListView(session: session, search: session.search) { self.panel = nil }
         case .colors:
             ColorsListView(session: session, palette: session.palette) { self.panel = nil }
+        case .bracket:
+            BracketNotesView(session: session, notes: session.bracket) { self.panel = nil }
         }
     }
 
@@ -732,6 +734,10 @@ private struct ToolRail: View {
             }
             railButton("questionmark.bubble", label: "Questions", selected: panel == .questions, tint: .purple) {
                 panel = panel == .questions ? nil : .questions
+            }
+            // The page transposed into your indented note style.
+            railButton("list.bullet.indent", label: "Bracket Notes", selected: panel == .bracket) {
+                panel = panel == .bracket ? nil : .bracket
             }
 
         }

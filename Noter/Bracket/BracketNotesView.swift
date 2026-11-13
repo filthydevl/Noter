@@ -1,0 +1,232 @@
+import SwiftUI
+import UIKit
+
+/// The Bracket Notes panel: the page you're on, transposed sentence by sentence into
+/// your indented note style. Highlights (without a note) are what you're focusing on:
+/// the notes are redone around them and their lines take the highlight's color.
+struct BracketNotesView: View {
+    @ObservedObject var session: DocumentSession
+    @ObservedObject var notes: BracketNotes
+    var onClose: () -> Void
+    @AppStorage("noter.bracketScope") private var scopeRaw = BracketNotes.Scope.page.rawValue
+    @State private var showSetup = false
+
+    private var scope: BracketNotes.Scope { BracketNotes.Scope(rawValue: scopeRaw) ?? .page }
+
+    private struct Trigger: Equatable {
+        var page: Int
+        var scope: String
+        var focus: String
+        var hasKey: Bool
+        var ocrDone: Int
+    }
+
+    var body: some View {
+        let page = session.currentPage
+        let _ = session.labelsVersion
+        let entry = notes.entry(page: page, scope: scope)
+        let working = notes.isWorking(page: page, scope: scope)
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bracket Notes")
+                        .font(.title3.weight(.semibold))
+                    Text(subtitle(page: page, entry: entry))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if working { ProgressView().controlSize(.small) }
+                Menu {
+                    Button {
+                        UIPasteboard.general.string = entry?.text ?? ""
+                        session.showToast("Copied this page's bracket notes")
+                    } label: {
+                        Label("Copy notes", systemImage: "doc.on.doc")
+                    }
+                    .disabled((entry?.text ?? "").isEmpty)
+                    Button {
+                        notes.refresh(page: page, scope: scope, force: true)
+                    } label: {
+                        Label("Redo this page", systemImage: "arrow.clockwise")
+                    }
+                    Button {
+                        showSetup = true
+                    } label: {
+                        Label(notes.hasKey ? "Claude settings…" : "Set up Claude…", systemImage: "gearshape")
+                    }
+                } label: {
+                    PanelIcon(symbol: "ellipsis")
+                }
+                .accessibilityLabel("Bracket Notes options")
+                Button(action: onClose) { PanelIcon(symbol: "xmark") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close bracket notes")
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 10)
+
+            Picker("Show", selection: $scopeRaw) {
+                ForEach(BracketNotes.Scope.allCases) { Text($0.title).tag($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+
+            if let problem = notes.problem {
+                Text(problem)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+            }
+
+            content(page: page, entry: entry, working: working)
+        }
+        .frame(maxHeight: .infinity)
+        // Turning the page, highlighting, or saving a key (re)makes the notes, a moment
+        // after the last change.
+        .task(id: Trigger(page: page, scope: scopeRaw, focus: notes.focusSignature(page: page),
+                          hasKey: notes.hasKey, ocrDone: session.ocr.meta[page] == nil ? 0 : 1)) {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            guard !Task.isCancelled else { return }
+            notes.refresh(page: page, scope: scope)
+        }
+        .sheet(isPresented: $showSetup) { BracketSetupView(notes: notes) }
+    }
+
+    @ViewBuilder
+    private func content(page: Int, entry: BracketNotes.Entry?, working: Bool) -> some View {
+        if let entry, !entry.text.isEmpty {
+            let focus = notes.focus(page: page)
+            ScrollView([.vertical, .horizontal]) {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(Self.lines(entry.text).enumerated()), id: \.offset) { _, line in
+                        if line.text.isEmpty {
+                            Color.clear.frame(height: 10)
+                        } else {
+                            let color = Self.focusColor(line.text, focus)
+                            Text(line.text)
+                                .font(.callout)
+                                .fontWeight(line.depth == 0 ? .semibold : .regular)
+                                .padding(.horizontal, color == nil ? 0 : 4)
+                                .background(color?.opacity(0.28) ?? .clear)
+                                .padding(.leading, CGFloat(line.depth) * 18)
+                                .fixedSize()
+                        }
+                    }
+                }
+                .textSelection(.enabled)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .opacity(working ? 0.5 : 1)
+        } else if working || entry == nil {
+            ProgressView(notes.hasKey ? "Transposing with Claude…" : "Transposing…")
+                .frame(maxHeight: .infinity)
+        } else if scope == .highlights {
+            ContentUnavailableView("No highlights on this page", systemImage: "highlighter",
+                                   description: Text("Highlight what you want to focus on; its bracket notes appear here."))
+                .frame(maxHeight: .infinity)
+        } else {
+            ContentUnavailableView("No text on this page", systemImage: "doc")
+                .frame(maxHeight: .infinity)
+        }
+    }
+
+    private func subtitle(page: Int, entry: BracketNotes.Entry?) -> String {
+        let label = session.label(for: SlotKey(pdfIndex: page, half: 0))
+        let by = entry.map { $0.engine == "claude" ? "Claude" : "made on iPad" }
+        return [label, by].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    struct Line {
+        let depth: Int
+        let text: String
+    }
+
+    /// Leading tabs are the depth (four spaces count as a tab, in case a model slips).
+    static func lines(_ text: String) -> [Line] {
+        text.components(separatedBy: "\n").map { raw in
+            var depth = 0
+            var rest = Substring(raw)
+            while true {
+                if rest.hasPrefix("\t") {
+                    depth += 1
+                    rest = rest.dropFirst()
+                } else if rest.hasPrefix("    ") {
+                    depth += 1
+                    rest = rest.dropFirst(4)
+                } else {
+                    break
+                }
+            }
+            return Line(depth: depth, text: rest.trimmingCharacters(in: .whitespaces))
+        }
+    }
+
+    /// A line made from a highlighted passage takes that highlight's color: most of its
+    /// longer words come from the highlight.
+    static func focusColor(_ line: String, _ focus: [Highlight]) -> Color? {
+        guard !focus.isEmpty else { return nil }
+        func words(_ s: String) -> [String] {
+            s.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 3 }
+        }
+        let mine = words(line)
+        guard !mine.isEmpty else { return nil }
+        var best: (share: Double, color: Color)?
+        for h in focus {
+            let theirs = Set(words(h.text))
+            let share = Double(mine.filter(theirs.contains).count) / Double(mine.count)
+            if share >= 0.7, share > (best?.share ?? 0) { best = (share, h.displayColor) }
+        }
+        return best?.color
+    }
+}
+
+/// Paste an Anthropic API key once (kept in the iPad's Keychain) so Claude writes the
+/// bracket notes.
+struct BracketSetupView: View {
+    @ObservedObject var notes: BracketNotes
+    @Environment(\.dismiss) private var dismiss
+    @State private var key = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if notes.hasKey {
+                        HStack {
+                            Label("API key saved", systemImage: "checkmark.seal.fill")
+                                .foregroundStyle(.green)
+                            Spacer()
+                            Button("Remove", role: .destructive) { notes.removeKey() }
+                        }
+                    }
+                    SecureField(notes.hasKey ? "Replace key" : "Paste your Anthropic API key", text: $key)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button("Save key") {
+                        notes.saveKey(key)
+                        key = ""
+                    }
+                    .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } header: {
+                    Text("Anthropic API key")
+                } footer: {
+                    Text("With a key, Claude writes the bracket notes in your style: the text of the page you open (and your highlights) is sent to Anthropic, and each page is billed to your key once, then kept on the iPad. Without a key, simpler notes are made on the iPad and nothing is sent. The key is stored only in this iPad's Keychain.")
+                }
+            }
+            .navigationTitle("Bracket Notes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}

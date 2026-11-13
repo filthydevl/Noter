@@ -99,6 +99,8 @@ final class DocumentSession: ObservableObject {
     let palette: ColorPalette
     /// The book's parts (headings), for the page slider.
     let outline: OutlineIndex
+    /// Bracket Notes: pages transposed into your indented note style.
+    let bracket: BracketNotes
     /// Key words you removed from the Key words list (remembered per document). Their
     /// highlights stay; they just aren't listed or offered as tags.
     @Published private(set) var removedKeywords: Set<String> = []
@@ -143,6 +145,7 @@ final class DocumentSession: ObservableObject {
         self.questions = QuestionIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
         self.palette = ColorPalette(docID: info.id)
         self.outline = OutlineIndex(docID: info.id, ocr: ocr, mode: info.layoutMode)
+        self.bracket = BracketNotes(docID: info.id)
         self.removedKeywords = Set(Storage.load([String].self, from: DocumentSession.removedKeywordsURL(info.id)) ?? [])
         let defaults = UserDefaults.standard
         self.color = HighlightColor(rawValue: defaults.string(forKey: "noter.highlightColor") ?? "") ?? .yellow
@@ -156,6 +159,7 @@ final class DocumentSession: ObservableObject {
 
         rebuildIndex()
         speech.session = self
+        bracket.session = self
         for name in [NSNotification.Name.NSUndoManagerDidCloseUndoGroup, .NSUndoManagerDidUndoChange,
                      .NSUndoManagerDidRedoChange] {
             undoObservers.append(NotificationCenter.default.addObserver(
