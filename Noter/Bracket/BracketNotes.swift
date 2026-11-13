@@ -10,7 +10,7 @@ import Foundation
 @MainActor
 final class BracketNotes: ObservableObject {
     enum Scope: String, CaseIterable, Identifiable {
-        case page, highlights
+        case highlights, page
         var id: String { rawValue }
         var title: String { self == .page ? "Whole page" : "Highlights only" }
     }
@@ -193,7 +193,22 @@ final class BracketNotes: ObservableObject {
         focus(page: page).map { "\($0.id.uuidString):\($0.text.count)" }.joined(separator: ",")
     }
 
-    /// Makes (or re-makes, when needed) a page's notes.
+    /// Loads what a page doesn't have yet: its highlights' notes first, then the whole
+    /// page's. Nothing that is already there is made again.
+    func load(page: Int) {
+        guard let s = session, page >= 0, page < s.pageCount else { return }
+        let id = "load-\(page)"
+        tasks[id]?.cancel()
+        tasks[id] = Task { [weak self] in
+            _ = await s.ocr.ensure(page)
+            guard let self, !Task.isCancelled else { return }
+            await self.makeHighlights(page: page, id: Self.id(page, .highlights), force: false)
+            guard !Task.isCancelled else { return }
+            await self.make(page: page, id: Self.id(page, .page), force: false)
+        }
+    }
+
+    /// Makes a page's notes again (the reload button).
     func refresh(page: Int, scope: Scope, force: Bool = false) {
         guard let s = session, page >= 0, page < s.pageCount else { return }
         let id = Self.id(page, scope)
@@ -216,16 +231,10 @@ final class BracketNotes: ObservableObject {
         let key = Self.hash(text)
         let focusKey = Self.hash(focus.joined(separator: "\u{1}"))
         let wanted = self.wanted
-        if !force, let e = entries[id], e.key == key {
-            // Same text. A page a model has written is kept — except that Gemini (free)
-            // redoes it around new highlights; with Claude (paid) and Apple
-            // Intelligence (battery) new highlights are only tinted. A better engine
-            // than the one that wrote it also redoes it.
-            if Self.rank(e.engine) >= Self.rank(wanted) {
-                let refocus = wanted == "gemini" && e.engine == "gemini" && (e.focus ?? focusKey) != focusKey
-                if !refocus { return }
-            }
-        }
+        // Notes that are there stay as they are, whichever model wrote them and
+        // whatever has changed since: only the reload button makes them again. (An
+        // empty entry from before the page's text was recognized doesn't count.)
+        if !force, let e = entries[id], !e.text.isEmpty || e.key == key { return }
 
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             store(id, Entry(key: key, text: "", engine: wanted, focus: focusKey))
@@ -282,7 +291,8 @@ final class BracketNotes: ObservableObject {
             guard !Task.isCancelled else { return }
             let hid = Self.id(h)
             let key = Self.hash(h.text)
-            if !force, let e = entries[hid], e.key == key, Self.rank(e.engine) >= Self.rank(wanted) { continue }
+            // A highlight that has notes keeps them; only new highlights are done.
+            if !force, let e = entries[hid], !e.text.isEmpty { continue }
             working.insert(id)
             defer { working.remove(id) }
             if let online {

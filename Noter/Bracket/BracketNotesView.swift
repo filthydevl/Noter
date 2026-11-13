@@ -10,7 +10,7 @@ struct BracketNotesView: View {
     /// Where the PDF / Text view is (the sentence at its top), while this panel is open.
     @ObservedObject var position: ReaderPosition
     var onClose: () -> Void
-    @AppStorage("noter.bracketScope") private var scopeRaw = BracketNotes.Scope.page.rawValue
+    @AppStorage("noter.bracketView") private var scopeRaw = BracketNotes.Scope.highlights.rawValue
     @State private var showSetup = false
     /// Text size of the notes (pinch, or Larger / Smaller in the menu).
     @AppStorage("noter.bracketZoom") private var zoom = 1.0
@@ -38,7 +38,7 @@ struct BracketNotesView: View {
         return Spoken(page: pos.pdfIndex, line: map[index], word: BracketAlign.normal(words[index]))
     }
 
-    private var scope: BracketNotes.Scope { BracketNotes.Scope(rawValue: scopeRaw) ?? .page }
+    private var scope: BracketNotes.Scope { BracketNotes.Scope(rawValue: scopeRaw) ?? .highlights }
 
     private struct Trigger: Equatable {
         var page: Int
@@ -64,6 +64,14 @@ struct BracketNotesView: View {
                 }
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
+                Button {
+                    notes.refresh(page: page, scope: scope, force: true)
+                } label: {
+                    PanelIcon(symbol: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .disabled(working)
+                .accessibilityLabel("Reload this page's notes")
                 Menu {
                     Button {
                         UIPasteboard.general.string = entry?.text ?? ""
@@ -83,11 +91,6 @@ struct BracketNotesView: View {
                         } label: {
                             Label("Larger", systemImage: "textformat.size.larger")
                         }
-                    }
-                    Button {
-                        notes.refresh(page: page, scope: scope, force: true)
-                    } label: {
-                        Label("Redo this page", systemImage: "arrow.clockwise")
                     }
                     Button {
                         showSetup = true
@@ -120,7 +123,7 @@ struct BracketNotesView: View {
                         .foregroundStyle(.orange)
                     if notes.online != nil {
                         Button {
-                            notes.refresh(page: page, scope: scope)
+                            notes.refresh(page: page, scope: scope, force: true)
                         } label: {
                             Label("Try \(notes.online?.title ?? "") again", systemImage: "arrow.clockwise")
                                 .font(.caption.weight(.semibold))
@@ -143,7 +146,8 @@ struct BracketNotesView: View {
             // Long enough that flicking past a page doesn't send it to Claude.
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
-            notes.refresh(page: page, scope: scope)
+            // Only what isn't loaded yet: the highlights' notes first, then the page's.
+            notes.load(page: page)
         }
         .sheet(isPresented: $showSetup) { BracketSetupView(notes: notes) }
     }
