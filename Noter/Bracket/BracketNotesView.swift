@@ -13,6 +13,28 @@ struct BracketNotesView: View {
     /// Text size of the notes (pinch, or Larger / Smaller in the menu).
     @AppStorage("noter.bracketZoom") private var zoom = 1.0
     @GestureState private var pinch = 1.0
+    /// When you last moved the notes yourself (read-along doesn't pull them back at once).
+    @State private var lastTouched = Date.distantPast
+
+    /// The line of the notes (and the word in it) being read aloud right now.
+    struct Spoken: Equatable {
+        var page: Int
+        var line: Int
+        var word: String
+    }
+
+    private var spoken: Spoken? {
+        guard session.speech.isActive, let pos = session.speechPosition,
+              let entry = notes.entry(page: pos.pdfIndex, scope: scope), !entry.text.isEmpty,
+              let pages = session.logicalPages(pos.pdfIndex) else { return nil }
+        let before = pages.prefix(pos.half).reduce(0) { $0 + $1.tokens.count }
+        let words = pages.flatMap { $0.tokens.map(\.text) }
+        let index = before + pos.token
+        guard index >= 0, index < words.count else { return nil }
+        let map = BracketAlign.lines(for: words, notes: entry.text, key: "\(pos.pdfIndex)-\(scopeRaw)")
+        guard index < map.count, map[index] >= 0 else { return nil }
+        return Spoken(page: pos.pdfIndex, line: map[index], word: BracketAlign.normal(words[index]))
+    }
 
     private var scope: BracketNotes.Scope { BracketNotes.Scope(rawValue: scopeRaw) ?? .page }
 
@@ -119,11 +141,13 @@ struct BracketNotesView: View {
     @ViewBuilder
     private func content(page: Int, entry: BracketNotes.Entry?, working: Bool) -> some View {
         let pages = notes.pages(scope: scope, including: page)
+        let spoken = self.spoken
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     ForEach(pages, id: \.self) { p in
-                        pageSection(p, current: p == page, working: working && p == page)
+                        pageSection(p, current: p == page, working: working && p == page,
+                                    spoken: spoken?.page == p ? spoken : nil)
                             .id(p)
                     }
                 }
@@ -136,6 +160,15 @@ struct BracketNotesView: View {
                 MagnifyGesture()
                     .updating($pinch) { value, state, _ in state = Double(value.magnification) }
                     .onEnded { value in zoom = Self.clampZoom(zoom * Double(value.magnification)) })
+            .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in lastTouched = Date() })
+            // Read-aloud: the notes follow the voice line by line (unless you've just
+            // moved them yourself).
+            .onChange(of: spoken?.line) { _, _ in
+                guard let spoken, Date().timeIntervalSince(lastTouched) > 4 else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(Self.lineID(spoken.page, spoken.line), anchor: .center)
+                }
+            }
             .onAppear { proxy.scrollTo(page, anchor: .top) }
             .onChange(of: page) { _, p in
                 withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(p, anchor: .top) }
@@ -150,7 +183,7 @@ struct BracketNotesView: View {
     }
 
     @ViewBuilder
-    private func pageSection(_ p: Int, current: Bool, working: Bool) -> some View {
+    private func pageSection(_ p: Int, current: Bool, working: Bool, spoken: Spoken?) -> some View {
         let entry = notes.entry(page: p, scope: scope)
         let size = CGFloat(15 * Self.clampZoom(zoom * pinch))
         VStack(alignment: .leading, spacing: 3 * size / 15) {
@@ -164,17 +197,21 @@ struct BracketNotesView: View {
             .padding(.bottom, 4)
             if let entry, !entry.text.isEmpty {
                 let focus = notes.focus(page: p)
-                ForEach(Array(Self.lines(entry.text).enumerated()), id: \.offset) { _, line in
+                ForEach(Array(Self.lines(entry.text).enumerated()), id: \.offset) { offset, line in
                     if line.text.isEmpty {
                         Color.clear.frame(height: size * 0.6)
                     } else {
                         let color = Self.focusColor(line.text, focus)
-                        Text(line.text)
+                        // The line being read aloud, in the read-aloud color, with the
+                        // word itself marked.
+                        let speaking = spoken?.line == offset
+                        Text(speaking ? Self.marking(spoken?.word ?? "", in: line.text) : AttributedString(line.text))
                             .font(.system(size: size, weight: line.depth == 0 ? .semibold : .regular))
-                            .padding(.horizontal, color == nil ? 0 : 4)
-                            .background(color?.opacity(0.28) ?? .clear)
+                            .padding(.horizontal, color == nil && !speaking ? 0 : 4)
+                            .background(speaking ? Color.accentColor.opacity(0.2) : (color?.opacity(0.28) ?? .clear))
                             .padding(.leading, CGFloat(line.depth) * size * 1.2)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .id(Self.lineID(p, offset))
                     }
                 }
                 .opacity(working ? 0.5 : 1)
@@ -195,6 +232,25 @@ struct BracketNotesView: View {
     }
 
     static func clampZoom(_ z: Double) -> Double { min(max(z, 0.6), 2.6) }
+
+    static func lineID(_ page: Int, _ line: Int) -> String { "\(page)-line-\(line)" }
+
+    /// The line with the spoken word marked (the first word in it that matches).
+    static func marking(_ word: String, in line: String) -> AttributedString {
+        var out = AttributedString(line)
+        guard !word.isEmpty else { return out }
+        var start = line.startIndex
+        for piece in line.split(separator: " ", omittingEmptySubsequences: false) {
+            let end = line.index(start, offsetBy: piece.count)
+            if BracketAlign.same(BracketAlign.normal(String(piece)), word),
+               let a = AttributedString.Index(start, within: out), let b = AttributedString.Index(end, within: out) {
+                out[a..<b].backgroundColor = Color.accentColor.opacity(0.45)
+                break
+            }
+            start = end < line.endIndex ? line.index(after: end) : end
+        }
+        return out
+    }
 
     private func subtitle(page: Int, entry: BracketNotes.Entry?) -> String {
         let label = session.label(for: SlotKey(pdfIndex: page, half: 0))
@@ -303,5 +359,60 @@ struct BracketSetupView: View {
                 }
             }
         }
+    }
+}
+
+/// Lines up the page's words with the lines of its bracket notes, so read-aloud can
+/// show where the voice is in the notes. The notes keep the page's order (only the
+/// phrases inside a sentence move), so each word is looked for in the lines around
+/// where the previous word was found.
+@MainActor
+enum BracketAlign {
+    private static var cache: [String: (signature: Int, map: [Int])] = [:]
+
+    nonisolated static func normal(_ word: String) -> String {
+        String(word.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
+    }
+
+    /// The same word, allowing for OCR repairs in the notes ("con ict" → "conflict").
+    nonisolated static func same(_ a: String, _ b: String) -> Bool {
+        if a == b { return !a.isEmpty }
+        guard a.count >= 4, b.count >= 4 else { return false }
+        return a.hasPrefix(b) || b.hasPrefix(a) || a.hasSuffix(b) || b.hasSuffix(a)
+    }
+
+    /// For every word of the page, the line of the notes it's on (-1: before any match).
+    static func lines(for words: [String], notes: String, key: String) -> [Int] {
+        let signature = notes.count &* 31 &+ words.count
+        if let hit = cache[key], hit.signature == signature { return hit.map }
+        let lineWords = BracketNotesView.lines(notes).map { line in
+            line.text.split(separator: " ").map { normal(String($0)) }.filter { !$0.isEmpty }
+        }
+        var map: [Int] = []
+        map.reserveCapacity(words.count)
+        var at = -1
+        for raw in words {
+            let w = normal(raw)
+            if w.count >= 2, !lineWords.isEmpty {
+                // Nearest line first: this one, the next few, then a couple back.
+                let here = max(at, 0)
+                var found: Int?
+                for step in [0, 1, 2, -1, 3, -2, 4, 5, -3, 6, 7, 8] {
+                    let i = here + step
+                    guard i >= 0, i < lineWords.count else { continue }
+                    // Short words ("of", "in") only count on the current line.
+                    if w.count < 4, step != 0 { continue }
+                    if lineWords[i].contains(where: { same($0, w) }) {
+                        found = i
+                        break
+                    }
+                }
+                if let found { at = found }
+            }
+            map.append(at)
+        }
+        if cache.count > 40 { cache.removeAll() }
+        cache[key] = (signature, map)
+        return map
     }
 }
