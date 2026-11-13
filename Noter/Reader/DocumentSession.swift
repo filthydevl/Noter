@@ -17,12 +17,20 @@ final class DocumentSession: ObservableObject {
                 info.viewMode = viewMode
                 saveInfo()
             }
+            // Scribbles are the same ink in both views: hand it over.
+            if viewMode == .transcript {
+                pdfController?.saveAllInk()
+                transcriptController?.reloadInk()
+            } else if viewMode == .pdf, let changed = transcriptController?.takeDirtyInkPages(), !changed.isEmpty {
+                pdfController?.reloadInk(pages: changed)
+            }
             syncPosition(from: oldValue)
         }
     }
     @Published var tool: PencilTool = .pen {
         didSet {
             if tool == .erase { scribble.lasso = false }
+            transcriptController?.applyScribbleState()
             pdfController?.applyScribbleState()
         }
     }
@@ -30,6 +38,7 @@ final class DocumentSession: ObservableObject {
     @Published var penMode: PenMode = .highlight {
         didSet {
             pdfController?.applyScribbleState()
+            transcriptController?.applyScribbleState()
             redoOffered = false
         }
     }
@@ -169,7 +178,10 @@ final class DocumentSession: ObservableObject {
         }
         ocr.onPageReady = { [weak self] index in self?.pageReady(index) }
         questions.onChange = { [weak self] in self?.marksChanged() }
-        scribble.onChange = { [weak self] in self?.pdfController?.applyScribbleState() }
+        scribble.onChange = { [weak self] in
+            self?.pdfController?.applyScribbleState()
+            self?.transcriptController?.applyScribbleState()
+        }
         if questions.markOnPages { questions.start() }
         ocr.setFocus(currentPage)
         ocrDone = ocr.doneCount
@@ -741,7 +753,6 @@ final class DocumentSession: ObservableObject {
             scribble.lasso = false
         }
         showToast(penMode == .scribble ? "Scribble" : "Highlighter")
-        if penMode == .scribble, viewMode != .pdf { showToast("Scribble draws on the PDF view") }
     }
 
     /// You tapped the page while scribbling and the tap had nothing to do: flash a "!"
@@ -940,6 +951,22 @@ final class DocumentSession: ObservableObject {
     /// A copy of the PDF with your work in it. `baked`: highlights and scribbles printed
     /// onto the pages. Otherwise: editable highlight annotations, no scribbles. Notes
     /// become sticky notes either way. Calls back with the file to share / save.
+    /// The Text view as a PDF, with your scribbles beside the same words.
+    func saveTextPDF(done: @escaping (URL) -> Void) {
+        guard !isSavingPDF else { return }
+        isSavingPDF = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let url = await TextPDFExport.export(self)
+            self.isSavingPDF = false
+            if let url {
+                done(url)
+            } else {
+                self.showToast("No recognized text to save yet")
+            }
+        }
+    }
+
     func savePDF(baked: Bool, done: @escaping (URL) -> Void) {
         guard !isSavingPDF else { return }
         isSavingPDF = true

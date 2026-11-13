@@ -162,6 +162,25 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: work)
     }
 
+    /// The ink changed on disk (you scribbled on this page in the Text view): show it.
+    func reloadFromStore() {
+        saveWork?.cancel()
+        let ink = InkStore.load(docID, page: pageIndex)
+        let drawing = ink.drawing.flatMap { try? PKDrawing(data: $0) } ?? PKDrawing()
+        texts = ink.texts
+        shapeView.setShapes(ink.shapes ?? [])
+        if bounds.width > 1, bounds.height > 1 {
+            pending = nil
+            setDrawing(drawing.transformed(using: toView))
+            considered = canvas.drawing.strokes.count
+            appliedSize = bounds.size
+            layoutLabels()
+        } else {
+            pending = drawing
+            setNeedsLayout()
+        }
+    }
+
     func saveNow() {
         saveWork?.cancel()
         guard pending == nil else { return } // never loaded into the canvas: nothing changed

@@ -383,6 +383,11 @@ struct ReaderView: View {
                 } label: {
                     Label("Editable highlights only", systemImage: "highlighter")
                 }
+                Button {
+                    session.saveTextPDF { savedPDF = ShareItem(url: $0) }
+                } label: {
+                    Label("Save Text view — text + scribbles", systemImage: "text.alignleft")
+                }
                 Text("Save PDF prints your highlights and scribbles onto the pages. “Editable” keeps highlights as PDF highlights other apps can change, without scribbles. Notes become sticky notes.")
             } label: {
                 Group {
@@ -513,7 +518,7 @@ struct ReaderView: View {
     static let panelWidth: CGFloat = 380
 
 
-    private var scribbleBar: Bool { session.penMode == .scribble && session.viewMode != .transcript }
+    private var scribbleBar: Bool { session.penMode == .scribble }
 
     private func rail(scrolls: Bool) -> some View {
         ToolRail(session: session, scribble: session.scribble, palette: session.palette, panel: $panel,
@@ -532,7 +537,7 @@ private struct RailUndoButton: View {
 
     var body: some View {
         let _ = session.inkUndoVersion
-        let scribbling = session.penMode == .scribble && session.viewMode != .transcript
+        let scribbling = session.penMode == .scribble
         let enabled = scribbling ? session.inkUndo.canUndo : session.canUndo
         Button {
             if scribbling { session.inkUndo.undo() } else { session.undo() }
@@ -558,7 +563,7 @@ private struct RedoBubble: View {
 
     var body: some View {
         let _ = session.inkUndoVersion
-        let scribbling = session.penMode == .scribble && session.viewMode != .transcript
+        let scribbling = session.penMode == .scribble
         let canRedo = scribbling ? session.inkUndo.canRedo : session.canRedo
         let show = session.redoOffered && canRedo
         Button {

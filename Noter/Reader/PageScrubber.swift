@@ -108,32 +108,34 @@ struct PageScrubber: View {
                     bubble(page, h)
                 }
             }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { v in
-                        let f = min(max(v.location.y / max(h, 1), 0), 1)
-                        let p = f * Double(count - 1)
-                        dragging = p
-                        let i = Int(p.rounded())
-                        // At most ~12 jumps a second while you drag: each one draws a
-                        // page, and a fast drag through a long book kept the device so
-                        // busy the read-aloud voice smeared.
-                        if i != lastSent, Date().timeIntervalSince(lastJump) > 0.08 {
-                            lastSent = i
-                            lastJump = Date()
-                            session.goToPage(i)
-                        }
+            // Fingers only: the Apple Pencil writes on the page, it never moves the
+            // slider (and a stroke that starts over the slider still reaches the page).
+            .allowsHitTesting(false)
+            .background {
+                FingerTrack(onChange: { location, size in
+                    let f = min(max(location.y / max(size.height, 1), 0), 1)
+                    let p = f * Double(count - 1)
+                    dragging = p
+                    let i = Int(p.rounded())
+                    // At most ~12 jumps a second while you drag: each one draws a
+                    // page, and a fast drag through a long book kept the device so
+                    // busy the read-aloud voice smeared.
+                    if i != lastSent, Date().timeIntervalSince(lastJump) > 0.08 {
+                        lastSent = i
+                        lastJump = Date()
+                        session.goToPage(i)
                     }
-                    .onEnded { _ in
-                        // Land exactly where you let go.
-                        if let d = dragging {
-                            let i = Int(d.rounded())
-                            if i != lastSent { session.goToPage(i) }
-                        }
-                        dragging = nil
-                        lastSent = nil
-                    })
+                }, onEnd: {
+                    // Land exactly where you let go.
+                    if let d = dragging {
+                        let i = Int(d.rounded())
+                        if i != lastSent { session.goToPage(i) }
+                    }
+                    dragging = nil
+                    lastSent = nil
+                })
+                .allowsHitTesting(false)
+            }
         }
         .frame(width: 32) // a wide, invisible grab area around the hairline
         .animation(.easeOut(duration: 0.15), value: dragging == nil)

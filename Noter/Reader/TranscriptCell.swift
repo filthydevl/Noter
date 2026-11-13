@@ -1,4 +1,5 @@
 import UIKit
+import PencilKit
 
 /// A highlight in the Text view: filled, circled (a circled word) or underlined (its
 /// definition).
@@ -31,7 +32,7 @@ final class RoomyButton: UIButton, UIGestureRecognizerDelegate {
 }
 
 /// One book page of the transcript.
-final class TranscriptCell: UICollectionViewCell {
+final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
     static let reuseID = "TranscriptCell"
 
     /// In the two-page layout the cell measures its own height (the list layout does it
@@ -74,6 +75,15 @@ final class TranscriptCell: UICollectionViewCell {
     private let flashLayer = CAShapeLayer()
 
     private(set) var page: LogicalPage?
+    /// Scribbles: the PDF page's ink, shown beside the same words here.
+    let inkCanvas = InkCanvas()
+    private var inkSource: [PKStroke] = []
+    private var inkPageSize: CGSize = .zero
+    /// Strokes on the canvas that are still as they were placed → their page ink.
+    private var inkTable: [String: PKStroke] = [:]
+    private var inkProgrammatic = false
+    /// You drew or erased here: the book page's ink, in page points.
+    var onInkChanged: (([PKStroke]) -> Void)?
     private var highlights: [TextHighlight] = []
     private var marks: [NSRange] = []
     private var flashRange: NSRange?
@@ -121,6 +131,24 @@ final class TranscriptCell: UICollectionViewCell {
             v.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(v)
         }
+        // Over the whole cell (so there's room to write above and below the text).
+        inkCanvas.backgroundColor = .clear
+        inkCanvas.isOpaque = false
+        inkCanvas.drawingPolicy = .pencilOnly
+        inkCanvas.isScrollEnabled = false
+        inkCanvas.contentInsetAdjustmentBehavior = .never
+        inkCanvas.showsVerticalScrollIndicator = false
+        inkCanvas.showsHorizontalScrollIndicator = false
+        inkCanvas.isUserInteractionEnabled = false
+        inkCanvas.delegate = self
+        inkCanvas.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(inkCanvas)
+        NSLayoutConstraint.activate([
+            inkCanvas.topAnchor.constraint(equalTo: contentView.topAnchor),
+            inkCanvas.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            inkCanvas.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            inkCanvas.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+        ])
         // The text re-wraps when its width settles (a two-page column is narrower than
         // the list): measure the highlights again then, or they sit on the old lines.
         textView.onResize = { [weak self] in self?.redrawOverlays() }
@@ -168,6 +196,12 @@ final class TranscriptCell: UICollectionViewCell {
         previewRange = nil
         confirmRange = nil
         confirmButton.isHidden = true
+        onInkChanged = nil
+        inkSource = []
+        inkTable = [:]
+        inkProgrammatic = true
+        inkCanvas.drawing = PKDrawing()
+        inkProgrammatic = false
         withoutAnimation {
             highlightLayer.sublayers = nil
             markLayer.path = nil
@@ -218,6 +252,90 @@ final class TranscriptCell: UICollectionViewCell {
         redrawFlash()
         redrawPreview()
         _ = drawSpeech()
+        remapInk() // the lines moved: the scribbles go with their words
+    }
+
+    // MARK: Scribbles
+
+    /// A word's box in the ink canvas (nil for a word that isn't shown, like a
+    /// stripped footnote number).
+    private func inkRect(_ token: Int) -> CGRect? {
+        guard let page, token >= 0, token < page.tokenRanges.count, page.tokenRanges[token].length > 0,
+              let r = rect(for: page.tokenRanges[token]) else { return nil }
+        return r.offsetBy(dx: textView.frame.minX, dy: textView.frame.minY)
+    }
+
+    /// The page's ink (page points) to show here.
+    func setInk(_ strokes: [PKStroke], pageSize: CGSize) {
+        inkSource = strokes
+        inkPageSize = pageSize
+        remapInk()
+    }
+
+    func setInkActive(_ active: Bool, tool: PKTool, undo: UndoManager?) {
+        inkCanvas.sharedUndo = undo
+        inkCanvas.isUserInteractionEnabled = active && page != nil
+        inkCanvas.tool = tool
+    }
+
+    private func remapInk() {
+        guard let page, inkPageSize.width > 1, textView.bounds.width > 1,
+              textView.layoutManager.numberOfGlyphs > 0 else {
+            if !inkCanvas.drawing.strokes.isEmpty {
+                inkProgrammatic = true
+                inkCanvas.drawing = PKDrawing()
+                inkProgrammatic = false
+            }
+            return
+        }
+        let placed = TextInk.toText(inkSource, lp: page, pageSize: inkPageSize) { self.inkRect($0) }
+        inkTable = [:]
+        for p in placed { inkTable[TextInk.key(p.shown)] = p.source }
+        inkProgrammatic = true
+        inkCanvas.drawing = PKDrawing(strokes: placed.map(\.shown))
+        inkProgrammatic = false
+    }
+
+    func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+        guard !inkProgrammatic, let page, inkPageSize.width > 1 else { return }
+        var source: [PKStroke] = []
+        var table: [String: PKStroke] = [:]
+        for stroke in inkCanvas.drawing.strokes {
+            let key = TextInk.key(stroke)
+            // Untouched strokes keep their exact place on the page; new, moved or cut
+            // ones are placed beside the word they're next to here.
+            let onPage = inkTable[key] ?? TextInk.toPage(
+                stroke, lp: page, pageSize: inkPageSize,
+                tokenAt: { p in
+                    let inText = CGPoint(x: p.x - self.textView.frame.minX, y: p.y - self.textView.frame.minY)
+                    return self.nearestShownToken(to: inText)
+                },
+                textRect: { self.inkRect($0) })
+            if let onPage {
+                source.append(onPage)
+                table[key] = onPage
+            }
+        }
+        inkSource = source
+        inkTable = table
+        onInkChanged?(source)
+    }
+
+    /// The word at (or nearest to) a point in the text view, even from the margins.
+    private func nearestShownToken(to point: CGPoint) -> Int? {
+        guard let page, !page.tokenRanges.isEmpty else { return nil }
+        let lm = textView.layoutManager
+        guard lm.numberOfGlyphs > 0 else { return nil }
+        let glyph = lm.glyphIndex(for: point, in: textView.textContainer, fractionOfDistanceThroughGlyph: nil)
+        let char = lm.characterIndexForGlyph(at: glyph)
+        guard var token = page.tokenIndex(atUTF16: char) else { return nil }
+        // Step off words that aren't shown.
+        var step = 0
+        while page.tokenRanges[token].length == 0, step < 6 {
+            token = min(token + 1, page.tokenRanges.count - 1)
+            step += 1
+        }
+        return page.tokenRanges[token].length > 0 ? token : nil
     }
 
     /// Shows the ✓ next to the circled word (a range of the page text), or hides it.

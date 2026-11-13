@@ -1,4 +1,5 @@
 import UIKit
+import PencilKit
 import SwiftUI
 
 /// The OCR transcript, one cell per book page, loaded lazily so a 1,000-page book
@@ -153,12 +154,89 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             if let p = s.speechPosition, p.slot == lp.slot { cell.setSpeech(token: p.token) }
             cell.onConfirm = { [weak s] in s?.confirmDefinition() }
             cell.setConfirm(confirmRange(in: lp))
+            configureInk(cell, lp)
         } else {
             cell.configurePlaceholder(header: "PDF page \(indexPath.section + 1)", fontSize: s.transcriptFontSize,
                                       appearance: s.textAppearance)
             if s.viewMode == .transcript { s.ocr.setFocus(indexPath.section) }
         }
         return cell
+    }
+
+    // MARK: - Scribbles
+
+    /// Each PDF page's ink, as last read from disk or changed here.
+    private var inkPages: [Int: PageInk] = [:]
+    /// Pages scribbled on here since the PDF view last looked.
+    private var inkDirty = Set<Int>()
+
+    private func ink(_ pdfIndex: Int) -> PageInk {
+        if let ink = inkPages[pdfIndex] { return ink }
+        let ink = session.map { InkStore.load($0.info.id, page: pdfIndex) } ?? PageInk()
+        inkPages[pdfIndex] = ink
+        return ink
+    }
+
+    private func strokes(_ ink: PageInk) -> [PKStroke] {
+        ink.drawing.flatMap { try? PKDrawing(data: $0) }?.strokes ?? []
+    }
+
+    private var inkTool: PKTool {
+        guard let s = session else { return PKInkingTool(.pen) }
+        if s.tool == .erase { return PKEraserTool(s.scribble.eraser.pk) }
+        return s.scribble.lasso ? PKLassoTool() : s.scribble.inkTool
+    }
+
+    private func configureInk(_ cell: TranscriptCell, _ lp: LogicalPage) {
+        guard let s = session, let page = s.pdf.page(at: lp.pdfIndex) else { return }
+        let size = TextInk.pageSize(page)
+        cell.setInk(strokes(ink(lp.pdfIndex)).filter { TextInk.belongs($0, to: lp, pageSize: size) }, pageSize: size)
+        cell.setInkActive(s.penMode == .scribble, tool: inkTool, undo: s.inkUndo)
+        cell.onInkChanged = { [weak self] changed in self?.inkChanged(lp, changed, pageSize: size) }
+    }
+
+    /// You drew or erased on a book page: its PDF page's ink is this page's strokes
+    /// plus those of the other half of a spread. Saved at once.
+    private func inkChanged(_ lp: LogicalPage, _ changed: [PKStroke], pageSize: CGSize) {
+        guard let s = session else { return }
+        s.noteUserActivity()
+        var page = ink(lp.pdfIndex)
+        let others = strokes(page).filter { !TextInk.belongs($0, to: lp, pageSize: pageSize) }
+        let all = others + changed
+        page.drawing = all.isEmpty ? nil : PKDrawing(strokes: all).dataRepresentation()
+        inkPages[lp.pdfIndex] = page
+        inkDirty.insert(lp.pdfIndex)
+        InkStore.save(page, s.info.id, page: lp.pdfIndex)
+    }
+
+    /// Pen mode, tool or scribble settings changed.
+    func applyScribbleState() {
+        guard let s = session else { return }
+        let scribbling = s.penMode == .scribble
+        // The pencil either highlights (our recognizer) or draws (PencilKit), never both.
+        pencil.isEnabled = !scribbling
+        if scribbling { cancelStroke() }
+        for case let cell as TranscriptCell in collectionView.visibleCells {
+            cell.setInkActive(scribbling, tool: inkTool, undo: s.inkUndo)
+        }
+    }
+
+    /// The PDF view may have changed the ink: read it again.
+    func reloadInk() {
+        inkPages.removeAll()
+        guard let s = session else { return }
+        for ip in collectionView.indexPathsForVisibleItems {
+            guard let cell = collectionView.cellForItem(at: ip) as? TranscriptCell,
+                  let pages = s.logicalPages(ip.section), ip.item < pages.count else { continue }
+            configureInk(cell, pages[ip.item])
+        }
+        applyScribbleState()
+    }
+
+    /// Pages scribbled on here, for the PDF view to read again.
+    func takeDirtyInkPages() -> Set<Int> {
+        defer { inkDirty.removeAll() }
+        return inkDirty
     }
 
     func reloadAll() {
@@ -364,10 +442,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
               let ip = collectionView.indexPathForItem(at: p),
               let cell = collectionView.cellForItem(at: ip) as? TranscriptCell,
               let lp = cell.page else { return }
-        guard s.penMode == .highlight else {
-            s.showToast("Scribble draws on the PDF view")
-            return
-        }
+        guard s.penMode == .highlight else { return } // scribbling: PencilKit has the pencil
         s.noteUserActivity()
         stroke = Stroke(indexPath: ip, page: lp)
         inkPath.removeAllPoints()

@@ -550,6 +550,11 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
                                erasing: s.tool == .erase)
     }
 
+    /// Pages scribbled on in the Text view: show their ink as it is now.
+    func reloadInk(pages: Set<Int>) {
+        for (index, overlay) in overlays where pages.contains(index) { overlay.ink?.reloadFromStore() }
+    }
+
     func saveAllInk() {
         for overlay in overlays.values { overlay.ink?.saveNow() }
     }
