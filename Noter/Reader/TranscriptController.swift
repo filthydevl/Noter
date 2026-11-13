@@ -95,6 +95,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
     @objc private func handleLocateTap(_ g: UITapGestureRecognizer) {
         guard g.state == .ended else { return }
         reportTouch(at: g.location(in: collectionView))
+        reportTap(at: g.location(in: collectionView))
     }
 
     /// The word under a point of the list → Bracket Notes goes to its sentence.
@@ -103,6 +104,14 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
               let cell = collectionView.cellForItem(at: ip) as? TranscriptCell, let lp = cell.page,
               let hit = cell.hit(at: cell.textView.convert(p, from: collectionView)) else { return }
         s.readerTouched(TextAnchor(slot: lp.slot, token: hit.token))
+    }
+
+    /// A tap (not the start of a stroke) on a word: picks the highlight under it.
+    private func reportTap(at p: CGPoint) {
+        guard let s = session, let ip = collectionView.indexPathForItem(at: p),
+              let cell = collectionView.cellForItem(at: ip) as? TranscriptCell, let lp = cell.page,
+              let hit = cell.hit(at: cell.textView.convert(p, from: collectionView)) else { return }
+        s.tapped(on: lp, token: hit.token)
     }
 
     func gestureRecognizer(_ g: UIGestureRecognizer,

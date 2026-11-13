@@ -504,10 +504,64 @@ final class DocumentSession: ObservableObject {
         }
     }
 
+    // MARK: Tap a highlight, then add to it
+
+    /// The highlight you tapped: your next stroke outside it is added to it.
+    @Published private(set) var addingTo: UUID?
+    private var addingTask: Task<Void, Never>?
+
+    /// You tapped a word. On a highlight: it's picked, and the next line you highlight
+    /// joins it (a stroke inside it is still a highlight of its own). Elsewhere: nothing
+    /// is picked any more.
+    func tapped(on lp: LogicalPage, token: Int) {
+        guard penMode == .highlight, tool == .pen, pendingTerm == nil else { return }
+        let under = highlights(onPage: lp.pdfIndex).compactMap { h -> (Highlight, ClosedRange<Int>)? in
+            guard h.role == nil, let r = lp.range(of: h), r.contains(token) else { return nil }
+            return (h, r)
+        }
+        // The innermost one, when highlights sit inside each other.
+        guard let picked = under.min(by: { $0.1.count < $1.1.count }) else {
+            if addingTo != nil { addingTo = nil }
+            return
+        }
+        addingTo = picked.0.id
+        showToast("Highlight a line to add it to this highlight")
+        if viewMode == .transcript {
+            transcriptController?.flash(slot: lp.slot, range: lp.textRange(for: picked.1))
+        } else {
+            pdfController?.flash(pageIndex: picked.0.page, rects: picked.0.rects)
+        }
+        addingTask?.cancel()
+        addingTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.addingTo = nil
+        }
+    }
+
+    /// Adds a stroke to the highlight you tapped: it grows to take the new words in
+    /// (and the lines between). Not when the stroke is inside it, or on another page.
+    private func addToPicked(on lp: LogicalPage, range: ClosedRange<Int>) -> Bool {
+        guard let id = addingTo else { return false }
+        addingTo = nil
+        addingTask?.cancel()
+        guard let index = highlights.firstIndex(where: { $0.id == id }), highlights[index].role == nil,
+              let r = lp.range(of: highlights[index]) else { return false }
+        guard !(range.lowerBound >= r.lowerBound && range.upperBound <= r.upperBound) else { return false }
+        let union = min(r.lowerBound, range.lowerBound)...max(r.upperBound, range.upperBound)
+        pushUndo()
+        highlights[index].spans = lp.spans(for: union)
+        highlights[index].rects = lp.lineRects(for: union)
+        highlights[index].text = lp.string(for: union)
+        highlightsChanged()
+        return true
+    }
+
     /// `start`: the word the stroke began on (for extending a highlight from inside it).
     func addHighlight(on lp: LogicalPage, range: ClosedRange<Int>, underline: Bool = false,
                       continuing: Bool = false, start: Int? = nil) {
         guard !lp.tokens.isEmpty, range.upperBound < lp.tokens.count, range.lowerBound >= 0 else { return }
+        if pendingTerm == nil, !underline, addToPicked(on: lp, range: range) { return }
         if pendingTerm == nil, !underline, extendHighlight(on: lp, range: range, start: start) { return }
         var h = Highlight(
             id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: range), rects: lp.lineRects(for: range),
