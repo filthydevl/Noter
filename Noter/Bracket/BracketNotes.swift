@@ -286,7 +286,6 @@ final class BracketNotes: ObservableObject {
     /// "Highlights only": each highlight is transposed once, by itself, and kept —
     /// a new highlight sends only its own text, never the page again.
     private func makeHighlights(page: Int, id: String, force: Bool) async {
-        let wanted = self.wanted
         for h in focus(page: page) {
             guard !Task.isCancelled else { return }
             let hid = Self.id(h)

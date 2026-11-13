@@ -64,8 +64,9 @@ struct ReadingTimeLabel: View {
             }
         }
         .onAppear {
-            session.ocr.onWordsCounted = { [weak session] in session?.objectWillChange.send() }
-            session.ocr.countMissingWords()
+            let book = session
+            book.ocr.onWordsCounted = { [weak book] in book?.objectWillChange.send() }
+            book.ocr.countMissingWords()
         }
     }
 

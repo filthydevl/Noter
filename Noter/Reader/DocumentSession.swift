@@ -1020,7 +1020,7 @@ final class DocumentSession: ObservableObject {
         let ink = baked ? AnnotatedPDFExport.inkImages(self) : nil
         Task.detached(priority: .userInitiated) { [weak self] in
             let url = AnnotatedPDFExport.export(info: info, highlights: items, ink: ink)
-            await MainActor.run {
+            await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.isSavingPDF = false
                 if let url {
