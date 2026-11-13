@@ -176,7 +176,11 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
     }
 
     @objc private func userScrolled(_ g: UIPanGestureRecognizer) {
-        if g.state == .began || g.state == .changed { session?.noteUserActivity() }
+        if g.state == .began {
+            session?.readerScrollBegan()
+        } else if g.state == .changed {
+            session?.noteUserActivity()
+        }
     }
 
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {

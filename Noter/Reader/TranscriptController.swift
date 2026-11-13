@@ -334,7 +334,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        session?.noteUserActivity()
+        session?.readerScrollBegan()
     }
 
     // MARK: - Pencil

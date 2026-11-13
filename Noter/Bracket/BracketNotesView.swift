@@ -141,6 +141,11 @@ struct BracketNotesView: View {
                 withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(p, anchor: .top) }
             }
             .onChange(of: scopeRaw) { _, _ in proxy.scrollTo(page, anchor: .top) }
+            // You moved the notes away, then scrolled the book again (even within the
+            // same page): the notes come back to the page you're reading.
+            .onChange(of: session.readerScrolls) { _, _ in
+                withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(session.currentPage, anchor: .top) }
+            }
         }
     }
 

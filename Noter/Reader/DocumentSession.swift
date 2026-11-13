@@ -1064,6 +1064,15 @@ final class DocumentSession: ObservableObject {
         transcriptController?.showSpeech(position)
     }
 
+    /// Goes up each time you start scrolling the PDF or Text view yourself (Bracket
+    /// Notes comes back to your page then).
+    @Published private(set) var readerScrolls = 0
+
+    func readerScrollBegan() {
+        readerScrolls &+= 1
+        noteUserActivity()
+    }
+
     func noteUserActivity() {
         lastUserActivity = Date()
     }
