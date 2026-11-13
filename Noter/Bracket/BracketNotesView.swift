@@ -90,7 +90,8 @@ struct BracketNotesView: View {
         // after the last change.
         .task(id: Trigger(page: page, scope: scopeRaw, focus: notes.focusSignature(page: page),
                           hasKey: notes.hasKey, ocrDone: session.ocr.meta[page] == nil ? 0 : 1)) {
-            try? await Task.sleep(nanoseconds: 700_000_000)
+            // Long enough that flicking past a page doesn't send it to Claude.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
             notes.refresh(page: page, scope: scope)
         }
@@ -217,7 +218,7 @@ struct BracketSetupView: View {
                 } header: {
                     Text("Anthropic API key")
                 } footer: {
-                    Text("With a key, Claude writes the bracket notes in your style: the text of the page you open (and your highlights) is sent to Anthropic, and each page is billed to your key once, then kept on the iPad. Without a key, simpler notes are made on the iPad and nothing is sent. The key is stored only in this iPad's Keychain.")
+                    Text("With a key, Claude writes the bracket notes in your style: the text of the page you open (and your highlights) is sent to Anthropic. Each page and each highlight is billed to your key once, then kept on the iPad and never sent again unless you choose Redo. Without a key, simpler notes are made on the iPad and nothing is sent. The key is stored only in this iPad's Keychain.")
                 }
             }
             .navigationTitle("Bracket Notes")

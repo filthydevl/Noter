@@ -124,6 +124,12 @@ enum BracketStyle {
     </example_notes>
     """
 
+    /// The request for one highlighted passage by itself.
+    static func passage(_ text: String) -> String {
+        "The reader highlighted this passage: it is what they are focusing on. Write bracket notes "
+            + "for it, broken down finely, one idea per line.\n\n<page>\n\(text)\n</page>"
+    }
+
     /// The request for one page.
     static func request(text: String, focus: [String], memory: [String], onlyFocus: Bool) -> String {
         var out = ""
