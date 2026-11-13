@@ -506,7 +506,8 @@ final class DocumentSession: ObservableObject {
 
     // MARK: Tap a highlight, then add to it
 
-    /// The highlight you tapped: your next stroke outside it is added to it.
+    /// The highlight you tapped: strokes outside it are added to it, until you tap
+    /// somewhere that isn't highlighted or leave it alone for a while.
     @Published private(set) var addingTo: UUID?
     private var addingTask: Task<Void, Never>?
 
@@ -531,9 +532,15 @@ final class DocumentSession: ObservableObject {
         } else {
             pdfController?.flash(pageIndex: picked.0.page, rects: picked.0.rects)
         }
+        keepAdding()
+    }
+
+    /// The picked highlight stays picked for a while after each thing you do with it,
+    /// so several lines in a row all join it.
+    private func keepAdding() {
         addingTask?.cancel()
         addingTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            try? await Task.sleep(nanoseconds: 25_000_000_000)
             guard !Task.isCancelled else { return }
             self?.addingTo = nil
         }
@@ -543,10 +550,14 @@ final class DocumentSession: ObservableObject {
     /// (and the lines between). Not when the stroke is inside it, or on another page.
     private func addToPicked(on lp: LogicalPage, range: ClosedRange<Int>) -> Bool {
         guard let id = addingTo else { return false }
-        addingTo = nil
-        addingTask?.cancel()
-        guard let index = highlights.firstIndex(where: { $0.id == id }), highlights[index].role == nil,
-              let r = lp.range(of: highlights[index]) else { return false }
+        // It stays picked after this stroke: the next line joins it too. (It used to be
+        // forgotten after one stroke, so a second line became a highlight of its own.)
+        guard let index = highlights.firstIndex(where: { $0.id == id }), highlights[index].role == nil else {
+            addingTo = nil
+            return false
+        }
+        keepAdding()
+        guard let r = lp.range(of: highlights[index]) else { return false }
         guard !(range.lowerBound >= r.lowerBound && range.upperBound <= r.upperBound) else { return false }
         let union = min(r.lowerBound, range.lowerBound)...max(r.upperBound, range.upperBound)
         pushUndo()
