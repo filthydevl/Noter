@@ -33,6 +33,8 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         var last: CGPoint?
         /// The stroke in the cell's text view coordinates (for circles / underlines).
         var points: [CGPoint] = []
+        /// Words the stroke went over on other pages (it carried on past this one).
+        var others: [IndexPath: [StrokeHit]] = [:]
     }
     private var stroke: Stroke?
 
@@ -384,6 +386,14 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             if let last = st.last { st.length += hypot(p.x - last.x, p.y - last.y) }
             st.last = p
             inkPath.addLine(to: p)
+            // The highlighter carried on onto another page: its words count there.
+            if s.tool == .pen, let ip = collectionView.indexPathForItem(at: p), ip != st.indexPath,
+               let other = collectionView.cellForItem(at: ip) as? TranscriptCell, other.page != nil {
+                if let hit = other.hit(at: other.textView.convert(p, from: collectionView)) {
+                    st.others[ip, default: []].append(hit)
+                }
+                continue
+            }
             st.points.append(cell.textView.convert(p, from: collectionView))
             if let hit = cell.hit(at: cell.textView.convert(p, from: collectionView)) {
                 st.hits.append(hit)
@@ -393,7 +403,12 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         st.processed = pts.count
         inkLayer.path = inkPath.cgPath
 
-        if s.tool == .pen {
+        if s.tool == .pen, !st.others.isEmpty {
+            // Across pages: show what will be highlighted on each of them.
+            for part in crossPageParts(st) {
+                part.cell.showPreview(part.page.textRange(for: part.range), color: s.color.uiColor)
+            }
+        } else if s.tool == .pen {
             if st.length > 6, let r = Snapper.range(for: st.hits, referenceWidth: cell.textWidth), r != st.range {
                 st.range = r
                 cell.showPreview(st.page.textRange(for: r), color: s.color.uiColor)
@@ -421,6 +436,17 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         let cell = collectionView.cellForItem(at: st.indexPath) as? TranscriptCell
         defer { cell?.showPreview(nil, color: nil) }
         guard s.tool == .pen, st.length > 6 else { return }
+        // The stroke ran from one page onto the next: one highlight, a part on each page
+        // (from where it began to the end of that page, and from the top of the next
+        // page to where it stopped).
+        if !st.others.isEmpty {
+            let parts = crossPageParts(st)
+            parts.forEach { $0.cell.showPreview(nil, color: nil) }
+            if parts.count > 1 {
+                s.addHighlight(across: parts.map { (page: $0.page, range: $0.range) })
+                return
+            }
+        }
         // A circle around a word / phrase, a loop around a paragraph, or an underline.
         // (A line under words only counts right after circling a word: its definition.)
         if let cell, let shape = Self.shapeAction(st.points, cell) {
@@ -443,6 +469,28 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         }
     }
 
+    /// The pages a stroke crossed, top to bottom, with the words it covers on each: to
+    /// the end of every page but the last, from the top of every page but the first.
+    private func crossPageParts(_ st: Stroke) -> [(cell: TranscriptCell, page: LogicalPage, range: ClosedRange<Int>)] {
+        var hits = st.others
+        hits[st.indexPath] = st.hits
+        let items = hits.keys.sorted { $0.item < $1.item }
+        guard let first = items.first, let last = items.last, first != last else { return [] }
+        var parts: [(cell: TranscriptCell, page: LogicalPage, range: ClosedRange<Int>)] = []
+        for item in first.item...last.item {
+            let ip = IndexPath(item: item, section: first.section)
+            guard let cell = collectionView.cellForItem(at: ip) as? TranscriptCell, let lp = cell.page,
+                  !lp.tokens.isEmpty else { continue }
+            let end = lp.tokens.count - 1
+            let touched = Snapper.range(for: hits[ip] ?? [], referenceWidth: cell.textWidth)
+            let lower = item == first.item ? (touched?.lowerBound ?? end) : 0
+            let upper = item == last.item ? (touched?.upperBound ?? 0) : end
+            guard lower <= upper else { continue }
+            parts.append((cell, lp, lower...upper))
+        }
+        return parts
+    }
+
     /// What a highlighter stroke's shape means here, if it's a circle or an underline.
     private static func shapeAction(_ points: [CGPoint], _ cell: TranscriptCell) -> StrokeShapeDetector.Action? {
         let xs = points.map(\.x), ys = points.map(\.y)
@@ -455,8 +503,10 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
 
     private func cancelStroke() {
         inkLayer.path = nil
-        if let st = stroke, let cell = collectionView.cellForItem(at: st.indexPath) as? TranscriptCell {
-            cell.showPreview(nil, color: nil)
+        if let st = stroke {
+            for ip in [st.indexPath] + Array(st.others.keys) {
+                (collectionView.cellForItem(at: ip) as? TranscriptCell)?.showPreview(nil, color: nil)
+            }
         }
         stroke = nil
     }

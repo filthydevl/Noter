@@ -482,7 +482,18 @@ final class DocumentSession: ObservableObject {
     /// same words in the same color twice are ignored. Right after you circle a word,
     /// the next highlight becomes its definition (an underline linked to the word).
     /// `underline`: you drew a line under the words.
-    func addHighlight(on lp: LogicalPage, range: ClosedRange<Int>, underline: Bool = false) {
+    /// One stroke that ran over a page break: a highlight on each page, in the same
+    /// color and shade (the color only moves on once, after the last part).
+    func addHighlight(across parts: [(page: LogicalPage, range: ClosedRange<Int>)]) {
+        let stroke = color
+        for (n, part) in parts.enumerated() {
+            color = stroke
+            addHighlight(on: part.page, range: part.range, continuing: n > 0)
+        }
+    }
+
+    func addHighlight(on lp: LogicalPage, range: ClosedRange<Int>, underline: Bool = false,
+                      continuing: Bool = false) {
         guard !lp.tokens.isEmpty, range.upperBound < lp.tokens.count, range.lowerBound >= 0 else { return }
         if pendingTerm == nil, !underline, extendHighlight(on: lp, range: range) { return }
         var h = Highlight(
@@ -498,7 +509,8 @@ final class DocumentSession: ObservableObject {
             // Manual colors: same color = same idea; a new shade for each new point.
             if !palette.autoSwitch {
                 let last = highlights.last { $0.color == h.color && !$0.isTerm && !$0.isDefinition }
-                h.shade = last.map { (($0.shade ?? 0) + 1) % HighlightColor.shadeCount } ?? 0
+                // (The next page's part of the same stroke keeps the shade.)
+                h.shade = last.map { (($0.shade ?? 0) + (continuing ? 0 : 1)) % HighlightColor.shadeCount } ?? 0
             }
         }
         let duplicate = highlights(onPage: lp.pdfIndex).contains {
