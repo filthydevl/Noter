@@ -109,6 +109,17 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
         if inkCanvas.frame != frame { inkCanvas.frame = frame }
     }
 
+    /// …and they go to the canvas. (The cell's content view only passes on touches
+    /// inside its own bounds, so the margins never reached the canvas: the pencil did
+    /// nothing there.)
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if inkCanvas.superview != nil, inkCanvas.isUserInteractionEnabled, !isHidden {
+            let p = convert(point, to: inkCanvas)
+            if inkCanvas.bounds.contains(p) { return inkCanvas.hitTest(p, with: event) ?? inkCanvas }
+        }
+        return super.hitTest(point, with: event)
+    }
+
     /// The canvas reaches past the cell's edges, so touches there are the cell's too.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         if inkCanvas.superview != nil, inkCanvas.isUserInteractionEnabled, inkCanvas.frame.contains(point) {
