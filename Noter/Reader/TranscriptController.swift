@@ -83,6 +83,31 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         readDoubleTap.allowedTouchTypes = fingerTouchTypes
         readDoubleTap.delegate = self
         collectionView.addGestureRecognizer(readDoubleTap)
+        // Any touch on the text (finger or pencil) tells Bracket Notes which sentence
+        // you're on. It never gets in the way of the other gestures.
+        locateTap.delegate = self
+        locateTap.cancelsTouchesInView = false
+        collectionView.addGestureRecognizer(locateTap)
+    }
+
+    private lazy var locateTap = UITapGestureRecognizer(target: self, action: #selector(handleLocateTap(_:)))
+
+    @objc private func handleLocateTap(_ g: UITapGestureRecognizer) {
+        guard g.state == .ended else { return }
+        reportTouch(at: g.location(in: collectionView))
+    }
+
+    /// The word under a point of the list → Bracket Notes goes to its sentence.
+    private func reportTouch(at p: CGPoint) {
+        guard let s = session, let ip = collectionView.indexPathForItem(at: p),
+              let cell = collectionView.cellForItem(at: ip) as? TranscriptCell, let lp = cell.page,
+              let hit = cell.hit(at: cell.textView.convert(p, from: collectionView)) else { return }
+        s.readerTouched(TextAnchor(slot: lp.slot, token: hit.token))
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        g === locateTap || other === locateTap
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -204,6 +229,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         cell.setInk(strokes(ink(lp.pdfIndex)).filter { TextInk.belongs($0, to: lp, pageSize: size) }, pageSize: size)
         cell.setInkActive(s.penMode == .scribble, tool: inkTool, undo: s.inkUndo)
         cell.onInkChanged = { [weak self] changed in self?.inkChanged(lp, changed, pageSize: size) }
+        cell.onInkToken = { [weak s] token in s?.readerTouched(TextAnchor(slot: lp.slot, token: token)) }
     }
 
     /// You drew or erased on a book page: its PDF page's ink is this page's strokes
@@ -454,6 +480,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
               let ip = collectionView.indexPathForItem(at: p),
               let cell = collectionView.cellForItem(at: ip) as? TranscriptCell,
               let lp = cell.page else { return }
+        reportTouch(at: p)
         guard s.penMode == .highlight else { return } // scribbling: PencilKit has the pencil
         s.noteUserActivity()
         stroke = Stroke(indexPath: ip, page: lp)

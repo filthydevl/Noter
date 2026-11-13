@@ -84,6 +84,8 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
     private var inkProgrammatic = false
     /// You drew or erased here: the book page's ink, in page points.
     var onInkChanged: (([PKStroke]) -> Void)?
+    /// You scribbled beside this word (for Bracket Notes to go to its sentence).
+    var onInkToken: ((Int) -> Void)?
     private var inkLeading: NSLayoutConstraint!
     private var inkTrailing: NSLayoutConstraint!
 
@@ -216,6 +218,7 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
         confirmRange = nil
         confirmButton.isHidden = true
         onInkChanged = nil
+        onInkToken = nil
         inkSource = []
         inkTable = [:]
         inkProgrammatic = true
@@ -336,6 +339,13 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
                 source.append(onPage)
                 table[key] = onPage
             }
+        }
+        // The newest stroke that isn't from before: where you just wrote.
+        if let fresh = inkCanvas.drawing.strokes.last(where: { inkTable[TextInk.key($0)] == nil }) {
+            let c = TextInk.center(fresh)
+            let inText = CGPoint(x: c.x + inkCanvas.frame.minX - textView.frame.minX,
+                                 y: c.y + inkCanvas.frame.minY - textView.frame.minY)
+            if let token = nearestShownToken(to: inText) { onInkToken?(token) }
         }
         inkSource = source
         inkTable = table

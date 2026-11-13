@@ -1117,6 +1117,13 @@ final class DocumentSession: ObservableObject {
         if let anchor, anchor != readerPosition.anchor { readerPosition.anchor = anchor }
     }
 
+    /// You touched, highlighted or wrote beside a word: Bracket Notes goes to its
+    /// sentence (while it's open).
+    func readerTouched(_ anchor: TextAnchor) {
+        guard bracket.isShowing else { return }
+        readerPosition.touched = .init(anchor: anchor, count: (readerPosition.touched?.count ?? 0) + 1)
+    }
+
     // MARK: - Citations
 
     /// Shows the sheet where the book's details (author, title, publisher…) are kept.

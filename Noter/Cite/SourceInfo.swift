@@ -5,6 +5,14 @@ import PDFKit
 @MainActor
 final class ReaderPosition: ObservableObject {
     @Published var anchor: TextAnchor?
+    /// A word you just touched, highlighted or wrote beside (`count` makes touching the
+    /// same word twice count twice).
+    @Published var touched: Touched?
+
+    struct Touched: Equatable {
+        var anchor: TextAnchor
+        var count: Int
+    }
 }
 
 enum CitationStyle: String, CaseIterable, Identifiable {

@@ -191,6 +191,11 @@ struct BracketNotesView: View {
             // the book and they follow, line by line. (Scrolling the notes themselves
             // leaves the book where it is, until you scroll the book again.)
             .onChange(of: position.anchor) { _, _ in follow(proxy, animated: true) }
+            // Touching, highlighting or writing beside a sentence in the Text view
+            // brings its notes to the middle of the panel.
+            .onChange(of: position.touched) { _, t in
+                if let t { follow(proxy, animated: true, to: t.anchor) }
+            }
             .onChange(of: page) { _, _ in follow(proxy, animated: true) }
             .onChange(of: scopeRaw) { _, _ in follow(proxy, animated: false) }
         }
@@ -246,10 +251,10 @@ struct BracketNotesView: View {
 
     /// Scrolls the notes to the line for the sentence at the top of the reader (the
     /// page's notes, if that sentence can't be placed).
-    private func follow(_ proxy: ScrollViewProxy, animated: Bool) {
+    private func follow(_ proxy: ScrollViewProxy, animated: Bool, to touched: TextAnchor? = nil) {
         var page = session.currentPage
         var line: Int?
-        if let anchor = position.anchor, let entry = notes.entry(page: anchor.slot.pdfIndex, scope: scope),
+        if let anchor = touched ?? position.anchor, let entry = notes.entry(page: anchor.slot.pdfIndex, scope: scope),
            !entry.text.isEmpty, let pages = session.logicalPages(anchor.slot.pdfIndex) {
             page = anchor.slot.pdfIndex
             let before = pages.prefix(anchor.slot.half).reduce(0) { $0 + $1.tokens.count }
@@ -257,11 +262,12 @@ struct BracketNotesView: View {
             let map = BracketAlign.lines(for: words, notes: entry.text, key: "\(page)-\(scopeRaw)")
             let index = before + anchor.token
             // The first words of a page: its heading line, so the page number shows.
-            if index > 8, index < map.count, map[index] > 0 { line = map[index] }
+            if touched != nil || index > 8, index >= 0, index < map.count, map[index] > 0 { line = map[index] }
         }
+        let place: UnitPoint = touched == nil ? .top : .center
         let go = {
             if let line {
-                proxy.scrollTo(Self.lineID(page, line), anchor: .top)
+                proxy.scrollTo(Self.lineID(page, line), anchor: place)
             } else {
                 proxy.scrollTo(page, anchor: .top)
             }
