@@ -88,7 +88,8 @@ final class OCRStore {
         guard worker == nil, !isComplete || !waiters.isEmpty || (!firstPassOnly && staleCount > 0) else { return }
         let id = docID
         let url = Storage.pdfURL(id)
-        worker = Task.detached(priority: .utility) { [weak self] in
+        // Books that aren't open are read at the lowest priority: never in the way.
+        worker = Task.detached(priority: firstPassOnly ? .background : .utility) { [weak self] in
             guard let pdf = CGPDFDocument(url as CFURL) else {
                 await self?.workerEnded()
                 return

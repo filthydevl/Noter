@@ -21,6 +21,10 @@ final class BackgroundOCR: ObservableObject {
     /// Books whose PDF couldn't be read: not retried until the app restarts.
     private var failed = Set<UUID>()
     private var lastSaved: [UUID: Int] = [:]
+    /// Held back for a few seconds after the app starts, so the library opens at once
+    /// (loading a big book's progress and reading pages competed with it).
+    private var launchHold = true
+    private var holdScheduled = false
 
     private init() {}
 
@@ -60,12 +64,22 @@ final class BackgroundOCR: ObservableObject {
             progress[id] = nil
         }
         for doc in docs where progress[doc.id] == nil { progress[doc.id] = doc.ocrPagesDone }
+        if launchHold {
+            guard !holdScheduled else { return }
+            holdScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                self?.launchHold = false
+                self?.schedule()
+            }
+            return
+        }
         schedule()
     }
 
     // MARK: Scheduling
 
     private func schedule() {
+        if launchHold && openInReader.isEmpty { return } // the app is still starting
         // A book is open: it has the iPad to itself.
         if !openInReader.isEmpty {
             for (id, store) in stores where !openInReader.contains(id) { store.stop() }
