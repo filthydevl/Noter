@@ -107,3 +107,18 @@ jobs:
             build.log
             smoke/
           if-no-files-found: ignore
+
+      # The Apple Intelligence code (FoundationModels) only exists in the iOS 26 SDK,
+      # which the Xcode used above doesn't have: compile it with the newest Xcode too.
+      - name: Build with newest Xcode (Apple Intelligence code)
+        if: always()
+        run: |
+          NEW=$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$NEW" ]; then echo "NOTER-XCODE26: no Xcode 26+ on this runner, skipped"; exit 0; fi
+          sudo xcode-select -s "$NEW"
+          xcodebuild -version
+          xcodebuild -project Noter.xcodeproj -target Noter -sdk iphonesimulator -configuration Debug \
+            SYMROOT=build26 OBJROOT=build26/obj CODE_SIGNING_ALLOWED=NO build > build26.log 2>&1 || true
+          grep -E "error:" build26.log | sort -u | head -100 || true
+          grep -E "\*\* BUILD (SUCCEEDED|FAILED) \*\*" build26.log || tail -40 build26.log
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build26.log

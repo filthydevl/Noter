@@ -17,7 +17,7 @@ final class BracketNotes: ObservableObject {
         /// What the notes were made from (text + highlights): changes mean redo.
         var key: String
         var text: String
-        /// "claude" or "rules".
+        /// "claude", "apple" (Apple Intelligence, on the iPad) or "rules".
         var engine: String
     }
 
@@ -25,6 +25,23 @@ final class BracketNotes: ObservableObject {
     @Published private(set) var working: Set<String> = []
     @Published private(set) var problem: String?
     @Published private(set) var hasKey = false
+    /// Use Apple Intelligence's on-device model when there's no Claude key (or no
+    /// internet), on iPads that have it.
+    @Published var useApple: Bool {
+        didSet { UserDefaults.standard.set(useApple, forKey: Self.appleKey) }
+    }
+    private static let appleKey = "noter.bracketApple"
+
+    var appleReady: Bool { useApple && BracketApple.isAvailable }
+    /// The best engine there is right now.
+    private var wanted: String { hasKey ? "claude" : (appleReady ? "apple" : "rules") }
+    private static func rank(_ engine: String) -> Int {
+        switch engine {
+        case "claude": 3
+        case "apple": 2
+        default: 1
+        }
+    }
 
     weak var session: DocumentSession?
     private let docID: UUID
@@ -35,6 +52,7 @@ final class BracketNotes: ObservableObject {
 
     init(docID: UUID) {
         self.docID = docID
+        useApple = UserDefaults.standard.object(forKey: Self.appleKey) as? Bool ?? true
         entries = Storage.load([String: Entry].self, from: url) ?? [:]
         apiKey = Keychain.string(BracketClient.keyAccount)
         hasKey = !(apiKey ?? "").isEmpty
@@ -66,11 +84,11 @@ final class BracketNotes: ObservableObject {
     func entry(page: Int, scope: Scope) -> Entry? {
         guard scope == .highlights else { return entries[Self.id(page, scope)] }
         let focus = focus(page: page)
-        if focus.isEmpty { return Entry(key: "", text: "", engine: hasKey ? "claude" : "rules") }
+        if focus.isEmpty { return Entry(key: "", text: "", engine: wanted) }
         let made = focus.compactMap { entries[Self.id($0)] }
         guard !made.isEmpty else { return nil }
-        return Entry(key: "", text: made.map(\.text).joined(separator: "\n\n"),
-                     engine: made.allSatisfy { $0.engine == "claude" } ? "claude" : "rules")
+        let weakest = made.map(\.engine).min { Self.rank($0) < Self.rank($1) } ?? "rules"
+        return Entry(key: "", text: made.map(\.text).joined(separator: "\n\n"), engine: weakest)
     }
 
     static func id(_ h: Highlight) -> String { "h-\(h.id.uuidString)" }
@@ -113,13 +131,14 @@ final class BracketNotes: ObservableObject {
         let text = Self.bodyText(s.logicalPages(page) ?? [])
         let focus = focus(page: page).map(\.text)
         let key = Self.hash(text)
-        let wanted = hasKey ? "claude" : "rules"
+        let wanted = self.wanted
         if !force, let e = entries[id] {
-            // To save API credits, a page Claude has written is never sent again by
-            // itself — not for new highlights (their lines are tinted on the iPad, and
-            // "Highlights only" sends just the new highlight) and not when the page's
-            // text is re-read. "Redo this page" sends it again.
-            if e.engine == "claude" { return }
+            // To save API credits and battery, a page a model has written is never made
+            // again by itself — not for new highlights (their lines are tinted on the
+            // iPad, and "Highlights only" does just the new highlight) and not when the
+            // page's text is re-read. Only a better engine (a Claude key added later)
+            // or "Redo this page" makes it again.
+            if e.engine != "rules", Self.rank(e.engine) >= Self.rank(wanted) { return }
             if e.key == key, e.engine == wanted { return }
         }
 
@@ -133,7 +152,21 @@ final class BracketNotes: ObservableObject {
         }
 
         guard hasKey, let apiKey else {
-            store(id, Entry(key: key, text: rules(text: text, focus: focus, scope: scope), engine: "rules"))
+            if appleReady, !BracketApple.shouldRest {
+                working.insert(id)
+                defer { working.remove(id) }
+                if let notes = try? await BracketApple.transpose(text), !Task.isCancelled {
+                    problem = nil
+                    store(id, Entry(key: key, text: notes, engine: "apple"))
+                }
+                return
+            }
+            if appleReady {
+                problem = "Low Power Mode is on or the iPad is warm, so Apple Intelligence is resting. Showing simpler notes for now."
+            }
+            if entries[id]?.engine ?? "rules" == "rules" {
+                store(id, Entry(key: key, text: rules(text: text, focus: focus, scope: scope), engine: "rules"))
+            }
             return
         }
 
@@ -170,14 +203,22 @@ final class BracketNotes: ObservableObject {
     /// "Highlights only": each highlight is transposed once, by itself, and kept —
     /// a new highlight sends only its own text, never the page again.
     private func makeHighlights(page: Int, id: String, force: Bool) async {
-        let wanted = hasKey ? "claude" : "rules"
+        let wanted = self.wanted
         for h in focus(page: page) {
             guard !Task.isCancelled else { return }
             let hid = Self.id(h)
             let key = Self.hash(h.text)
-            if !force, let e = entries[hid], e.key == key, e.engine == "claude" || e.engine == wanted { continue }
+            if !force, let e = entries[hid], e.key == key, Self.rank(e.engine) >= Self.rank(wanted) { continue }
             guard hasKey, let apiKey else {
-                store(hid, Entry(key: key, text: BracketRules.transpose(h.text), engine: "rules"))
+                if appleReady, !BracketApple.shouldRest {
+                    working.insert(id)
+                    let notes = try? await BracketApple.transpose(h.text)
+                    working.remove(id)
+                    guard !Task.isCancelled else { return }
+                    if let notes { store(hid, Entry(key: key, text: notes, engine: "apple")) }
+                } else if entries[hid]?.key != key || entries[hid]?.engine == nil {
+                    store(hid, Entry(key: key, text: BracketRules.transpose(h.text), engine: "rules"))
+                }
                 continue
             }
             working.insert(id)
