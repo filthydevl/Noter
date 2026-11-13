@@ -510,6 +510,8 @@ final class DocumentSession: ObservableObject {
     /// somewhere that isn't highlighted or leave it alone for a while.
     @Published private(set) var addingTo: UUID?
     private var addingTask: Task<Void, Never>?
+    /// Lines added to the picked highlight since you tapped it.
+    private var addedToPicked = 0
 
     /// You tapped a word. On a highlight: it's picked, and the next line you highlight
     /// joins it (a stroke inside it is still a highlight of its own). Elsewhere: nothing
@@ -526,6 +528,7 @@ final class DocumentSession: ObservableObject {
             return
         }
         addingTo = picked.0.id
+        addedToPicked = 0
         showToast("Highlight a line to add it to this highlight")
         if viewMode == .transcript {
             transcriptController?.flash(slot: lp.slot, range: lp.textRange(for: picked.1))
@@ -558,6 +561,13 @@ final class DocumentSession: ObservableObject {
         }
         keepAdding()
         guard let r = lp.range(of: highlights[index]) else { return false }
+        // After the first line, only lines close by keep joining (about three lines
+        // away at most): a stroke further off is a new highlight, and un-picks this one.
+        let gap = max(range.lowerBound - r.upperBound, r.lowerBound - range.upperBound)
+        if addedToPicked > 0, gap > 45 {
+            addingTo = nil
+            return false
+        }
         guard !(range.lowerBound >= r.lowerBound && range.upperBound <= r.upperBound) else { return false }
         let union = min(r.lowerBound, range.lowerBound)...max(r.upperBound, range.upperBound)
         pushUndo()
@@ -565,6 +575,7 @@ final class DocumentSession: ObservableObject {
         highlights[index].rects = lp.lineRects(for: union)
         highlights[index].text = lp.string(for: union)
         highlightsChanged()
+        addedToPicked += 1
         return true
     }
 
