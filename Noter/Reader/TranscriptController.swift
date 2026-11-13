@@ -58,7 +58,8 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.alwaysBounceVertical = true
-        collectionView.contentInset = UIEdgeInsets(top: 48, left: 0, bottom: 120, right: 0)
+        // Clear of the top bar (it floats over the page; there is no navigation bar).
+        collectionView.contentInset = UIEdgeInsets(top: 48 + 52, left: 0, bottom: 120, right: 0)
         collectionView.register(TranscriptCell.self, forCellWithReuseIdentifier: TranscriptCell.reuseID)
         collectionView.panGestureRecognizer.allowedTouchTypes = fingerTouchTypes
         collectionView.pinchGestureRecognizer?.allowedTouchTypes = fingerTouchTypes

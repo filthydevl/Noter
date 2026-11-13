@@ -132,12 +132,15 @@ enum PageLayout {
             sortReadingOrder(&rows)
             let found = detectFolio(rows)
             var body = rows.enumerated().filter { !found.rows.contains($0.offset) }.map(\.element)
-            // Running headers / footers and footnotes aren't part of the text you read.
+            // Running headers / footers aren't part of the text you read; footnotes go
+            // at the end, marked, so read-aloud can leave them out.
             let furniture = removePageFurniture(body)
             body = furniture.rows
             let headings = detectHeadings(body)
-            return assemble(body, pdfIndex: pdfIndex, half: half, halfCount: halves, region: region,
-                            folio: found.folio, headings: headings, runningHeader: found.header ?? furniture.header)
+            return assemble(body + furniture.notes, pdfIndex: pdfIndex, half: half, halfCount: halves,
+                            region: region, folio: found.folio, headings: headings,
+                            runningHeader: found.header ?? furniture.header,
+                            notesFrom: furniture.notes.isEmpty ? nil : body.count)
         }
     }
 
@@ -263,11 +266,11 @@ enum PageLayout {
 
     // MARK: Page furniture
 
-    /// Drops the running header / footer and the footnotes block at the bottom of the
-    /// page, so the transcript (and read-aloud) is just the text. Returns the running
-    /// header's text too, to show next to the page number instead.
-    static func removePageFurniture(_ rows: [Row]) -> (rows: [Row], header: String?) {
-        guard rows.count >= 3 else { return (rows, nil) }
+    /// Drops the running header / footer, so the transcript (and read-aloud) is just the
+    /// text, and sets the footnotes block at the bottom of the page apart (`notes`).
+    /// Returns the running header's text too, to show next to the page number instead.
+    static func removePageFurniture(_ rows: [Row]) -> (rows: [Row], header: String?, notes: [Row]) {
+        guard rows.count >= 3 else { return (rows, nil, []) }
         let heights = rows.map(\.rect.height).sorted()
         let medianH = max(heights[heights.count / 2], 0.002)
         let byY = rows.indices.sorted { rows[$0].rect.midY < rows[$1].rect.midY }
@@ -347,42 +350,61 @@ enum PageLayout {
             if Self.matches(Self.strongExtraneous, rowText(i)) { drop.insert(i) }
         }
 
-        // Footnotes: a block of lines at the bottom of the page that is
-        // * set in smaller type, set apart by a gap or starting with a note marker, or
-        // * starts with a note marker ("1", "12.", "*", "†"…) after a clear gap, even when
-        //   it's barely smaller than the text.
+        // Footnotes (Chicago-style notes and the like): a block of lines at the bottom
+        // of the page, each note starting with its number ("1", "12.", "¹", "*", "†"…),
+        // that is
+        // * set in smaller type, set apart by a gap or starting with a note number
+        //   (a line the OCR measured a touch taller doesn't break the block), or
+        // * same-size but after a clear gap, or two or more numbered notes in a row in
+        //   slightly smaller type.
         let kept = byY.filter { !drop.contains($0) }
+        var notes = Set<Int>()
+        func startsWithMarker(_ i: Int) -> Bool {
+            Self.startsWithNoteMarker(rows[i].tokens.first?.text ?? "")
+        }
         var block: [Int] = []
         var k = kept.count - 1
-        while k > 0, rows[kept[k]].rect.midY > 0.5, rowH(kept[k]) < bodyH * 0.92 {
+        while k > 0, rows[kept[k]].rect.midY > 0.5 {
+            let h = rowH(kept[k])
+            let small = h < bodyH * 0.92
+            let numberedNote = !block.isEmpty && startsWithMarker(kept[k]) && h < bodyH * 1.0
+            guard small || numberedNote else { break }
             block.append(kept[k])
             k -= 1
-        }
-        func startsWithMarker(_ i: Int) -> Bool {
-            guard let first = rows[i].tokens.first?.text else { return false }
-            if first.range(of: #"^(\d{1,3}|[*†‡§¶]+)[.)]?$"#, options: .regularExpression) != nil { return true }
-            // "1See" — a marker glued to the note's first word.
-            return first.range(of: #"^\d{1,3}[A-Z][a-z]"#, options: .regularExpression) != nil
         }
         func gapBefore(_ i: Int, below j: Int) -> CGFloat { rows[i].rect.minY - rows[j].rect.maxY }
         if let first = block.last, k >= 0, block.count < rows.count / 2 + 1 {
             let gap = gapBefore(first, below: kept[k])
-            if gap > medianH * 0.8 || gap > typicalGap * 1.4 || startsWithMarker(first) { drop.formUnion(block) }
+            if gap > medianH * 0.8 || gap > typicalGap * 1.4 || startsWithMarker(first) { notes.formUnion(block) }
         }
-        // Same-size footnotes after a clear break.
-        if block.isEmpty || !drop.contains(block[0]) {
+        // Same-size footnotes after a clear break, or a run of numbered notes.
+        if notes.isEmpty {
             let lower = kept.filter { rows[$0].rect.midY > 0.55 }
             for (n, i) in lower.enumerated() {
                 guard let pos = kept.firstIndex(of: i), pos > 0 else { continue }
                 let below = Array(lower[n...])
-                guard below.count <= max(rows.count * 2 / 5, 1), startsWithMarker(i),
-                      gapBefore(i, below: kept[pos - 1]) > typicalGap * 1.8,
-                      below.allSatisfy({ rowH($0) <= bodyH * 1.02 }) else { continue }
-                drop.formUnion(below)
+                guard below.count <= max(rows.count * 2 / 5, 1), startsWithMarker(i) else { continue }
+                let numbered = below.filter(startsWithMarker).count
+                let apart = gapBefore(i, below: kept[pos - 1]) > typicalGap * 1.8
+                    && below.allSatisfy({ rowH($0) <= bodyH * 1.02 })
+                let run = numbered >= 2 && below.allSatisfy({ rowH($0) <= bodyH * 0.97 })
+                guard apart || run else { continue }
+                notes.formUnion(below)
                 break
             }
         }
-        return (rows.enumerated().filter { !drop.contains($0.offset) }.map(\.element), header)
+        let body = rows.enumerated().filter { !drop.contains($0.offset) && !notes.contains($0.offset) }.map(\.element)
+        let noteRows = rows.enumerated().filter { notes.contains($0.offset) }.map(\.element)
+        return (body, header, noteRows)
+    }
+
+    /// A footnote starts with its number: "1", "12.", "3)", "¹", "*", "†" — on its own
+    /// or glued to the first word ("1See", "¹See").
+    static func startsWithNoteMarker(_ first: String) -> Bool {
+        if first.range(of: #"^(\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,3}|[*†‡§¶]+)[.)]?$"#, options: .regularExpression) != nil {
+            return true
+        }
+        return first.range(of: #"^(\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,3})[.)]?[A-Z“"][a-z]"#, options: .regularExpression) != nil
     }
 
     // MARK: Headings
@@ -613,11 +635,12 @@ enum PageLayout {
 
     static func assemble(_ rows: [Row], pdfIndex: Int, half: Int, halfCount: Int,
                          region: CGRect, folio: Folio?, headings: Set<Int> = [],
-                         runningHeader: String? = nil) -> LogicalPage {
+                         runningHeader: String? = nil, notesFrom: Int? = nil) -> LogicalPage {
         var tokens: [LayoutToken] = []
         var lines: [LayoutLine] = []
         var ranges: [NSRange] = []
         var headingRanges: [NSRange] = []
+        var notesStart: Int?
         let text = NSMutableString()
 
         let heights = rows.map(\.rect.height).sorted()
@@ -649,10 +672,17 @@ enum PageLayout {
                 }
                 // Headings are paragraphs of their own.
                 if headings.contains(ri) || headings.contains(ri - 1) { sep = "\n" }
+                // The footnotes start a new paragraph, and so does each numbered note.
+                if let notesFrom, ri >= notesFrom,
+                   ri == notesFrom || Self.startsWithNoteMarker(row.tokens.first?.text ?? "") {
+                    sep = "\n"
+                }
                 if joinWithoutSpace && sep != "\n" { sep = "" }
                 text.append(sep)
             }
             joinWithoutSpace = false
+            if let notesFrom, ri == notesFrom { notesStart = text.length }
+            let isNote = notesFrom.map { ri >= $0 } ?? false
 
             let lineStart = tokens.count
             let rowStart = text.length
@@ -663,12 +693,14 @@ enum PageLayout {
                     : (ri > 0 && !headings.contains(ri - 1) ? rows[ri - 1].tokens.last?.text : nil)
                 let nextText = ti + 1 < row.tokens.count ? row.tokens[ti + 1].text
                     : (ri + 1 < rows.count ? rows[ri + 1].tokens.first?.text : nil)
-                var display = SymbolCheck.clean(
+                // A footnote keeps the number in front of it.
+                var display = SymbolCheck.clean(isNote && ti == 0 ? tok.text :
                     noteMarkerStripped(tok, prev: prevText, next: nextText, rowMedianHeight: rowMedianH,
                                        rowMidY: row.midY(atX: tok.rect.midX)))
                 if needsSpace && !display.isEmpty { text.append(" ") }
                 // "contin-" + "uing" → "continuing"
                 if ti == row.tokens.count - 1, ri + 1 < rows.count, display.count > 2, !headings.contains(ri),
+                   ri + 1 != notesFrom,
                    display.hasSuffix("-") || display.hasSuffix("¬"),
                    display.dropLast().last?.isLetter == true,
                    let next = rows[ri + 1].tokens.first?.text.first, next.isLowercase {
@@ -695,7 +727,8 @@ enum PageLayout {
         return LogicalPage(
             pdfIndex: pdfIndex, half: half, halfCount: halfCount, region: region,
             tokens: tokens, lines: lines, text: text as String, tokenRanges: ranges,
-            folio: folio, indexByKey: index, headingRanges: headingRanges, runningHeader: runningHeader)
+            folio: folio, indexByKey: index, headingRanges: headingRanges, runningHeader: runningHeader,
+            footnoteRanges: notesStart.map { [NSRange(location: $0, length: text.length - $0)] } ?? [])
     }
 
     /// Footnote reference numbers don't belong in the text (or in what's read aloud):

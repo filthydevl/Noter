@@ -54,6 +54,7 @@ enum SidePanel {
 
 struct ReaderView: View {
     @ObservedObject var session: DocumentSession
+    @Environment(\.dismiss) private var dismiss
     @State private var panel: SidePanel?
     @State private var savedPDF: ShareItem?
     @State private var viewWidth: CGFloat = 0
@@ -85,6 +86,9 @@ struct ReaderView: View {
         .transaction { $0.animation = nil }
         // …the motion is a picture of the page gliding instead (see `glidePage`).
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        // Our own top bar (no system navigation bar): it covers only the page, so an
+        // open list and the tool strip go right up to the top of the screen.
+        .overlay(alignment: .top) { topBar }
         .overlay(alignment: .trailing) {
             if docked {
                 // Beside an open panel: one flat strip from the top of the screen to the
@@ -111,7 +115,7 @@ struct ReaderView: View {
                     rail(scrolls: false)
                     rail(scrolls: true)
                 }
-                .padding(.top, 62)
+                .padding(.top, Self.topBarHeight + 46)
                 .padding(.bottom, (scribbleBar ? 76 : 10) + sheetRoom)
                 .padding(.trailing, 4)
                 .transition(.opacity)
@@ -122,7 +126,7 @@ struct ReaderView: View {
         .overlay(alignment: .topTrailing) {
             if !docked {
                 SpeechControlView(speech: session.speech) { session.showReadingPosition() }
-                    .padding(.top, 10)
+                    .padding(.top, Self.topBarHeight - 6)
                     .padding(.trailing, 4)
                     .transition(.opacity)
             }
@@ -141,7 +145,7 @@ struct ReaderView: View {
             if session.pageCount > 1 {
                 // Up the very left edge of the screen.
                 PageScrubber(session: session, outline: session.outline)
-                    .padding(.top, 8)
+                    .padding(.top, Self.topBarHeight)
                     .padding(.bottom, (scribbleBar ? 76 : 16) + sheetRoom)
                     .transition(.opacity)
             }
@@ -186,7 +190,7 @@ struct ReaderView: View {
                 .background(.regularMaterial, in: Capsule())
                 .overlay(Capsule().strokeBorder(HighlightColor.maroon.color.opacity(0.5)))
                 .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
-                .padding(.top, 10)
+                .padding(.top, Self.topBarHeight + 4)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -279,9 +283,116 @@ struct ReaderView: View {
         // The keyboard never shoves the reader around: the panels make room themselves.
         .ignoresSafeArea(.keyboard)
         .navigationTitle(session.info.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbar }
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    /// Room the top bar takes below the status bar.
+    static let topBarHeight: CGFloat = 58
+
+    /// Back on the left; PDF / Text with the time left under it in the middle of the
+    /// page; reading progress, Save PDF and More on the right of the page.
+    private var topBar: some View {
+        ZStack(alignment: .top) {
+            VStack(spacing: 4) {
+                Picker("View", selection: $session.viewMode) {
+                    Text(ViewMode.pdf.title).tag(ViewMode.pdf)
+                    Text(ViewMode.transcript.title).tag(ViewMode.transcript)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 200)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                ReadingTimeLabel(session: session, speech: session.speech, outline: session.outline)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 40, height: 40)
+                        .background(.regularMaterial, in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+                Spacer(minLength: 0)
+                topBarTrailing
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 2)
+        .padding(.trailing, docked ? Self.besidePanelInset : 0)
+    }
+
+    @ViewBuilder
+    private var topBarTrailing: some View {
+        HStack(spacing: 10) {
+            if session.ocrDone < session.pageCount {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Reading \(session.ocrDone)/\(session.pageCount)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Recognizing text, \(session.ocrDone) of \(session.pageCount) pages")
+            } else if session.ocrUpgradeLeft > 0 {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Refining text · \(session.ocrUpgradeLeft) left")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Improving recognized text, \(session.ocrUpgradeLeft) pages left")
+            }
+
+            Menu {
+                Button {
+                    session.savePDF(baked: true) { savedPDF = ShareItem(url: $0) }
+                } label: {
+                    Label("Save PDF — highlights + scribbles", systemImage: "square.and.arrow.down")
+                }
+                Button {
+                    session.savePDF(baked: false) { savedPDF = ShareItem(url: $0) }
+                } label: {
+                    Label("Editable highlights only", systemImage: "highlighter")
+                }
+                Text("Save PDF prints your highlights and scribbles onto the pages. “Editable” keeps highlights as PDF highlights other apps can change, without scribbles. Notes become sticky notes.")
+            } label: {
+                Group {
+                    if session.isSavingPDF {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 40, height: 40)
+                .background(.regularMaterial, in: Circle())
+            }
+            .disabled(session.isSavingPDF)
+            .accessibilityLabel("Save PDF")
+
+            Menu {
+                Picker("Page layout", selection: layoutBinding) {
+                    ForEach(LayoutMode.allCases) { Text($0.title).tag($0) }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 40, height: 40)
+                    .background(.regularMaterial, in: Circle())
+            }
+            .accessibilityLabel("More options")
+        }
+        .foregroundStyle(Color.primary)
     }
 
     @ViewBuilder
@@ -388,72 +499,6 @@ struct ReaderView: View {
 
     private var layoutBinding: Binding<LayoutMode> {
         Binding(get: { session.info.layoutMode }, set: { session.setLayoutMode($0) })
-    }
-
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        // PDF / Text in the middle.
-        ToolbarItem(placement: .principal) {
-            Picker("View", selection: $session.viewMode) {
-                Text(ViewMode.pdf.title).tag(ViewMode.pdf)
-                Text(ViewMode.transcript.title).tag(ViewMode.transcript)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 200)
-        }
-
-        // Save PDF and More on the right (an open list starts below them).
-
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            if session.ocrDone < session.pageCount {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("Reading \(session.ocrDone)/\(session.pageCount)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityLabel("Recognizing text, \(session.ocrDone) of \(session.pageCount) pages")
-            } else if session.ocrUpgradeLeft > 0 {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("Refining text · \(session.ocrUpgradeLeft) left")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityLabel("Improving recognized text, \(session.ocrUpgradeLeft) pages left")
-            }
-
-            Menu {
-                Button {
-                    session.savePDF(baked: true) { savedPDF = ShareItem(url: $0) }
-                } label: {
-                    Label("Save PDF — highlights + scribbles", systemImage: "square.and.arrow.down")
-                }
-                Button {
-                    session.savePDF(baked: false) { savedPDF = ShareItem(url: $0) }
-                } label: {
-                    Label("Editable highlights only", systemImage: "highlighter")
-                }
-                Text("Save PDF prints your highlights and scribbles onto the pages. “Editable” keeps highlights as PDF highlights other apps can change, without scribbles. Notes become sticky notes.")
-            } label: {
-                if session.isSavingPDF {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "square.and.arrow.up")
-                }
-            }
-            .disabled(session.isSavingPDF)
-            .accessibilityLabel("Save PDF")
-
-            Menu {
-                Picker("Page layout", selection: layoutBinding) {
-                    ForEach(LayoutMode.allCases) { Text($0.title).tag($0) }
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .accessibilityLabel("More options")
-        }
     }
 }
 

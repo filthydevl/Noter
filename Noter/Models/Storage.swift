@@ -38,6 +38,7 @@ enum Storage {
     static func ocrFolder(_ id: UUID) -> URL { folder(id).appendingPathComponent("ocr", isDirectory: true) }
     static func ocrIndexURL(_ id: UUID) -> URL { ocrFolder(id).appendingPathComponent("index.json") }
     static func ocrVersionsURL(_ id: UUID) -> URL { ocrFolder(id).appendingPathComponent("versions.json") }
+    static func ocrWordsURL(_ id: UUID) -> URL { ocrFolder(id).appendingPathComponent("words.json") }
     static func ocrPageURL(_ id: UUID, _ page: Int) -> URL { ocrFolder(id).appendingPathComponent("p\(page).json") }
 
     static func exportURL(for info: DocumentInfo) -> URL {

@@ -54,6 +54,9 @@ struct SpeechControlView: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    Toggle(isOn: $speech.autoSpeedUp) {
+                        Label("Speed up every \(SpeechController.autoSpeedWords) words", systemImage: "hare")
+                    }
                 }
 
                 // Voice: which kind, then which one.
@@ -160,7 +163,7 @@ struct SpeechControlView: View {
     }
 
     static func speedLabel(_ s: Double) -> String {
-        let text = s == s.rounded() ? String(format: "%.0f", s) : String(format: "%g", s)
+        let text = s == s.rounded() ? String(format: "%.0f", s) : String(format: "%.1f", s)
         return "\(text)×"
     }
 }

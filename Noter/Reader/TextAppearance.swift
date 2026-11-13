@@ -39,6 +39,22 @@ enum ReaderTheme: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Titles, headings and sub-headings: a color that stands out from the text and
+    /// shows clearly on this page color (also used for the page slider's labels).
+    var heading: UIColor {
+        switch self {
+        case .system:
+            UIColor { $0.userInterfaceStyle == .dark
+                ? UIColor(red: 0.55, green: 0.76, blue: 1.0, alpha: 1)
+                : UIColor(red: 0.10, green: 0.32, blue: 0.68, alpha: 1) }
+        case .light: UIColor(red: 0.10, green: 0.32, blue: 0.68, alpha: 1)
+        case .sepia: UIColor(red: 0.62, green: 0.25, blue: 0.08, alpha: 1)
+        case .gray: UIColor(red: 1.0, green: 0.82, blue: 0.48, alpha: 1)
+        case .dark: UIColor(red: 0.55, green: 0.76, blue: 1.0, alpha: 1)
+        case .black: UIColor(red: 0.62, green: 0.80, blue: 1.0, alpha: 1)
+        }
+    }
+
     /// Page labels, dimmed (skipped) text.
     var secondary: UIColor {
         switch self {
@@ -160,8 +176,17 @@ struct TextAppearance: Codable, Equatable {
         paragraph.lineSpacing = size * 0.15
         paragraph.paragraphSpacingBefore = size * 0.6
         paragraph.paragraphSpacing = size * 0.55
-        return [.font: font.font(size: size * 1.3, bold: true), .foregroundColor: theme.text,
+        return [.font: font.font(size: size * 1.3, bold: true), .foregroundColor: theme.heading,
                 .paragraphStyle: paragraph]
+    }
+
+    /// Footnotes: smaller type, like at the foot of a printed page.
+    func footnoteAttributes(size: CGFloat) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = size * 0.78 * lineSpacing * 0.8
+        paragraph.paragraphSpacing = size * 0.35
+        paragraph.paragraphSpacingBefore = size * 0.2
+        return [.font: font.font(size: size * 0.78), .paragraphStyle: paragraph]
     }
 
     func noteAttributes(size: CGFloat) -> [NSAttributedString.Key: Any] {

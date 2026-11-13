@@ -18,6 +18,11 @@ final class OCRStore {
     private(set) var meta: [Int: PageMeta] = [:]
     /// Recognizer version per page (missing = 1, before versions were recorded).
     private var versions: [Int: Int] = [:]
+    /// Words on each recognized page (for the time-left estimate).
+    private(set) var words: [Int: Int] = [:]
+    /// Word counts of pages read before counts were kept have been filled in.
+    var onWordsCounted: (() -> Void)?
+    private var countingWords = false
     var onPageReady: ((Int) -> Void)?
     /// The worker stopped (done, cancelled, or the PDF couldn't be read).
     var onWorkerEnded: (() -> Void)?
@@ -47,6 +52,7 @@ final class OCRStore {
         try? FileManager.default.createDirectory(at: Storage.ocrFolder(docID), withIntermediateDirectories: true)
         meta = Storage.load([Int: PageMeta].self, from: Storage.ocrIndexURL(docID)) ?? [:]
         versions = Storage.load([Int: Int].self, from: Storage.ocrVersionsURL(docID)) ?? [:]
+        words = Storage.load([Int: Int].self, from: Storage.ocrWordsURL(docID)) ?? [:]
         recoverUnindexedPages()
     }
 
@@ -152,6 +158,7 @@ final class OCRStore {
     private func finish(_ index: Int, page: OCRPage, meta pageMeta: PageMeta) {
         meta[index] = pageMeta
         versions[index] = page.v ?? 1
+        words[index] = Self.wordCount(page)
         insert(index, page)
         scheduleIndexSave()
         if let conts = waiters.removeValue(forKey: index) {
@@ -175,6 +182,42 @@ final class OCRStore {
         saveTask = nil
         Storage.save(meta, to: Storage.ocrIndexURL(docID))
         Storage.save(versions, to: Storage.ocrVersionsURL(docID))
+        Storage.save(words, to: Storage.ocrWordsURL(docID))
+    }
+
+    // MARK: Word counts
+
+    nonisolated static func wordCount(_ page: OCRPage) -> Int {
+        page.lines.reduce(0) { $0 + $1.t.split(whereSeparator: { $0 == " " || $0 == "\n" }).count }
+    }
+
+    /// Fills in the word counts of pages recognized before counts were kept (each page
+    /// file read once, in the background).
+    func countMissingWords() {
+        let missing = meta.keys.filter { words[$0] == nil }
+        guard !missing.isEmpty, !countingWords else { return }
+        countingWords = true
+        let id = docID
+        Task.detached(priority: .utility) { [weak self] in
+            var found: [Int: Int] = [:]
+            for i in missing {
+                if Task.isCancelled { break }
+                autoreleasepool {
+                    if let p = Storage.load(OCRPage.self, from: Storage.ocrPageURL(id, i)) {
+                        found[i] = OCRStore.wordCount(p)
+                    }
+                }
+            }
+            await self?.addWords(found)
+        }
+    }
+
+    private func addWords(_ found: [Int: Int]) {
+        countingWords = false
+        guard !found.isEmpty else { return }
+        for (i, n) in found where words[i] == nil { words[i] = n }
+        Storage.save(words, to: Storage.ocrWordsURL(docID))
+        onWordsCounted?()
     }
 
     private func workerEnded(_ token: Int) {
@@ -204,11 +247,13 @@ final class OCRStore {
                   let page = Storage.load(OCRPage.self, from: Storage.ocrPageURL(docID, n)) else { continue }
             meta[n] = PageLayout.meta(for: page)
             versions[n] = page.v ?? 1
+            words[n] = Self.wordCount(page)
             changed = true
         }
         if changed {
             Storage.save(meta, to: Storage.ocrIndexURL(docID))
             Storage.save(versions, to: Storage.ocrVersionsURL(docID))
+            Storage.save(words, to: Storage.ocrWordsURL(docID))
         }
     }
 

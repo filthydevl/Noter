@@ -12,7 +12,7 @@ struct SkipOptions: OptionSet, Hashable {
     static let brackets = SkipOptions(rawValue: 1 << 4)
     static let links = SkipOptions(rawValue: 1 << 5)
 
-    static let defaults: SkipOptions = [.headersFooters, .citations, .links]
+    static let defaults: SkipOptions = [.headersFooters, .footnotes, .citations, .links]
 
     struct Item: Identifiable {
         let option: SkipOptions
@@ -20,9 +20,10 @@ struct SkipOptions: OptionSet, Hashable {
         var id: Int { option.rawValue }
     }
 
-    /// Headers, footers and footnotes aren't listed: they're always left out of the
-    /// transcript now (the bits stay for saved settings).
+    /// Headers and footers aren't listed: they're always left out of the transcript
+    /// (the bit stays for saved settings).
     static let items: [Item] = [
+        Item(option: .footnotes, title: "Footnotes"),
         Item(option: .citations, title: "Citations"),
         Item(option: .parentheses, title: "Parentheses ( )"),
         Item(option: .brackets, title: "Brackets [ ]"),
@@ -37,8 +38,9 @@ enum SkipFilter {
         guard !options.isEmpty, !page.tokens.isEmpty else { return [] }
         var ranges: [NSRange] = []
 
-        // Running headers / footers and footnotes are already left out of the page
-        // text by PageLayout, so only inline patterns remain here.
+        // Running headers / footers are already left out of the page text by
+        // PageLayout; the footnotes are marked at the end of it.
+        if options.contains(.footnotes) { ranges += page.footnoteRanges }
         var patterns: [NSRegularExpression] = []
         if options.contains(.parentheses), let parentheses { patterns.append(parentheses) }
         if options.contains(.brackets), let brackets { patterns.append(brackets) }

@@ -9,8 +9,26 @@ struct PageScrubber: View {
     @ObservedObject var outline: OutlineIndex
     @State private var dragging: Double?
     @State private var lastSent: Int?
+    @State private var lastJump = Date.distantPast
 
     private var count: Int { max(session.pageCount, 1) }
+
+    /// In the Text view the labels take its page colors (headings in the theme's heading
+    /// color), so they never blend into the page.
+    private var theme: ReaderTheme? { session.viewMode == .transcript ? session.textAppearance.theme : nil }
+    private var titleColor: Color { theme.map { Color($0.heading) } ?? .primary }
+    private var detailColor: Color { theme.map { Color($0.secondary) } ?? .secondary }
+
+    @ViewBuilder
+    private func labelBackground(border: Color?) -> some View {
+        if let theme {
+            Rectangle().fill(Color(theme.background).opacity(0.97))
+                .overlay(Rectangle().strokeBorder(Color(theme.heading).opacity(0.55)))
+        } else {
+            Rectangle().fill(.regularMaterial)
+                .overlay(Rectangle().strokeBorder(border ?? .clear))
+        }
+    }
 
     var body: some View {
         let page = dragging.map { Int($0.rounded()) } ?? session.currentPage
@@ -67,7 +85,7 @@ struct PageScrubber: View {
                 if dragging != nil {
                     ForEach(outline.entries) { e in
                         Rectangle()
-                            .fill(Color.primary.opacity(0.6))
+                            .fill(theme.map { Color($0.heading) } ?? Color.primary.opacity(0.6))
                             .frame(width: 10, height: 1.5)
                             .offset(y: y(e.position, h) - 1)
                     }
@@ -98,12 +116,21 @@ struct PageScrubber: View {
                         let p = f * Double(count - 1)
                         dragging = p
                         let i = Int(p.rounded())
-                        if i != lastSent {
+                        // At most ~12 jumps a second while you drag: each one draws a
+                        // page, and a fast drag through a long book kept the device so
+                        // busy the read-aloud voice smeared.
+                        if i != lastSent, Date().timeIntervalSince(lastJump) > 0.08 {
                             lastSent = i
+                            lastJump = Date()
                             session.goToPage(i)
                         }
                     }
                     .onEnded { _ in
+                        // Land exactly where you let go.
+                        if let d = dragging {
+                            let i = Int(d.rounded())
+                            if i != lastSent { session.goToPage(i) }
+                        }
                         dragging = nil
                         lastSent = nil
                     })
@@ -133,9 +160,9 @@ struct PageScrubber: View {
                 perPage[m.page] = n + 1
                 // The first color across the track; more colors on that page beside it.
                 let rect = n == 0
-                    ? CGRect(x: 0, y: y(Double(m.page), size.height) - 1, width: 10, height: 2)
-                    : CGRect(x: 11 + CGFloat(min(n - 1, 2)) * 3, y: y(Double(m.page), size.height) - 1,
-                             width: 2, height: 2)
+                    ? CGRect(x: 0, y: y(Double(m.page), size.height) - 2, width: 14, height: 4)
+                    : CGRect(x: 15 + CGFloat(min(n - 1, 2)) * 5, y: y(Double(m.page), size.height) - 2,
+                             width: 4, height: 4)
                 ctx.fill(Path(rect), with: .color(m.color))
             }
         }
@@ -157,13 +184,13 @@ struct PageScrubber: View {
         }
         return ForEach(shown) { e in
             Text(e.title)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.primary)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(titleColor)
                 .lineLimit(1)
                 .frame(maxWidth: 200, alignment: .leading)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(.thinMaterial, in: Rectangle())
+                .background { labelBackground(border: nil) }
                 .fixedSize()
                 .offset(x: 30, y: min(max(y(e.position, h) - 9, 0), max(h - 18, 0)))
                 .allowsHitTesting(false)
@@ -177,16 +204,16 @@ struct PageScrubber: View {
             if let part {
                 Text(part)
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(titleColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(longTitle(page))
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(detailColor)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(.regularMaterial, in: Rectangle())
-        .overlay(Rectangle().strokeBorder(Color.accentColor.opacity(0.5)))
+        .background { labelBackground(border: Color.accentColor.opacity(0.5)) }
         .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
         .frame(width: 320, alignment: .leading) // long headings wrap, never cut off
         .offset(x: outline.entries.isEmpty ? 30 : 240, y: min(max(y(Double(page), h) - 30, 0), max(h - 90, 0)))

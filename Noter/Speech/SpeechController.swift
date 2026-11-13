@@ -36,6 +36,13 @@ final class SpeechController: NSObject, ObservableObject {
             if usingSpeechify { speechify.setSpeed(speed) } else { restart() }
         }
     }
+    /// Speeds up by one step after every 300 words read.
+    @Published var autoSpeedUp: Bool {
+        didSet {
+            UserDefaults.standard.set(autoSpeedUp, forKey: Self.autoSpeedKey)
+            wordsSinceSpeedUp = 0
+        }
+    }
     @Published var voiceID: String {
         didSet {
             UserDefaults.standard.set(voiceID, forKey: Self.voiceKey)
@@ -81,8 +88,14 @@ final class SpeechController: NSObject, ObservableObject {
 
     weak var session: DocumentSession?
 
-    static let speeds: [Double] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+    /// 0.5× to 3.5× in steps of 0.1.
+    static let speeds: [Double] = (5...35).map { Double($0) / 10 }
+    static let speedStep = 0.1
+    static let autoSpeedWords = 300
     private static let speedKey = "noter.speechSpeed"
+    private static let autoSpeedKey = "noter.autoSpeedUp"
+    private static let footnotesOptionKey = "noter.footnotesOption"
+    private static let wpmKey = "noter.wordsPerMinuteAt1x"
     private static let voiceKey = "noter.voice"
     /// Set once you pick a voice yourself; until then Noter always uses the best one installed.
     private static let voiceChosenKey = "noter.voiceChosen"
@@ -125,9 +138,20 @@ final class SpeechController: NSObject, ObservableObject {
 
     override init() {
         let defaults = UserDefaults.standard
-        speed = defaults.object(forKey: Self.speedKey) as? Double ?? 1.0
+        let saved = defaults.object(forKey: Self.speedKey) as? Double ?? 1.0
+        speed = Self.snap(saved)
+        autoSpeedUp = defaults.bool(forKey: Self.autoSpeedKey)
+        let wpm = defaults.double(forKey: Self.wpmKey)
+        wordsPerMinuteAt1x = wpm > 60 && wpm < 400 ? wpm : 165
         voiceID = defaults.string(forKey: Self.voiceKey) ?? ""
-        skip = (defaults.object(forKey: Self.skipKey) as? Int).map(SkipOptions.init(rawValue:)) ?? .defaults
+        var skipping = (defaults.object(forKey: Self.skipKey) as? Int).map(SkipOptions.init(rawValue:)) ?? .defaults
+        // Footnotes used to be left out always: they stay skipped until you turn it off.
+        if !defaults.bool(forKey: Self.footnotesOptionKey) {
+            skipping.insert(.footnotes)
+            defaults.set(true, forKey: Self.footnotesOptionKey)
+            defaults.set(skipping.rawValue, forKey: Self.skipKey)
+        }
+        skip = skipping
         voiceEngine = defaults.string(forKey: Self.engineKey).flatMap(VoiceEngine.init(rawValue:)) ?? .speechify
         speechifyVoiceID = defaults.string(forKey: Self.speechifyVoiceKeyName) ?? ""
         super.init()
@@ -250,6 +274,67 @@ final class SpeechController: NSObject, ObservableObject {
     private var rate: Float {
         let r = AVSpeechUtteranceDefaultSpeechRate + 0.25 * Float(log2(max(speed, 0.25)))
         return min(max(r, AVSpeechUtteranceMinimumSpeechRate), AVSpeechUtteranceMaximumSpeechRate)
+    }
+
+    /// The nearest speed on the menu.
+    static func snap(_ s: Double) -> Double {
+        speeds.min { abs($0 - s) < abs($1 - s) } ?? 1.0
+    }
+
+    // MARK: Words read (auto speed-up, time left)
+
+    /// How fast the voice reads at 1×, measured while reading (starts at a typical 165).
+    private(set) var wordsPerMinuteAt1x: Double
+    private var wordsSinceSpeedUp = 0
+    private var measuredWords = 0
+    private var measureStart: Date?
+
+    /// The reading position moved from `old` to `new`: count the words passed (a jump —
+    /// you tapped somewhere else — doesn't count).
+    private func countWords(from old: SpeechPosition?, to new: SpeechPosition) {
+        guard isPlaying, let old else { return }
+        let passed: Int
+        if old.slot == new.slot {
+            passed = new.token - old.token
+        } else if nextSlot(after: old.slot) == new.slot {
+            let left = session?.logicalPage(old.slot).map { max($0.tokens.count - old.token, 0) } ?? 0
+            passed = left + new.token
+        } else {
+            return
+        }
+        guard passed > 0, passed < 60 else { return }
+        measure(passed)
+        guard autoSpeedUp else { return }
+        wordsSinceSpeedUp += passed
+        if wordsSinceSpeedUp >= Self.autoSpeedWords {
+            wordsSinceSpeedUp = 0
+            let next = Self.snap(speed + Self.speedStep)
+            if next > speed {
+                speed = next
+                session?.showToast("Speed \(SpeechControlView.speedLabel(next))")
+            }
+        }
+    }
+
+    /// Learns the voice's real pace (per 1×) from what it actually reads.
+    private func measure(_ passed: Int) {
+        let now = Date()
+        guard let start = measureStart, now.timeIntervalSince(start) < 30 else {
+            // First word, or after a pause / jump: start a new stretch.
+            measureStart = now
+            measuredWords = 0
+            return
+        }
+        measuredWords += passed
+        let minutes = now.timeIntervalSince(start) / 60
+        guard measuredWords >= 120, minutes > 0 else { return }
+        let wpm = Double(measuredWords) / minutes / max(speed, 0.1)
+        if wpm > 60, wpm < 400 {
+            wordsPerMinuteAt1x = wordsPerMinuteAt1x * 0.7 + wpm * 0.3
+            UserDefaults.standard.set(wordsPerMinuteAt1x, forKey: Self.wpmKey)
+        }
+        measureStart = now
+        measuredWords = 0
     }
 
     // MARK: Transport
@@ -384,6 +469,9 @@ final class SpeechController: NSObject, ObservableObject {
         // resuming jump back).
         if audio.category != .playback || audio.mode != .spokenAudio {
             try? audio.setCategory(.playback, mode: .spokenAudio, options: [])
+            // A roomier audio buffer: a busy moment (dragging the page slider renders
+            // pages fast) can't starve the voice into a smeared, glitchy sound.
+            try? audio.setPreferredIOBufferDuration(0.04)
         }
         try? audio.setActive(true)
     }
@@ -480,8 +568,10 @@ final class SpeechController: NSObject, ObservableObject {
               let token = lp.tokenIndex(atUTF16: offset) else { return }
         let p = SpeechPosition(pdfIndex: c.slot.pdfIndex, half: c.slot.half, token: token)
         guard p != position else { return }
+        let old = position
         position = p
         session?.speechMoved(p)
+        countWords(from: old, to: p)
     }
 
     fileprivate func didFinish(_ id: ObjectIdentifier) {
@@ -514,8 +604,10 @@ extension SpeechController {
               let token = lp.tokenIndex(atUTF16: textOffset) else { return }
         let p = SpeechPosition(pdfIndex: slot.pdfIndex, half: slot.half, token: token)
         guard p != position else { return }
+        let old = position
         position = p
         session?.speechMoved(p)
+        countWords(from: old, to: p)
     }
 
     func speechifyLoading(_ loading: Bool) {

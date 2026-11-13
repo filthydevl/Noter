@@ -33,6 +33,8 @@ struct LogicalPage {
     /// The book's running header on this page (not in `text`, so it isn't read aloud;
     /// shown next to the page number instead).
     let runningHeader: String?
+    /// The footnotes at the end of `text` (shown small; read-aloud can skip them).
+    var footnoteRanges: [NSRange] = []
 
     var slot: SlotKey { SlotKey(pdfIndex: pdfIndex, half: half) }
 

@@ -260,6 +260,11 @@ final class TranscriptCell: UICollectionViewCell {
             for r in page.headingRanges where NSMaxRange(r) <= body.length {
                 body.addAttributes(heading, range: r)
             }
+            // Footnotes, small, at the foot of the page.
+            let note = appearance.footnoteAttributes(size: fontSize)
+            for r in page.footnoteRanges where NSMaxRange(r) <= body.length {
+                body.addAttributes(note, range: r)
+            }
             // Text that read-aloud skips is dimmed.
             for r in skipped where NSMaxRange(r) <= body.length {
                 body.addAttribute(.foregroundColor, value: appearance.theme.secondary, range: r)
