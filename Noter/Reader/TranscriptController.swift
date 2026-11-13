@@ -116,6 +116,9 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // Squeezed to nothing for a moment while the iPad rotates: keep the last size
+        // (a zero-wide page lays the text out at a NaN size).
+        guard bounds.width >= 2, bounds.height >= 2, bounds.isFiniteRect else { return }
         collectionView.frame = bounds
         updatePageLayout()
         if !didInitialScroll, !initialScrollScheduled, bounds.height > 0, let s = session {

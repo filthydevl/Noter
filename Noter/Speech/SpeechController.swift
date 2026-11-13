@@ -254,24 +254,41 @@ final class SpeechController: NSObject, ObservableObject {
 
     // MARK: Transport
 
+    /// The word reading was paused on: resuming carries on from exactly there.
+    private var pausedAt: SpeechPosition?
+
     func togglePlay() {
         if !isActive {
             guard let s = session else { return }
             play(from: s.readingStartSlot(), token: 0)
         } else if isPlaying {
-            if usingSpeechify { speechify.pause() } else { synth.pauseSpeaking(at: .word) }
+            pausedAt = position
+            if usingSpeechify {
+                speechify.pause()
+            } else {
+                // Apple's own resume can jump back to the start of the sentence: stop
+                // instead, and start again from the paused word on ▶.
+                stopApple()
+            }
             isPlaying = false
         } else {
             activateAudio()
             if usingSpeechify {
-                do { try speechify.resume() } catch { restart() }
-            } else if synth.isPaused {
-                synth.continueSpeaking()
+                do { try speechify.resume() } catch { resumeFromPausedWord() }
             } else {
-                restart()
+                resumeFromPausedWord()
             }
             isPlaying = true
         }
+    }
+
+    private func resumeFromPausedWord() {
+        if let p = pausedAt ?? position {
+            play(from: p.slot, token: p.token)
+        } else {
+            restart()
+        }
+        pausedAt = nil
     }
 
     func play(from slot: SlotKey, token: Int) {
@@ -344,6 +361,7 @@ final class SpeechController: NSObject, ObservableObject {
     }
 
     func restart() {
+        pausedAt = nil
         if let p = position {
             play(from: p.slot, token: p.token)
         } else if let s = session {
@@ -362,7 +380,11 @@ final class SpeechController: NSObject, ObservableObject {
 
     private func activateAudio() {
         let audio = AVAudioSession.sharedInstance()
-        try? audio.setCategory(.playback, mode: .spokenAudio, options: [])
+        // Only when it changes: setting it again can reset the audio engine (which made
+        // resuming jump back).
+        if audio.category != .playback || audio.mode != .spokenAudio {
+            try? audio.setCategory(.playback, mode: .spokenAudio, options: [])
+        }
         try? audio.setActive(true)
     }
 
@@ -507,7 +529,8 @@ extension SpeechController {
     }
 
     func speechifyNeedsRestart() {
-        if isActive, usingSpeechify { restart() }
+        guard isActive, usingSpeechify else { return }
+        if let p = position { play(from: p.slot, token: p.token) } else { restart() }
     }
 
     /// Speechify couldn't be reached (or refused): keep reading with the built-in

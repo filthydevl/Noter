@@ -255,7 +255,7 @@ final class PDFPageOverlay: UIView {
             if key.hasSuffix("-c") {
                 // Circles: an outline the word sits inside.
                 let p = UIBezierPath()
-                for r in entry.rects { p.append(UIBezierPath(ovalIn: r)) }
+                for r in entry.rects where r.isFiniteRect { p.append(UIBezierPath(ovalIn: r)) }
                 let avgH = entry.rects.map(\.height).reduce(0, +) / CGFloat(max(entry.rects.count, 1))
                 l.path = p.cgPath
                 l.fillColor = nil

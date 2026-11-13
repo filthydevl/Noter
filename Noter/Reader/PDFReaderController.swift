@@ -122,6 +122,10 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // While the iPad rotates the page area can be squeezed to nothing for a moment:
+        // PDFKit then fits the page at a zoom of 0 / NaN and draws garbage (the flood of
+        // CoreGraphics "NaN" / "no current point" messages). Keep the last real size.
+        guard bounds.width >= 2, bounds.height >= 2, bounds.isFiniteRect else { return }
         pdfView.frame = bounds
         repairBrokenZoom()
         inkOverlay.frame = bounds

@@ -28,7 +28,10 @@ final class SpeechifyPlayer {
         let map: SpeechController.SpokenMap
         var audio: SpeechifyAudio?
         var task: Task<Void, Never>?
-        var start: AVAudioFramePosition = -1
+        /// Queued on the player; `start` is the player frame its first sample plays at
+        /// (negative when it was re-queued part-way through).
+        var scheduled = false
+        var start: AVAudioFramePosition = 0
         var frames: AVAudioFramePosition = 0
 
         init(slot: SlotKey, text: String, spokenStart: Int, map: SpeechController.SpokenMap) {
@@ -57,6 +60,11 @@ final class SpeechifyPlayer {
     private var filling = false
     private var scheduledEnd: AVAudioFramePosition = 0
     private var generation = 0
+    /// Bumped when the queued audio is re-queued after an audio reset: completions of
+    /// the dropped buffers are ignored.
+    private var epoch = 0
+    /// Where the player was at the last tick (to pick up from after an audio reset).
+    private var lastFrame: AVAudioFramePosition?
     private var timer: Timer?
     private var voice = ""
     private var model: String?
@@ -89,12 +97,15 @@ final class SpeechifyPlayer {
 
     func pause() {
         guard wired else { return }
+        lastFrame = currentFrame() ?? lastFrame
         node.pause()
         isPaused = true
     }
 
+    struct NeedsRestart: Error {}
+
     func resume() throws {
-        guard wired else { return }
+        guard wired, !items.isEmpty || filling else { throw NeedsRestart() }
         if !engine.isRunning { try engine.start() }
         node.play()
         isPaused = false
@@ -111,6 +122,8 @@ final class SpeechifyPlayer {
 
     func stop() {
         generation += 1
+        epoch += 1
+        lastFrame = nil
         for item in items { item.task?.cancel() }
         items.removeAll()
         pending = nil
@@ -138,14 +151,12 @@ final class SpeechifyPlayer {
         engine.connect(timePitch, to: engine.mainMixerNode, format: format)
         engine.prepare()
         wired = true
-        // Headphones plugged / unplugged etc. stop the engine: pick up where we were.
+        // Rotating the iPad (its speakers swap sides), headphones in or out etc. stop
+        // the engine and drop the queued audio: pick up from the same sample.
         NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, !self.items.isEmpty, !self.isPaused else { return }
-                self.host?.speechifyNeedsRestart()
-            }
+            Task { @MainActor [weak self] in self?.recoverAfterReset() }
         }
     }
 
@@ -236,22 +247,77 @@ final class SpeechifyPlayer {
 
     /// Queues every clip that's ready, in order, right after the previous one.
     private func scheduleReady() {
-        for item in items where item.start < 0 {
+        for item in items where !item.scheduled {
             guard let audio = item.audio else { break }
             let now = currentFrame() ?? scheduledEnd
             item.start = max(scheduledEnd, now)
             item.frames = AVAudioFramePosition(audio.buffer.frameLength)
+            item.scheduled = true
             scheduledEnd = item.start + item.frames
-            let gen = generation
-            node.scheduleBuffer(audio.buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.played(item, gen: gen) }
-            }
+            enqueue(audio.buffer, for: item)
         }
         updateLoading()
     }
 
-    private func played(_ item: Item, gen: Int) {
-        guard gen == generation else { return }
+    private func enqueue(_ buffer: AVAudioPCMBuffer, for item: Item) {
+        let gen = generation, ep = epoch
+        node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.played(item, gen: gen, epoch: ep) }
+        }
+    }
+
+    /// The audio engine was reset: start it again and re-queue the audio we already
+    /// have, from the sample that was playing, so the voice carries on seamlessly
+    /// (paused stays paused).
+    private func recoverAfterReset() {
+        guard wired, !items.isEmpty else { return }
+        let at = lastFrame ?? 0
+        let current = items.first { $0.scheduled && at < $0.start + $0.frames }
+        let offset = current.map { max(0, at - $0.start) } ?? 0
+        if let current {
+            // Clips that had already finished playing.
+            while let first = items.first, first !== current { items.removeFirst() }
+        }
+        epoch += 1
+        node.stop()
+        for item in items { item.scheduled = false }
+        scheduledEnd = 0
+        lastFrame = nil
+        do {
+            if !engine.isRunning { try engine.start() }
+        } catch {
+            if !isPaused { host?.speechifyNeedsRestart() }
+            return
+        }
+        if let item = current, let audio = item.audio, offset > 0,
+           let rest = Self.slice(audio.buffer, from: offset) {
+            item.start = -offset
+            item.frames = AVAudioFramePosition(audio.buffer.frameLength)
+            item.scheduled = true
+            scheduledEnd = item.frames - offset
+            enqueue(rest, for: item)
+        }
+        scheduleReady()
+        lastFrame = 0 // the re-queued audio starts at the player's frame 0
+        if !isPaused { node.play() }
+    }
+
+    /// The part of `buffer` from `frame` on.
+    private static func slice(_ buffer: AVAudioPCMBuffer, from frame: AVAudioFramePosition) -> AVAudioPCMBuffer? {
+        let total = AVAudioFramePosition(buffer.frameLength)
+        guard frame > 0, frame < total, let src = buffer.floatChannelData else { return nil }
+        let count = AVAudioFrameCount(total - frame)
+        guard let out = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: count),
+              let dst = out.floatChannelData else { return nil }
+        for ch in 0..<Int(buffer.format.channelCount) {
+            memcpy(dst[ch], src[ch] + Int(frame), Int(count) * MemoryLayout<Float>.size)
+        }
+        out.frameLength = count
+        return out
+    }
+
+    private func played(_ item: Item, gen: Int, epoch ep: Int) {
+        guard gen == generation, ep == epoch else { return }
         items.removeAll { $0 === item }
         fill()
         updateLoading()
@@ -286,8 +352,9 @@ final class SpeechifyPlayer {
     }
 
     private func tick() {
-        guard !isPaused, let now = currentFrame(),
-              let item = items.first(where: { $0.start >= 0 && now < $0.start + $0.frames }),
+        guard !isPaused, let now = currentFrame() else { return }
+        lastFrame = now
+        guard let item = items.first(where: { $0.scheduled && now < $0.start + $0.frames }),
               now >= item.start, let audio = item.audio else { return }
         let ms = Double(now - item.start) / format.sampleRate * 1000
         let local = audio.characterOffset(atMs: ms, length: item.length)

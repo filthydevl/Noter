@@ -363,7 +363,7 @@ final class TranscriptCell: UICollectionViewCell {
                     let ring = CAShapeLayer()
                     ring.frame = highlightLayer.bounds
                     let p = UIBezierPath()
-                    for r in rects { p.append(UIBezierPath(ovalIn: r.circledWordEllipse)) }
+                    for r in rects where r.isFiniteRect { p.append(UIBezierPath(ovalIn: r.circledWordEllipse)) }
                     ring.path = p.cgPath
                     ring.fillColor = nil
                     ring.strokeColor = h.color.withAlphaComponent(0.9).cgColor
@@ -419,7 +419,7 @@ final class TranscriptCell: UICollectionViewCell {
 
     private func path(_ rects: [CGRect], radius: CGFloat) -> CGPath {
         let path = UIBezierPath()
-        for r in rects { path.append(UIBezierPath(roundedRect: r, cornerRadius: radius)) }
+        for r in rects where r.isFiniteRect { path.append(UIBezierPath(roundedRect: r, cornerRadius: radius)) }
         return path.cgPath
     }
 
