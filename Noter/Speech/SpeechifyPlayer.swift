@@ -62,7 +62,7 @@ final class SpeechifyPlayer {
     private var model: String?
     private var key = ""
     /// Clips fetched ahead of the one playing.
-    private let lookahead = 3
+    private let lookahead = 2
 
     private(set) var isPaused = false
     var isRunning: Bool { !items.isEmpty || filling }

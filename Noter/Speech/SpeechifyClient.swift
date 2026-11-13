@@ -128,6 +128,28 @@ actor SpeechifyClient {
     private static let hosts = ["https://api.speechify.ai", "https://api.sws.speechify.com"]
     private var hostIndex = 0
 
+    // MARK: One request at a time
+    // Speechify limits how fast an account may ask; reading ahead used to fire several
+    // clips at once (and again on every tap of a word) and got "too many requests".
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var lastStart = Date.distantPast
+    /// The shortest gap between two requests.
+    private static let spacing: TimeInterval = 0.35
+
+    private func acquire() async {
+        while busy { await withCheckedContinuation { waiters.append($0) } }
+        busy = true
+        let wait = Self.spacing - Date().timeIntervalSince(lastStart)
+        if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+        lastStart = Date()
+    }
+
+    private func release() {
+        busy = false
+        if !waiters.isEmpty { waiters.removeFirst().resume() }
+    }
+
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
@@ -188,6 +210,10 @@ actor SpeechifyClient {
 
         var body: [String: Any] = ["input": text, "voice_id": voice, "audio_format": "mp3"]
         if let model { body["model"] = model }
+        // Not cached: wait our turn (one request at a time, spaced out).
+        await acquire()
+        defer { release() }
+        try Task.checkCancellation()
         var data: Data
         do {
             data = try await send("/v1/audio/speech", method: "POST",
@@ -233,10 +259,16 @@ actor SpeechifyClient {
             }
             do {
                 var (data, response) = try await session.data(for: request)
-                if let http = response as? HTTPURLResponse, http.statusCode == 429 || http.statusCode >= 500 {
-                    // One quick retry for rate limits / hiccups.
-                    try await Task.sleep(nanoseconds: 600_000_000)
+                // Rate limited or a server hiccup: wait as long as Speechify asks (or 1, 2,
+                // 4, 8 s) and try again, a few times, before giving up.
+                var retry = 0
+                while let http = response as? HTTPURLResponse, http.statusCode == 429 || http.statusCode >= 500,
+                      retry < 4 {
+                    let asked = (http.value(forHTTPHeaderField: "Retry-After")).flatMap(Double.init)
+                    let delay = min(asked ?? pow(2, Double(retry)), 10)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     (data, response) = try await session.data(for: request)
+                    retry += 1
                 }
                 hostIndex = index
                 guard let http = response as? HTTPURLResponse else { throw SpeechifyError.badResponse }
