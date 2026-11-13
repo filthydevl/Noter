@@ -397,11 +397,13 @@ enum PageLayout {
         // lines, so "smaller than the page's usual type" can't see them): from a line
         // that starts with a note number down, everything is set smaller than the
         // lines above it.
-        if notes.isEmpty, kept.count >= 4 {
-            func median(_ v: [CGFloat]) -> CGFloat {
-                let s = v.sorted()
-                return s.isEmpty ? 0 : s[s.count / 2]
-            }
+        func median(_ v: [CGFloat]) -> CGFloat {
+            let s = v.sorted()
+            return s.isEmpty ? 0 : s[s.count / 2]
+        }
+        // (Also when a later note was already found: an earlier, longer one above it
+        // still has to be picked up.)
+        if kept.count >= 4 {
             for pos in 1..<kept.count where startsWithMarker(kept[pos]) && rows[kept[pos]].rect.midY > 0.15 {
                 let above = kept[..<pos].map(rowH), below = kept[pos...].map(rowH)
                 let aboveH = median(above)
@@ -410,6 +412,20 @@ enum PageLayout {
                 guard Double(small) >= Double(below.count) * 0.85 else { continue }
                 notes.formUnion(kept[pos...])
                 break
+            }
+        }
+        // The notes found so far may start part-way down the block (the number of the
+        // first note misread, or only the last note recognized): take in the lines
+        // right above that are set in the notes' size, smaller than the text above them.
+        if let first = kept.firstIndex(where: { notes.contains($0) }) {
+            let noteH = median(kept.filter { notes.contains($0) }.map(rowH))
+            var pos = first
+            while pos > 1 {
+                let h = rowH(kept[pos - 1])
+                let aboveH = median(kept[..<(pos - 1)].map(rowH))
+                guard noteH > 0, h <= noteH * 1.06, aboveH > 0, h <= aboveH * 0.92 else { break }
+                notes.insert(kept[pos - 1])
+                pos -= 1
             }
         }
         let body = rows.enumerated().filter { !drop.contains($0.offset) && !notes.contains($0.offset) }.map(\.element)
