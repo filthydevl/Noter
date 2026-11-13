@@ -198,7 +198,10 @@ final class OCRStore {
         guard !missing.isEmpty, !countingWords else { return }
         countingWords = true
         let id = docID
-        Task.detached(priority: .utility) { [weak self] in
+        Task.detached(priority: .background) { [weak self] in
+            // After the book has opened: reading every page's file must not compete
+            // with drawing it.
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
             var found: [Int: Int] = [:]
             for i in missing {
                 if Task.isCancelled { break }

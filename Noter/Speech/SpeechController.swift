@@ -183,12 +183,16 @@ final class SpeechController: NSObject, ObservableObject {
     func refreshVoices() {
         guard !listingVoices else { return }
         listingVoices = true
-        Task.detached(priority: .utility) { [weak self] in
+        // On a plain background queue: listing voices blocks, which a Swift concurrency
+        // thread must not do (it held up other work at startup).
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             let all = AVSpeechSynthesisVoice.speechVoices()
             let region = AVSpeechSynthesisVoice.currentLanguageCode()
-            await MainActor.run { [weak self] in
-                self?.listingVoices = false
-                self?.applyVoices(all, region: region)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.listingVoices = false
+                    self?.applyVoices(all, region: region)
+                }
             }
         }
     }

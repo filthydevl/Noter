@@ -393,6 +393,25 @@ enum PageLayout {
                 break
             }
         }
+        // Long notes that fill most of the page (the text above them is only a few
+        // lines, so "smaller than the page's usual type" can't see them): from a line
+        // that starts with a note number down, everything is set smaller than the
+        // lines above it.
+        if notes.isEmpty, kept.count >= 4 {
+            func median(_ v: [CGFloat]) -> CGFloat {
+                let s = v.sorted()
+                return s.isEmpty ? 0 : s[s.count / 2]
+            }
+            for pos in 1..<kept.count where startsWithMarker(kept[pos]) && rows[kept[pos]].rect.midY > 0.15 {
+                let above = kept[..<pos].map(rowH), below = kept[pos...].map(rowH)
+                let aboveH = median(above)
+                guard aboveH > 0, below.count >= 2, median(below) <= aboveH * 0.9 else { continue }
+                let small = below.filter { $0 <= aboveH * 0.95 }.count
+                guard Double(small) >= Double(below.count) * 0.85 else { continue }
+                notes.formUnion(kept[pos...])
+                break
+            }
+        }
         let body = rows.enumerated().filter { !drop.contains($0.offset) && !notes.contains($0.offset) }.map(\.element)
         let noteRows = rows.enumerated().filter { notes.contains($0.offset) }.map(\.element)
         return (body, header, noteRows)
@@ -464,9 +483,14 @@ enum PageLayout {
             guard (1...(source ? 18 : 12)).contains(words),
                   let firstLetter = t.first(where: { $0.isLetter || $0.isNumber }),
                   firstLetter.isUppercase || firstLetter.isNumber else { continue }
+            // A long title wraps mid-phrase ("…Enlightenment," / "Reform, and the…"): a
+            // centred line in larger type, set apart above, is a title's first line
+            // even when it ends in a comma or colon.
+            let titleStart = isCentred(i) && rowH[i] >= bodyH * 1.1 && gapAbove(i) > typicalGap * 1.7
             // Reads like part of a sentence ("Document 3:" is fine).
-            if let last = t.last, ".,;:".contains(last), !t.hasSuffix("..."), !(source && last == ":") { continue }
-            if i + 1 < rows.count, gapBelow(i) < typicalGap * 1.6,
+            if let last = t.last, ".,;:".contains(last), !t.hasSuffix("..."), !(source && last == ":"),
+               !(titleStart && last != ".") { continue }
+            if i + 1 < rows.count, gapBelow(i) < typicalGap * 1.6, !titleStart,
                let next = text(i + 1).first(where: \.isLetter), next.isLowercase { continue }
             if i > 0, gapAbove(i) < typicalGap * 1.6, let prevLast = text(i - 1).last,
                prevLast.isLetter || prevLast == "," || prevLast == "-" { continue }
@@ -506,7 +530,7 @@ enum PageLayout {
                 switch style[i] {
                 case "big": continues = sameSize && rowH[j] >= bodyH * 1.35
                 case "caps": continues = isCaps(t)
-                case "centred": continues = sameSize && isCentred(j)
+                case "centred": continues = sameSize && (isCentred(j) || rowH[j] >= bodyH * 1.1)
                 case "source": continues = sameSize && (isCentred(j) || t.count < 70)
                     && !(t.last.map { ".".contains($0) } ?? false)
                 default: continues = false
