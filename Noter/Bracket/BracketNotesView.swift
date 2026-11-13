@@ -10,6 +10,9 @@ struct BracketNotesView: View {
     var onClose: () -> Void
     @AppStorage("noter.bracketScope") private var scopeRaw = BracketNotes.Scope.page.rawValue
     @State private var showSetup = false
+    /// Text size of the notes (pinch, or Larger / Smaller in the menu).
+    @AppStorage("noter.bracketZoom") private var zoom = 1.0
+    @GestureState private var pinch = 1.0
 
     private var scope: BracketNotes.Scope { BracketNotes.Scope(rawValue: scopeRaw) ?? .page }
 
@@ -46,6 +49,18 @@ struct BracketNotesView: View {
                         Label("Copy notes", systemImage: "doc.on.doc")
                     }
                     .disabled((entry?.text ?? "").isEmpty)
+                    ControlGroup {
+                        Button {
+                            zoom = Self.clampZoom(zoom / 1.15)
+                        } label: {
+                            Label("Smaller", systemImage: "textformat.size.smaller")
+                        }
+                        Button {
+                            zoom = Self.clampZoom(zoom * 1.15)
+                        } label: {
+                            Label("Larger", systemImage: "textformat.size.larger")
+                        }
+                    }
                     Button {
                         notes.refresh(page: page, scope: scope, force: true)
                     } label: {
@@ -99,46 +114,82 @@ struct BracketNotesView: View {
         .sheet(isPresented: $showSetup) { BracketSetupView(notes: notes) }
     }
 
+    /// The whole book's notes so far, one page after another: everything already
+    /// transposed stays, and the list keeps to the page you're on in the PDF / Text view.
     @ViewBuilder
     private func content(page: Int, entry: BracketNotes.Entry?, working: Bool) -> some View {
-        if let entry, !entry.text.isEmpty {
-            let focus = notes.focus(page: page)
-            ScrollView([.vertical, .horizontal]) {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(Self.lines(entry.text).enumerated()), id: \.offset) { _, line in
-                        if line.text.isEmpty {
-                            Color.clear.frame(height: 10)
-                        } else {
-                            let color = Self.focusColor(line.text, focus)
-                            Text(line.text)
-                                .font(.callout)
-                                .fontWeight(line.depth == 0 ? .semibold : .regular)
-                                .padding(.horizontal, color == nil ? 0 : 4)
-                                .background(color?.opacity(0.28) ?? .clear)
-                                .padding(.leading, CGFloat(line.depth) * 18)
-                                .fixedSize()
-                        }
+        let pages = notes.pages(scope: scope, including: page)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    ForEach(pages, id: \.self) { p in
+                        pageSection(p, current: p == page, working: working && p == page)
+                            .id(p)
                     }
                 }
-                .textSelection(.enabled)
                 .padding(.horizontal, 18)
-                .padding(.bottom, 24)
+                .padding(.bottom, 40)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .opacity(working ? 0.5 : 1)
-        } else if working || entry == nil {
-            ProgressView(notes.hasKey ? "Transposing with Claude…"
-                         : (notes.appleReady ? "Transposing on the iPad…" : "Transposing…"))
-                .frame(maxHeight: .infinity)
-        } else if scope == .highlights {
-            ContentUnavailableView("No highlights on this page", systemImage: "highlighter",
-                                   description: Text("Highlight what you want to focus on; its bracket notes appear here."))
-                .frame(maxHeight: .infinity)
-        } else {
-            ContentUnavailableView("No text on this page", systemImage: "doc")
-                .frame(maxHeight: .infinity)
+            // Pinch to make the notes bigger or smaller (kept for next time).
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .updating($pinch) { value, state, _ in state = Double(value.magnification) }
+                    .onEnded { value in zoom = Self.clampZoom(zoom * Double(value.magnification)) })
+            .onAppear { proxy.scrollTo(page, anchor: .top) }
+            .onChange(of: page) { _, p in
+                withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(p, anchor: .top) }
+            }
+            .onChange(of: scopeRaw) { _, _ in proxy.scrollTo(page, anchor: .top) }
         }
     }
+
+    @ViewBuilder
+    private func pageSection(_ p: Int, current: Bool, working: Bool) -> some View {
+        let entry = notes.entry(page: p, scope: scope)
+        let size = CGFloat(15 * Self.clampZoom(zoom * pinch))
+        VStack(alignment: .leading, spacing: 3 * size / 15) {
+            HStack(spacing: 6) {
+                Text(session.label(for: SlotKey(pdfIndex: p, half: 0)))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(current ? Color.accentColor : Color.secondary)
+                if working { ProgressView().controlSize(.mini) }
+                Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
+            }
+            .padding(.bottom, 4)
+            if let entry, !entry.text.isEmpty {
+                let focus = notes.focus(page: p)
+                ForEach(Array(Self.lines(entry.text).enumerated()), id: \.offset) { _, line in
+                    if line.text.isEmpty {
+                        Color.clear.frame(height: size * 0.6)
+                    } else {
+                        let color = Self.focusColor(line.text, focus)
+                        Text(line.text)
+                            .font(.system(size: size, weight: line.depth == 0 ? .semibold : .regular))
+                            .padding(.horizontal, color == nil ? 0 : 4)
+                            .background(color?.opacity(0.28) ?? .clear)
+                            .padding(.leading, CGFloat(line.depth) * size * 1.2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .opacity(working ? 0.5 : 1)
+            } else if working || (current && entry == nil) {
+                Text(notes.hasKey ? "Transposing with Claude…"
+                     : (notes.appleReady ? "Transposing on the iPad…" : "Transposing…"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if current {
+                Text(scope == .highlights
+                     ? "No highlights on this page. Highlight what you want to focus on; its bracket notes appear here."
+                     : "No text on this page.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    static func clampZoom(_ z: Double) -> Double { min(max(z, 0.6), 2.6) }
 
     private func subtitle(page: Int, entry: BracketNotes.Entry?) -> String {
         let label = session.label(for: SlotKey(pdfIndex: page, half: 0))

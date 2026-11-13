@@ -91,6 +91,23 @@ final class BracketNotes: ObservableObject {
         return Entry(key: "", text: made.map(\.text).joined(separator: "\n\n"), engine: weakest)
     }
 
+    /// Every page that has notes so far (plus the one you're on), in book order.
+    func pages(scope: Scope, including current: Int) -> [Int] {
+        var set: Set<Int> = [current]
+        switch scope {
+        case .page:
+            let suffix = "-\(Scope.page.rawValue)"
+            for (id, e) in entries where id.hasSuffix(suffix) && !e.text.isEmpty {
+                if let n = Int(id.dropLast(suffix.count)) { set.insert(n) }
+            }
+        case .highlights:
+            for h in session?.highlights ?? [] where entries[Self.id(h)] != nil && h.noteText == nil {
+                set.insert(h.page)
+            }
+        }
+        return set.sorted()
+    }
+
     static func id(_ h: Highlight) -> String { "h-\(h.id.uuidString)" }
     func isWorking(page: Int, scope: Scope) -> Bool { working.contains(Self.id(page, scope)) }
 
