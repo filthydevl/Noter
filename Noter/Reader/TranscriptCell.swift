@@ -86,21 +86,34 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
     var onInkChanged: (([PKStroke]) -> Void)?
     /// You scribbled beside this word (for Bracket Notes to go to its sentence).
     var onInkToken: ((Int) -> Void)?
-    private var inkLeading: NSLayoutConstraint!
-    private var inkTrailing: NSLayoutConstraint!
+    private var inkMargin: CGFloat = 0
 
     /// How far the scribble canvas reaches into the margins beside the text.
     func setInkMargin(_ margin: CGFloat) {
-        guard abs(inkLeading.constant + margin) > 0.5 else { return }
-        inkLeading.constant = -margin
-        inkTrailing.constant = margin
+        guard abs(inkMargin - margin) > 0.5 else { return }
+        inkMargin = margin
         setNeedsLayout()
         overlayWidth = -1 // the ink is placed again once the canvas has its new frame
     }
 
+    /// The canvas is on screen only where it's needed; it covers the whole cell and
+    /// the margins either side of the column of text.
+    private func placeInkCanvas() {
+        let wanted = page != nil && (inkCanvas.isUserInteractionEnabled || !inkSource.isEmpty)
+        guard wanted else {
+            if inkCanvas.superview != nil { inkCanvas.removeFromSuperview() }
+            return
+        }
+        if inkCanvas.superview == nil { contentView.insertSubview(inkCanvas, belowSubview: confirmButton) }
+        let frame = contentView.bounds.insetBy(dx: -inkMargin, dy: 0)
+        if inkCanvas.frame != frame { inkCanvas.frame = frame }
+    }
+
     /// The canvas reaches past the cell's edges, so touches there are the cell's too.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        if inkCanvas.isUserInteractionEnabled, inkCanvas.frame.contains(point) { return true }
+        if inkCanvas.superview != nil, inkCanvas.isUserInteractionEnabled, inkCanvas.frame.contains(point) {
+            return true
+        }
         return super.point(inside: point, with: event)
     }
     private var highlights: [TextHighlight] = []
@@ -160,16 +173,9 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
         inkCanvas.showsHorizontalScrollIndicator = false
         inkCanvas.isUserInteractionEnabled = false
         inkCanvas.delegate = self
-        inkCanvas.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(inkCanvas)
-        // …and out into the margins either side of the column of text.
-        inkLeading = inkCanvas.leadingAnchor.constraint(equalTo: contentView.leadingAnchor)
-        inkTrailing = inkCanvas.trailingAnchor.constraint(equalTo: contentView.trailingAnchor)
-        NSLayoutConstraint.activate([
-            inkCanvas.topAnchor.constraint(equalTo: contentView.topAnchor),
-            inkCanvas.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            inkLeading, inkTrailing,
-        ])
+        // (Only put on screen for pages that have scribbles, or while you're
+        // scribbling: a drawing canvas the size of a page takes a lot of memory, and
+        // one on every page of text got the app closed by iPadOS.)
         // The text re-wraps when its width settles (a two-page column is narrower than
         // the list): measure the highlights again then, or they sit on the old lines.
         textView.onResize = { [weak self] in self?.redrawOverlays() }
@@ -224,6 +230,8 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
         inkProgrammatic = true
         inkCanvas.drawing = PKDrawing()
         inkProgrammatic = false
+        inkCanvas.isUserInteractionEnabled = false
+        inkCanvas.removeFromSuperview()
         withoutAnimation {
             highlightLayer.sublayers = nil
             markLayer.path = nil
@@ -242,6 +250,7 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
         // Let the text re-wrap to its final width first (a two-page column is narrower
         // than the list), so highlights are measured on the lines you actually see.
         textView.layoutIfNeeded()
+        placeInkCanvas()
         // Only when the width or the page changed: redrawing every highlight on every
         // layout pass slowed read-aloud down.
         if abs(textView.bounds.width - overlayWidth) > 0.5 { redrawOverlays() }
@@ -297,11 +306,16 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
 
     func setInkActive(_ active: Bool, tool: PKTool, undo: UndoManager?) {
         inkCanvas.sharedUndo = undo
+        let wasShown = inkCanvas.superview != nil
         inkCanvas.isUserInteractionEnabled = active && page != nil
         inkCanvas.tool = tool
+        placeInkCanvas()
+        if !wasShown, inkCanvas.superview != nil { remapInk() }
     }
 
     private func remapInk() {
+        placeInkCanvas()
+        guard inkCanvas.superview != nil else { return }
         guard let page, inkPageSize.width > 1, textView.bounds.width > 1,
               textView.layoutManager.numberOfGlyphs > 0 else {
             if !inkCanvas.drawing.strokes.isEmpty {
