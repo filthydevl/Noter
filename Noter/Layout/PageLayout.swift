@@ -444,6 +444,28 @@ enum PageLayout {
                 pos -= 1
             }
         }
+        // Notes whose numbers were misread ("10" as "1°", "11" as a quote mark) sit above
+        // the one that was recognized: the block reaches up to the clear gap that sets
+        // the notes apart from the text, as long as those lines are set closer together
+        // than the text above the gap.
+        if let first = kept.firstIndex(where: { notes.contains($0) }), first > 1 {
+            let clear = max(typicalGap * 2.5, medianH)
+            var pos = first
+            var found = false
+            while pos > 0 {
+                if rows[kept[pos]].rect.minY - rows[kept[pos - 1]].rect.maxY > clear {
+                    found = true
+                    break
+                }
+                pos -= 1
+            }
+            if found, pos > 1, pos < first {
+                let textPitch = pitch(Array(kept[..<pos])), notesPitch = pitch(Array(kept[pos...first]))
+                if textPitch > 0, notesPitch > 0, notesPitch <= textPitch * 0.88 {
+                    notes.formUnion(kept[pos..<first])
+                }
+            }
+        }
         let body = rows.enumerated().filter { !drop.contains($0.offset) && !notes.contains($0.offset) }.map(\.element)
         let noteRows = rows.enumerated().filter { notes.contains($0.offset) }.map(\.element)
         return (body, header, noteRows)
@@ -455,7 +477,12 @@ enum PageLayout {
         if first.range(of: #"^(\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,3}|[*†‡§¶]+)[.)]?$"#, options: .regularExpression) != nil {
             return true
         }
-        return first.range(of: #"^(\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,3})[.)]?[A-Z“"][a-z]"#, options: .regularExpression) != nil
+        if first.range(of: #"^(\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,3})[.)]?[A-Z“"][a-z]"#, options: .regularExpression) != nil {
+            return true
+        }
+        // Old-style numerals are often misread: "10" as "IO" or "1°", "11" as "II", "12" as "I2".
+        return first.range(of: #"^(?=.*[0-9°º])[0-9IlOo°º]{2,3}[.)]?$|^(IO|II|Il|lI|ll)$"#,
+                           options: .regularExpression) != nil
     }
 
     // MARK: Headings
