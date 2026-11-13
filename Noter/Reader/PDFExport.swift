@@ -20,7 +20,7 @@ enum PDFExport {
             }
             body += "<div class='quote' style='border-left-color:\(h.hex)'>"
             if let word = session.term(of: h) {
-                body += "<div class='meta'>↓ Definition of “\(esc(Highlight.keywordDisplay(word.text)))”</div>"
+                body += "<div class='meta'>↓ “\(esc(Highlight.keywordDisplay(word.text)))”</div>"
                 body += "<u>\(esc(h.text))</u>"
             } else if h.isTerm {
                 body += "<b>\(esc(h.text))</b>"

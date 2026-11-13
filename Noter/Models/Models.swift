@@ -244,7 +244,7 @@ struct Highlight: Codable, Identifiable, Equatable {
     var isTerm: Bool { role == "term" }
     var isDefinition: Bool { role == "definition" }
     /// Drawn as an underline instead of a fill.
-    var isUnderlined: Bool { role == "definition" || role == "underline" }
+    var isUnderlined: Bool { role == "underline" }
 
     var style: HighlightStyle { isTerm ? .circle : (isUnderlined ? .underline : .fill) }
 

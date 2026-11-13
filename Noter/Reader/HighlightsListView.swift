@@ -350,14 +350,7 @@ struct HighlightRow: View {
                         Text(label)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                        if highlight.isTerm || highlight.isDefinition {
-                            Text(highlight.isTerm ? "Word" : "Definition")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(HighlightColor.maroon.color)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(HighlightColor.maroon.color.opacity(0.12), in: Capsule())
-                        } else if highlight.role == "underline" {
+                        if highlight.role == "underline" {
                             Text(colorName.map { "Underline · \($0)" } ?? "Underline")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.primary)
@@ -494,7 +487,7 @@ struct DefinitionArrow: View {
             .font(.system(size: 14, weight: .bold))
             .foregroundStyle(HighlightColor.maroon.color)
             .frame(maxWidth: .infinity)
-            .accessibilityLabel("Definition of \(word)")
+            .accessibilityLabel("Goes with \(word)")
     }
 }
 

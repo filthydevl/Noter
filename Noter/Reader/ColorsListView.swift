@@ -87,7 +87,7 @@ struct ColorsListView: View {
                         ColorRow(color: .maroon, initialName: palette.name(.maroon) ?? "", count: counts[.maroon] ?? 0,
                                  selected: false, removable: false, placeholder: "Word",
                                  pick: {}, rename: { palette.setName($0, for: .maroon) }, remove: {})
-                        Text("Circle a word or short phrase with the highlighter (PDF or Text view): it’s highlighted and circled in this color. Then underline its definition — as many lines as you need — and tap ✓ next to the word to save it.")
+                        Text("Circle a word or short phrase with the highlighter (PDF or Text view): it’s highlighted and circled in this color. It becomes a key word. Then highlight what goes with it — as many passages as you need — and tap ✓ next to the word; they're linked to it with an arrow.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

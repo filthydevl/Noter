@@ -750,7 +750,11 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         case .underline, .none: break
         }
         if let sel = PageHitTester.selection(for: points, in: pages) {
-            s.addHighlight(on: sel.page, range: trimmed(sel.range, sel.page, points))
+            // The word the stroke began on (for extending a highlight from inside it).
+            let start = points.first.flatMap { p in
+                sel.page.tokens.firstIndex { $0.rect.insetBy(dx: -0.004, dy: -0.004).contains(p) }
+            }
+            s.addHighlight(on: sel.page, range: trimmed(sel.range, sel.page, points), start: start)
         }
     }
 

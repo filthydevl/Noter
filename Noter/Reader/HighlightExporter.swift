@@ -27,7 +27,7 @@ enum HighlightExporter {
                 lastLabel = label
             }
             if let word = session.term(of: h) {
-                md += "↓ _Definition of “\(Highlight.keywordDisplay(word.text))”_\n\n"
+                md += "↓ _“\(Highlight.keywordDisplay(word.text))”_\n\n"
             } else if h.isTerm {
                 md += "**Word:** \(Highlight.keywordDisplay(h.text))\n\n"
             } else if let name = session.palette.name(h.color) {

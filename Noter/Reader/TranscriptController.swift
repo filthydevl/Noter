@@ -541,7 +541,7 @@ final class TranscriptController: UIView, UICollectionViewDataSource, UICollecti
             }
         }
         if let r = st.range ?? Snapper.range(for: st.hits, referenceWidth: cell?.textWidth ?? 600) {
-            s.addHighlight(on: st.page, range: r)
+            s.addHighlight(on: st.page, range: r, start: st.hits.first?.token)
         }
     }
 

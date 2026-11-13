@@ -159,8 +159,8 @@ struct ReaderView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "arrow.turn.down.right")
                         .foregroundStyle(HighlightColor.maroon.color)
-                    Text(parts == 0 ? "Underline the definition of “\(word)”"
-                         : "Definition of “\(word)” · \(parts) part\(parts == 1 ? "" : "s") — keep going or tap ✓")
+                    Text(parts == 0 ? "“\(word)” — highlight what goes with it"
+                         : "“\(word)” · \(parts) linked — keep going or tap ✓")
                         .font(.subheadline.weight(.medium))
                         .lineLimit(1)
                     Button {
@@ -173,7 +173,7 @@ struct ReaderView: View {
                             .background(HighlightColor.maroon.color, in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Save definition")
+                    .accessibilityLabel("Done linking")
                     Button {
                         session.cancelPendingTerm()
                     } label: {
@@ -184,7 +184,7 @@ struct ReaderView: View {
                             .background(Color.primary.opacity(0.08), in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(parts == 0 ? "Skip the definition" : "Discard the definition")
+                    .accessibilityLabel(parts == 0 ? "Skip linking" : "Discard what was linked")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)

@@ -67,7 +67,7 @@ final class PDFPageOverlay: UIView {
         confirmButton.layer.shadowOpacity = 0.25
         confirmButton.layer.shadowRadius = 4
         confirmButton.layer.shadowOffset = CGSize(width: 0, height: 2)
-        confirmButton.accessibilityLabel = "Save definition"
+        confirmButton.accessibilityLabel = "Done linking"
         confirmButton.isHidden = true
         confirmButton.addAction(UIAction { [weak self] _ in self?.onConfirm?() }, for: .primaryActionTriggered)
 

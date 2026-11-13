@@ -504,16 +504,18 @@ final class DocumentSession: ObservableObject {
         }
     }
 
+    /// `start`: the word the stroke began on (for extending a highlight from inside it).
     func addHighlight(on lp: LogicalPage, range: ClosedRange<Int>, underline: Bool = false,
-                      continuing: Bool = false) {
+                      continuing: Bool = false, start: Int? = nil) {
         guard !lp.tokens.isEmpty, range.upperBound < lp.tokens.count, range.lowerBound >= 0 else { return }
-        if pendingTerm == nil, !underline, extendHighlight(on: lp, range: range) { return }
+        if pendingTerm == nil, !underline, extendHighlight(on: lp, range: range, start: start) { return }
         var h = Highlight(
             id: UUID(), page: lp.pdfIndex, spans: lp.spans(for: range), rects: lp.lineRects(for: range),
             text: lp.string(for: range), color: color, created: Date())
         if let term = pendingTerm, let word = highlights.first(where: { $0.id == term }) {
-            // Part of the circled word's definition: keep collecting until ✓.
-            h.color = word.color
+            // Linked to the circled word (an ordinary highlight, in your pen's color):
+            // keep collecting until ✓.
+            _ = word
             h.role = "definition"
             h.termID = term
         } else {
@@ -558,40 +560,13 @@ final class DocumentSession: ObservableObject {
     /// ✓: everything underlined since circling the word becomes its definition — one
     /// definition per page, its lines in reading order.
     func confirmDefinition() {
-        guard let term = pendingTerm else { return }
-        let parts = sortedHighlights().filter { definitionParts.contains($0.id) && $0.termID == term }
-        var merged: [Highlight] = []
-        for (page, group) in Dictionary(grouping: parts, by: \.page).sorted(by: { $0.key < $1.key }) {
-            guard var first = group.first else { continue }
-            for p in group.dropFirst() {
-                first.spans += p.spans
-                first.rects += p.rects
-                first.text += " " + p.text
-                if first.note == nil { first.note = p.note }
-            }
-            // One definition from its first word to its last, every line between
-            // included — the same in the PDF as in the text view (not just the bits the
-            // pencil went over).
-            if let lp = logicalPages(page)?.first(where: { lp in group.contains { lp.range(of: $0) != nil } }) {
-                let ranges = group.compactMap { lp.range(of: $0) }
-                if let lo = ranges.map(\.lowerBound).min(), let hi = ranges.map(\.upperBound).max() {
-                    first.spans = lp.spans(for: lo...hi)
-                    first.rects = lp.lineRects(for: lo...hi)
-                    first.text = lp.string(for: lo...hi)
-                }
-            }
-            merged.append(first)
-        }
-        let partIDs = Set(parts.map(\.id))
+        guard pendingTerm != nil else { return }
+        // Each linked highlight stays just what you highlighted (they used to be merged
+        // into one stretch from the first to the last, as a "definition").
+        let linked = definitionParts.count
         definitionParts = []
         pendingTerm = nil
-        guard !parts.isEmpty else { return }
-        if merged.count < parts.count {
-            highlights.removeAll { partIDs.contains($0.id) }
-            highlights += merged
-            highlightsChanged()
-        }
-        showToast("Definition saved")
+        if linked > 0 { showToast("Linked") }
     }
 
     /// Lets the controllers show / hide the ✓ next to the circled word.
@@ -864,14 +839,25 @@ final class DocumentSession: ObservableObject {
     /// Not when the stroke stays inside it (a word of its own within it), only touches
     /// the word next to it (that's a new highlight), or swallows a key word or a
     /// circled word / definition whole (they stay what they are). Returns whether it did.
-    private func extendHighlight(on lp: LogicalPage, range: ClosedRange<Int>) -> Bool {
+    private func extendHighlight(on lp: LogicalPage, range: ClosedRange<Int>, start: Int? = nil) -> Bool {
         let latest = highlights.last
+        // The pen's color — or, with auto switch, the color it just switched away from.
+        func sameColor(_ ex: Highlight) -> Bool {
+            ex.color == color || (palette.autoSwitch && ex.id == latest?.id && palette.next(after: ex.color) == color)
+        }
+        // A stroke that starts inside a highlight and moves up or down onto the line
+        // above or below: the pen only grazes the starting line, so the stroke reads as
+        // just the other line. Counting from the word it began on makes it an extension.
+        var range = range
+        if let start, start >= 0, start < lp.tokens.count,
+           highlights(onPage: lp.pdfIndex).contains(where: { ex in
+               ex.role == nil && sameColor(ex) && (lp.range(of: ex)?.contains(start) ?? false)
+           }) {
+            range = min(range.lowerBound, start)...max(range.upperBound, start)
+        }
         let joined = highlights(onPage: lp.pdfIndex).compactMap { ex -> (Highlight, ClosedRange<Int>)? in
             guard ex.role == nil, let r = lp.range(of: ex) else { return nil }
-            // The pen's color — or, with auto switch, the color it just switched away from.
-            let sameColor = ex.color == color
-                || (palette.autoSwitch && ex.id == latest?.id && palette.next(after: ex.color) == color)
-            guard sameColor else { return nil }
+            guard sameColor(ex) else { return nil }
             let overlaps = range.lowerBound <= r.upperBound && range.upperBound >= r.lowerBound
             let inside = range.lowerBound >= r.lowerBound && range.upperBound <= r.upperBound
             let around = range.lowerBound < r.lowerBound && range.upperBound > r.upperBound
