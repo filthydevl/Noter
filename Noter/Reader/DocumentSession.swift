@@ -515,6 +515,22 @@ final class DocumentSession: ObservableObject {
     /// is picked any more.
     func tapped(on lp: LogicalPage, token: Int) {
         guard penMode == .highlight, tool == .pen, pendingTerm == nil else { return }
+        // A pencil tap moves a little, so it also counted as a tiny highlighter stroke:
+        // it left a one-word highlight under the pencil, inside the highlight you meant
+        // to pick — and that tiny one got picked and grew, so the added lines came out
+        // as a separate highlight. Take the tap's own tiny highlight away first.
+        if let fresh = highlights.last, fresh.role == nil, fresh.page == lp.pdfIndex,
+           Date().timeIntervalSince(fresh.created) < 0.8,
+           let fr = lp.range(of: fresh), fr.contains(token), fr.count <= 3 {
+            let wasInside = highlights(onPage: lp.pdfIndex).contains { h in
+                guard h.id != fresh.id, h.role == nil, let r = lp.range(of: h) else { return false }
+                return r.lowerBound <= fr.lowerBound && r.upperBound >= fr.upperBound
+            }
+            if wasInside {
+                removeHighlights([fresh.id], registerUndo: false)
+                color = fresh.color // auto switch had moved on for it
+            }
+        }
         let under = highlights(onPage: lp.pdfIndex).compactMap { h -> (Highlight, ClosedRange<Int>)? in
             guard h.role == nil, let r = lp.range(of: h), r.contains(token) else { return nil }
             return (h, r)
