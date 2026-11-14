@@ -545,7 +545,12 @@ enum PageLayout {
             // A long title wraps mid-phrase ("…Enlightenment," / "Reform, and the…"): a
             // centred line in larger type, set apart above, is a title's first line
             // even when it ends in a comma or colon.
-            let titleStart = isCentred(i) && rowH[i] >= bodyH * 1.1 && gapAbove(i) > typicalGap * 1.7
+            // (Measured word heights are rough — a title set clearly larger can come out
+            // only a few percent taller — so being centred with the next line centred
+            // too is enough; so is being noticeably larger.)
+            let nextCentred = i + 1 < rows.count && isCentred(i + 1) && gapBelow(i) < typicalGap * 1.6
+            let titleStart = gapAbove(i) > typicalGap * 1.7
+                && ((isCentred(i) && (rowH[i] >= bodyH * 1.03 || nextCentred)) || rowH[i] >= bodyH * 1.15)
             // Reads like part of a sentence ("Document 3:" is fine).
             if let last = t.last, ".,;:".contains(last), !t.hasSuffix("..."), !(source && last == ":"),
                !(titleStart && last != ".") { continue }
@@ -562,9 +567,17 @@ enum PageLayout {
             let chapter = t.range(of: chapterPattern, options: [.regularExpression, .caseInsensitive]) != nil
                 && words <= 8
 
+            // Larger than the text, though not by much, and set apart on both sides (the
+            // line below may be the title's second line).
+            let larger = rowH[i] >= bodyH * 1.15 && spacedAbove
+                && (spacedBelow || (i + 1 < rows.count && abs(rowH[i + 1] - rowH[i]) < rowH[i] * 0.12
+                    && rowH[i + 1] >= bodyH * 1.12))
             if (big || chapter) && (spacedAbove || spacedBelow) {
                 out.insert(i)
                 style[i] = big ? "big" : "chapter"
+            } else if larger, words <= 14 {
+                out.insert(i)
+                style[i] = "larger"
             } else if source && (spacedAbove || spacedBelow || centred || caps) {
                 out.insert(i)
                 style[i] = "source"
@@ -588,6 +601,7 @@ enum PageLayout {
                 let continues: Bool
                 switch style[i] {
                 case "big": continues = sameSize && rowH[j] >= bodyH * 1.35
+                case "larger": continues = sameSize && rowH[j] >= bodyH * 1.12
                 case "caps": continues = isCaps(t)
                 case "centred": continues = sameSize && (isCentred(j) || rowH[j] >= bodyH * 1.1)
                 case "source": continues = sameSize && (isCentred(j) || t.count < 70)
