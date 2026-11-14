@@ -70,7 +70,17 @@ struct SourceInfo: Codable, Equatable {
     /// file name is tidied, never used raw), the publisher line and a DOI.
     @MainActor
     static func load(for session: DocumentSession) -> SourceInfo {
-        if let saved = Storage.load(SourceInfo.self, from: url(session.info.id)) { return saved }
+        if var saved = Storage.load(SourceInfo.self, from: url(session.info.id)) {
+            // Saved while the title was still the raw file name: fill it in properly.
+            if saved.origin == nil, looksLikeFileName(saved.title) {
+                let fresh = guess(for: session)
+                saved.title = fresh.title
+                if saved.authors.isEmpty { saved.authors = fresh.authors }
+                if saved.doi.isEmpty { saved.doi = fresh.doi }
+                saved.origin = "guess"
+            }
+            return saved
+        }
         return guess(for: session)
     }
 
