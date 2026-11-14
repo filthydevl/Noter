@@ -154,7 +154,36 @@ final class BracketNotes: ObservableObject {
         let made = focus.compactMap { entries[Self.id($0)] }
         guard !made.isEmpty else { return nil }
         let weakest = made.map(\.engine).min { Self.rank($0) < Self.rank($1) } ?? "rules"
-        return Entry(key: "", text: made.map(\.text).joined(separator: "\n\n"), engine: weakest)
+
+        // Connected ideas — highlights one after another in the same color, or the
+        // passages linked to a circled word — are one block: each one's notes hang a
+        // step deeper under the one before, instead of starting again at the margin.
+        let ids = Set(focus.map(\.id))
+        let ordered = (session?.groupedHighlights() ?? focus).filter { ids.contains($0.id) }
+        func notes(_ h: Highlight, depth: Int) -> String? {
+            guard let text = entries[Self.id(h)]?.text, !text.isEmpty else { return nil }
+            guard depth > 0 else { return text }
+            let pad = String(repeating: "\t", count: min(depth, 6))
+            return text.components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                .map { pad + $0 }
+                .joined(separator: "\n")
+        }
+        var blocks: [String] = []
+        for block in HighlightBlock.blocks(ordered) {
+            switch block {
+            case .single(let h):
+                if let n = notes(h, depth: 0) { blocks.append(n) }
+            case .run(let run):
+                let parts = run.enumerated().compactMap { notes($0.element, depth: $0.offset) }
+                if !parts.isEmpty { blocks.append(parts.joined(separator: "\n")) }
+            case .definition(let term, let linked):
+                let parts = [notes(term, depth: 0)] + linked.map { notes($0, depth: 1) }
+                let joined = parts.compactMap { $0 }
+                if !joined.isEmpty { blocks.append(joined.joined(separator: "\n")) }
+            }
+        }
+        return Entry(key: "", text: blocks.joined(separator: "\n\n"), engine: weakest)
     }
 
     /// Every page that has notes so far (plus the one you're on), in book order.
