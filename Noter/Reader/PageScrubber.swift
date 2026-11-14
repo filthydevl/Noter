@@ -41,8 +41,10 @@ struct PageScrubber: View {
                     Image(systemName: "arrow.left.and.right")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color.accentColor)
-                        .frame(width: 18, height: 20)
-                        .background(.thinMaterial, in: Rectangle())
+                        .frame(width: 22, height: 22)
+                        .background(.thinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.1)))
+                        .padding(.leading, 3)
                         .frame(width: 32, height: 30, alignment: .leading) // easy to tap, small to look at
                         .contentShape(Rectangle())
                 }
