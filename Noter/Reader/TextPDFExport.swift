@@ -123,7 +123,7 @@ enum TextPDFExport {
         storage.addLayoutManager(layout)
         layout.ensureLayout(for: container)
 
-        let placed = TextInk.toText(strokes, lp: lp, pageSize: pageSize) { token in
+        let placed = TextInk.toText(strokes, lp: lp, pageSize: pageSize, textColumn: 0...width) { token in
             guard token < lp.tokenRanges.count, lp.tokenRanges[token].length > 0 else { return nil }
             let r = lp.tokenRanges[token]
             let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: r.location + offset, length: r.length),

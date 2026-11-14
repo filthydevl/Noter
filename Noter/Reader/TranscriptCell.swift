@@ -336,7 +336,9 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
             }
             return
         }
-        let placed = TextInk.toText(inkSource, lp: page, pageSize: inkPageSize) { self.inkRect($0) }
+        let placed = TextInk.toText(inkSource, lp: page, pageSize: inkPageSize, textColumn: inkColumn) {
+            self.inkRect($0)
+        }
         inkTable = [:]
         for p in placed { inkTable[TextInk.key(p.shown)] = p.source }
         inkProgrammatic = true
@@ -353,12 +355,13 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
             // Untouched strokes keep their exact place on the page; new, moved or cut
             // ones are placed beside the word they're next to here.
             let onPage = inkTable[key] ?? TextInk.toPage(
-                stroke, lp: page, pageSize: inkPageSize,
+                stroke, lp: page, pageSize: inkPageSize, textColumn: inkColumn,
                 tokenAt: { p in
                     let inText = CGPoint(x: p.x + self.inkCanvas.frame.minX - self.textView.frame.minX,
                                          y: p.y + self.inkCanvas.frame.minY - self.textView.frame.minY)
                     return self.nearestShownToken(to: inText)
                 },
+                lineTokens: { y in self.lineEnds(atCanvasY: y) },
                 textRect: { self.inkRect($0) })
             if let onPage {
                 source.append(onPage)
@@ -375,6 +378,31 @@ final class TranscriptCell: UICollectionViewCell, PKCanvasViewDelegate {
         inkSource = source
         inkTable = table
         onInkChanged?(source)
+    }
+
+    /// The column of text in the ink canvas, left edge to right edge.
+    private var inkColumn: ClosedRange<CGFloat> {
+        let left = textView.frame.minX - inkCanvas.frame.minX
+        return left...(left + max(textView.bounds.width, 1))
+    }
+
+    /// The first and last word shown on the wrapped line at a height of the canvas.
+    private func lineEnds(atCanvasY y: CGFloat) -> (first: Int, last: Int)? {
+        guard let page, !page.tokenRanges.isEmpty else { return nil }
+        let lm = textView.layoutManager
+        guard lm.numberOfGlyphs > 0 else { return nil }
+        let inText = CGPoint(x: 1, y: max(y + inkCanvas.frame.minY - textView.frame.minY, 0))
+        let glyph = lm.glyphIndex(for: inText, in: textView.textContainer)
+        var glyphs = NSRange()
+        _ = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &glyphs)
+        let chars = lm.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        guard chars.length > 0, var first = page.tokenIndex(atUTF16: chars.location),
+              var last = page.tokenIndex(atUTF16: NSMaxRange(chars) - 1) else { return nil }
+        // The word at the line's start may have begun on the line above.
+        if page.tokenRanges[first].location < chars.location, first < last { first += 1 }
+        while first < last, page.tokenRanges[first].length == 0 { first += 1 }
+        while last > first, page.tokenRanges[last].length == 0 { last -= 1 }
+        return page.tokenRanges[first].length > 0 ? (first, last) : nil
     }
 
     /// The word at (or nearest to) a point in the text view, even from the margins.
