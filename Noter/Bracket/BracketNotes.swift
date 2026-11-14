@@ -149,7 +149,7 @@ final class BracketNotes: ObservableObject {
     /// saved notes (nil until the first of them is ready).
     func entry(page: Int, scope: Scope) -> Entry? {
         guard scope == .highlights else { return entries[Self.id(page, scope)] }
-        let focus = focus(page: page)
+        let focus = distinctFocus(page: page)
         if focus.isEmpty { return Entry(key: "", text: "", engine: wanted) }
         let made = focus.compactMap { entries[Self.id($0)] }
         guard !made.isEmpty else { return nil }
@@ -183,7 +183,15 @@ final class BracketNotes: ObservableObject {
                 if !joined.isEmpty { blocks.append(joined.joined(separator: "\n")) }
             }
         }
-        return Entry(key: "", text: blocks.joined(separator: "\n\n"), engine: weakest)
+        // The same line twice in a row (two highlights that share a phrase) shows once.
+        var lines: [String] = []
+        for line in blocks.joined(separator: "\n\n").components(separatedBy: "\n") {
+            let bare = line.trimmingCharacters(in: .whitespaces).lowercased()
+            if !bare.isEmpty, let last = lines.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+               last.trimmingCharacters(in: .whitespaces).lowercased() == bare { continue }
+            lines.append(line)
+        }
+        return Entry(key: "", text: lines.joined(separator: "\n"), engine: weakest)
     }
 
     /// Every page that has notes so far (plus the one you're on), in book order.
@@ -215,6 +223,26 @@ final class BracketNotes: ObservableObject {
                 let ya = a.rects.first?.minY ?? 0, yb = b.rects.first?.minY ?? 0
                 return ya != yb ? ya < yb : a.created < b.created
             }
+    }
+
+    /// The page's focus highlights without the ones that would repeat notes: a
+    /// highlight made inside another one (or over the same words again) is already
+    /// covered by the bigger one's notes.
+    func distinctFocus(page: Int) -> [Highlight] {
+        let all = focus(page: page)
+        func plain(_ t: String) -> String {
+            t.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: " ")
+        }
+        let texts = all.map { plain($0.text) }
+        return all.enumerated().filter { i, _ in
+            guard !texts[i].isEmpty else { return false }
+            return !all.indices.contains { j in
+                guard j != i else { return false }
+                // The same words twice: the first one stays.
+                if texts[j] == texts[i] { return j < i }
+                return texts[j].count > texts[i].count && (" " + texts[j] + " ").contains(" " + texts[i] + " ")
+            }
+        }.map(\.element)
     }
 
     /// Changes whenever the page's focus highlights do.
@@ -315,7 +343,7 @@ final class BracketNotes: ObservableObject {
     /// "Highlights only": each highlight is transposed once, by itself, and kept —
     /// a new highlight sends only its own text, never the page again.
     private func makeHighlights(page: Int, id: String, force: Bool) async {
-        for h in focus(page: page) {
+        for h in distinctFocus(page: page) {
             guard !Task.isCancelled else { return }
             let hid = Self.id(h)
             let key = Self.hash(h.text)
