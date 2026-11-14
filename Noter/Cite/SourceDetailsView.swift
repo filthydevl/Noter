@@ -7,10 +7,31 @@ struct SourceDetailsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var source = SourceInfo()
     @State private var loaded = false
+    @State private var looking = false
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Text(originNote)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        looking = true
+                        var s = source
+                        s.origin = "guess"
+                        session.saveSource(s)
+                        let task = session.findSource(force: true)
+                        Task { @MainActor in
+                            await task?.value
+                            source = session.source
+                            looking = false
+                        }
+                    } label: {
+                        if looking { ProgressView() } else { Label("Look up by DOI", systemImage: "magnifyingglass") }
+                    }
+                    .disabled(source.doi.trimmingCharacters(in: .whitespaces).isEmpty || looking)
+                }
                 Section {
                     Picker("This PDF is a", selection: $source.kind) {
                         ForEach(SourceInfo.Kind.allCases) { Text($0.title).tag($0) }
@@ -59,6 +80,7 @@ struct SourceDetailsView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        source.origin = nil // yours now: never filled in over
                         session.saveSource(source)
                         dismiss()
                     }
@@ -70,6 +92,14 @@ struct SourceDetailsView: View {
                     loaded = true
                 }
             }
+        }
+    }
+
+    private var originNote: String {
+        switch source.origin {
+        case "crossref": "Filled in from the publisher's record for this DOI (Crossref). Change anything that's off and Save."
+        case "guess": "Read off the pages (running headers, first heading, the publisher line). Check it — or look up the exact record with the DOI."
+        default: "Your saved details."
         }
     }
 

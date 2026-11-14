@@ -108,7 +108,9 @@ extension HighlightsListView {
             open: { session.open(h) },
             toggleTag: { session.toggleTag($0, on: h.id) },
             delete: { session.removeHighlights([h.id]) },
-            note: h.noteText,
+            // Notes are written here, under the highlight; the Notes list shows only
+            // the highlights that have one.
+            editNote: { session.setNote($0, on: h.id) },
             colorName: session.palette.name(h.color),
             showAnalysis: showAnalysis,
             cite: { style, quote in session.cite(h, style: style, withQuote: quote) },

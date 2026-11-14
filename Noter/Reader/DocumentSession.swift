@@ -189,6 +189,8 @@ final class DocumentSession: ObservableObject {
         recomputeLabels()
         saveInfo()
         ocr.start()
+        // A little after opening: work out the book's details for citations.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.findSource() }
         outline.start()
     }
 
@@ -1212,6 +1214,40 @@ final class DocumentSession: ObservableObject {
         Storage.save(s, to: SourceInfo.url(info.id))
     }
 
+    private var sourceLookup: Task<Void, Never>?
+
+    /// Fills in the book's details by itself, until you've saved your own: read off
+    /// the pages, then — if a DOI is printed in the PDF — the publisher's exact record.
+    /// `force`: look the DOI up again (the button in Source details).
+    @discardableResult
+    func findSource(force: Bool = false) -> Task<Void, Never>? {
+        guard force || source.origin != nil, source.origin != "crossref" || force else { return nil }
+        guard sourceLookup == nil else { return sourceLookup }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer { self.sourceLookup = nil }
+            var current = self.source
+            if current.origin == "guess" {
+                // More pages may have been recognized since the first look.
+                let again = SourceInfo.guess(for: self)
+                if current.doi.isEmpty { current.doi = again.doi }
+                if !again.authors.isEmpty { current.authors = again.authors }
+                if !again.title.isEmpty { current.title = again.title }
+                if current.publisher.isEmpty { current.publisher = again.publisher }
+                self.source = current
+            }
+            guard !current.doi.isEmpty, let found = await SourceInfo.lookUp(doi: current.doi) else { return }
+            var merged = found
+            // Crossref rarely has the city or a chapter's editors: keep what's there.
+            if merged.place.isEmpty { merged.place = current.place }
+            if merged.editors.isEmpty { merged.editors = current.editors }
+            if merged.publisher.isEmpty { merged.publisher = current.publisher }
+            self.saveSource(merged)
+        }
+        sourceLookup = task
+        return task
+    }
+
     /// The page number printed in the book for a highlight (nil: none recognized).
     func printedPage(for h: Highlight) -> String? {
         labels[SlotKey(pdfIndex: h.page, half: half(of: h))]
@@ -1220,6 +1256,24 @@ final class DocumentSession: ObservableObject {
     /// Copies a citation for a highlight (formatted text, with a plain copy for apps
     /// that don't take formatting).
     func cite(_ h: Highlight, style: CitationStyle, withQuote: Bool) {
+        // Not looked up yet (the book was just opened): do that first, then cite.
+        if source.origin == "guess", !source.doi.isEmpty, let lookup = findSource() {
+            showToast("Looking up the book's details…")
+            Task { [weak self] in
+                await lookup.value
+                guard let self else { return }
+                if self.source.origin == "crossref" || self.source.isUsable {
+                    self.finishCite(h, style: style, withQuote: withQuote)
+                } else {
+                    self.showSourceDetails = true
+                }
+            }
+            return
+        }
+        finishCite(h, style: style, withQuote: withQuote)
+    }
+
+    private func finishCite(_ h: Highlight, style: CitationStyle, withQuote: Bool) {
         guard source.isUsable else {
             showSourceDetails = true
             showToast("Fill in the book's details once, then cite")
@@ -1228,9 +1282,10 @@ final class DocumentSession: ObservableObject {
         let page = printedPage(for: h)
         let text = Citation.make(source, page: page, style: style, quote: withQuote ? h.text : nil)
         Citation.copy(text)
+        let unchecked = source.origin == "guess" ? " — details were read off the pages, check them" : ""
         showToast(page == nil
                   ? "Copied — no printed page number was found, so add it yourself"
-                  : "Copied \(style.title) citation, p. \(page ?? "")")
+                  : "Copied \(style.title) citation, p. \(page ?? "")\(unchecked)")
     }
 
     func noteUserActivity() {

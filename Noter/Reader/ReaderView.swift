@@ -57,6 +57,7 @@ struct ReaderView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var panel: SidePanel?
     @State private var savedPDF: ShareItem?
+    @State private var showTextOptions = false
     @State private var viewWidth: CGFloat = 0
     @State private var viewHeight: CGFloat = 0
     /// How far the on-screen keyboard reaches up into the reader (0: no keyboard).
@@ -372,6 +373,24 @@ struct ReaderView: View {
                 .accessibilityLabel("Improving recognized text, \(session.ocrUpgradeLeft) pages left")
             }
 
+            // Text view: font, size, theme, spacing, margins.
+            if session.viewMode == .transcript {
+                Button {
+                    showTextOptions = true
+                } label: {
+                    Image(systemName: "textformat.size")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 40, height: 40)
+                        .background(.regularMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Reading options")
+                .popover(isPresented: $showTextOptions, arrowEdge: .top) {
+                    TextOptionsView(session: session)
+                        .presentationCompactAdaptation(.popover)
+                }
+            }
+
             Menu {
                 Button {
                     session.savePDF(baked: true) { savedPDF = ShareItem(url: $0) }
@@ -600,7 +619,6 @@ private struct ToolRail: View {
     /// A flat strip beside an open panel, with the player at its top.
     var docked = false
     @State private var showColors = false
-    @State private var showTextOptions = false
 
     private var scribbling: Bool { session.penMode == .scribble }
     private var penColor: Color { scribbling ? scribble.color.color : session.color.color }
@@ -646,17 +664,6 @@ private struct ToolRail: View {
             // Find a word or sentence in the book.
             railButton("magnifyingglass", label: "Search", selected: panel == .search) {
                 panel = panel == .search ? nil : .search
-            }
-
-            // Text view customization (theme, font, size, spacing, margins…), right under Search.
-            if session.viewMode == .transcript {
-                railButton("textformat.size", label: "Reading options", selected: showTextOptions) {
-                    showTextOptions = true
-                }
-                .popover(isPresented: $showTextOptions, arrowEdge: .trailing) {
-                    TextOptionsView(session: session)
-                        .presentationCompactAdaptation(.popover)
-                }
             }
 
             divider
@@ -733,16 +740,7 @@ private struct ToolRail: View {
                 .presentationCompactAdaptation(.popover)
             }
 
-            // Auto-switch: a new color after every highlight (each idea stands out).
-            if !scribbling {
-                railButton("arrow.triangle.2.circlepath", label: palette.autoSwitch
-                           ? "Auto color switch on (tap for manual)" : "Auto color switch off (tap to turn on)",
-                           selected: palette.autoSwitch) {
-                    palette.autoSwitch.toggle()
-                    session.showToast(palette.autoSwitch ? "Auto color switch: a new color for every highlight"
-                                      : "Manual colors")
-                }
-            }
+            // (Auto color switch is in the color wheel's menu and the colors panel.)
 
             // In the strip: the lists sit at its bottom, no empty space below them.
             if docked && !scrolls { Spacer(minLength: 0) }
@@ -752,6 +750,10 @@ private struct ToolRail: View {
             railButton("text.quote", label: "Highlights", selected: panel == .highlights) {
                 panel = panel == .highlights ? nil : .highlights
             }
+            // The page transposed into your indented note style.
+            railButton("list.bullet.indent", label: "Bracket Notes", selected: panel == .bracket) {
+                panel = panel == .bracket ? nil : .bracket
+            }
             railButton("text.bubble", label: "Notes", selected: panel == .notes) {
                 panel = panel == .notes ? nil : .notes
             }
@@ -760,10 +762,6 @@ private struct ToolRail: View {
             }
             railButton("questionmark.bubble", label: "Questions", selected: panel == .questions, tint: .purple) {
                 panel = panel == .questions ? nil : .questions
-            }
-            // The page transposed into your indented note style.
-            railButton("list.bullet.indent", label: "Bracket Notes", selected: panel == .bracket) {
-                panel = panel == .bracket ? nil : .bracket
             }
 
         }

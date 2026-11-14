@@ -6,7 +6,6 @@ import UIKit
 struct NotesListView: View {
     @ObservedObject var session: DocumentSession
     var onClose: () -> Void
-    @State private var onlyWithNotes = false
     /// The card whose note you just started typing in.
     @State private var editing: UUID?
     @State private var share: ShareItem?
@@ -15,7 +14,9 @@ struct NotesListView: View {
     var body: some View {
         let all = session.groupedHighlights()
         let noted = all.filter { $0.noteText != nil }.count
-        let items = onlyWithNotes ? all.filter { $0.noteText != nil } : all
+        // Only the highlights you've written a note on (notes are written under a
+        // highlight in the Highlights list).
+        let items = all.filter { $0.noteText != nil }
         let keywords = session.keywordEntries(includingRemoved: true)
         let byKey = session.tagEntriesByKey()
         let _ = session.labelsVersion // refresh when page numbers improve
@@ -57,23 +58,13 @@ struct NotesListView: View {
             .padding(.top, 18)
             .padding(.bottom, 10)
 
-            if !all.isEmpty {
-                Picker("Show", selection: $onlyWithNotes) {
-                    Text("All highlights").tag(false)
-                    Text("With notes").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
-            }
-
             if items.isEmpty {
                 ContentUnavailableView(
                     all.isEmpty ? "No highlights yet" : "No notes yet",
                     systemImage: all.isEmpty ? "highlighter" : "text.bubble",
                     description: Text(all.isEmpty
-                        ? "Highlight with your Apple Pencil, then write notes on your highlights here."
-                        : "Write a note under any highlight in “All highlights”."))
+                        ? "Highlight with your Apple Pencil, then write a note under a highlight in the Highlights list."
+                        : "Write a note under any highlight in the Highlights list; it shows up here."))
                     .frame(maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
