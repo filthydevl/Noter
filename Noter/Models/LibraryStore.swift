@@ -41,6 +41,16 @@ final class LibraryStore: ObservableObject {
         saveFolders()
     }
 
+    /// Name, color and icon, from the Customize sheet.
+    func customize(_ folder: LibraryFolder, name: String, colorHex: String?, symbol: String?) {
+        guard let i = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { folders[i].name = trimmed }
+        folders[i].colorHex = colorHex
+        folders[i].symbol = symbol
+        saveFolders()
+    }
+
     /// Deletes the folder; its books and folders move up into the folder it was in
     /// (or the top level). Nothing else is deleted.
     func delete(_ folder: LibraryFolder) {

@@ -69,6 +69,9 @@ struct LibraryFolder: Codable, Identifiable, Hashable {
     var name: String
     /// The folder it's grouped in (nil: top level). Optional so older folders load.
     var parentID: UUID? = nil
+    /// Your color and icon for it (nil: the standard ones).
+    var colorHex: String? = nil
+    var symbol: String? = nil
 }
 
 // MARK: - OCR results (stored per PDF page)

@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 
 /// Which books the library shows.
 enum Shelf: Hashable {
+    /// The start page: your folders, then the books that aren't in one.
+    case home
     case all
     case unfiled
     case folder(UUID)
@@ -16,7 +18,9 @@ struct LibraryView: View {
     @State private var showImporter = false
     @State private var path: [UUID] = []
     @State private var pendingDelete: DocumentInfo?
-    @State private var shelf: Shelf = .all
+    @State private var shelf: Shelf = .home
+    /// The folder whose name, color and icon you're changing.
+    @State private var customizing: LibraryFolder?
     /// Naming a folder: a new one (and the book to move into it), or renaming one.
     @State private var naming: Naming?
     @State private var nameDraft = ""
@@ -45,7 +49,7 @@ struct LibraryView: View {
     private var shown: [DocumentInfo] {
         switch shelf {
         case .all: library.documents
-        case .unfiled: library.documents.filter { $0.folderID == nil }
+        case .home, .unfiled: library.documents.filter { $0.folderID == nil }
         case .folder(let id): library.documents.filter { $0.folderID == id }
         }
     }
@@ -66,53 +70,65 @@ struct LibraryView: View {
                 } else {
                     VStack(spacing: 0) {
                         folderBar
-                        if let current = currentFolder, library.path(to: current.id).count > 1 {
-                            breadcrumbs(current)
-                        }
-                        if shown.isEmpty && innerFolders.isEmpty {
-                            ContentUnavailableView(
-                                "Nothing in this folder yet",
-                                systemImage: "folder",
-                                description: Text("Long-press a book › Move to Folder, or drag a book onto a folder above."))
-                                .frame(maxHeight: .infinity)
-                        } else {
-                            ScrollView {
-                                LazyVGrid(columns: columns, spacing: 36) {
-                                    // Folders grouped in this one first, then its books.
-                                    ForEach(innerFolders) { f in
-                                        Button {
-                                            shelf = .folder(f.id)
-                                        } label: {
-                                            FolderCard(folder: f, books: library.count(in: f),
-                                                       folders: library.subfolders(of: f.id).count)
+                        if let current = currentFolder { breadcrumbs(current) }
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 14) {
+                                // Folders first (on the start page), or the groups inside
+                                // the folder you're in; then the books.
+                                if shelf != .all, shelf != .unfiled {
+                                    sectionTitle(currentFolder == nil ? "Folders" : "Groups")
+                                    LazyVGrid(columns: folderColumns, spacing: 14) {
+                                        ForEach(foldersHere) { f in
+                                            FolderTile(folder: f, books: library.count(in: f),
+                                                       folders: library.subfolders(of: f.id).count,
+                                                       open: { shelf = .folder(f.id) }) { folderMenu(f) }
+                                                .draggable("folder:\(f.id.uuidString)")
+                                                .dropDestination(for: String.self) { items, _ in drop(items, into: f) }
+                                                .contextMenu { folderMenu(f) }
                                         }
-                                        .buttonStyle(.plain)
-                                        .draggable("folder:\(f.id.uuidString)")
-                                        .dropDestination(for: String.self) { items, _ in drop(items, into: f) }
-                                        .contextMenu { folderMenu(f) }
-                                    }
-                                    ForEach(shown) { doc in
-                                        NavigationLink(value: doc.id) {
-                                            BookCard(doc: doc, folder: folderName(of: doc),
-                                                     pagesRead: max(reading.progress[doc.id] ?? 0, doc.ocrPagesDone),
-                                                     reading: reading.working == doc.id)
+                                        NewFolderTile(title: currentFolder == nil ? "New folder" : "New group") {
+                                            nameDraft = ""
+                                            naming = .new(moving: nil, parent: currentFolder?.id)
                                         }
-                                        .buttonStyle(.plain)
-                                        .draggable(doc.id.uuidString)
-                                        .contextMenu { bookMenu(doc) }
                                     }
                                 }
-                                .padding(.horizontal, 32)
-                                .padding(.top, 12)
-                                .padding(.bottom, 40)
+                                if !shown.isEmpty {
+                                    sectionTitle(booksTitle)
+                                    LazyVGrid(columns: columns, spacing: 36) {
+                                        ForEach(shown) { doc in
+                                            NavigationLink(value: doc.id) {
+                                                BookCard(doc: doc, folder: folderName(of: doc),
+                                                         pagesRead: max(reading.progress[doc.id] ?? 0, doc.ocrPagesDone),
+                                                         reading: reading.working == doc.id)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .draggable(doc.id.uuidString)
+                                            .contextMenu { bookMenu(doc) }
+                                        }
+                                    }
+                                } else if currentFolder != nil {
+                                    Text("No books here yet. Drag a book onto this folder, long-press a book › Move to Folder, or import one while you're in here.")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.top, 4)
+                                }
                             }
+                            .padding(.horizontal, 32)
+                            .padding(.top, 8)
+                            .padding(.bottom, 40)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(currentFolder?.name ?? (shelf == .unfiled ? "Not in a folder" : "Library"))
+            .navigationTitle(currentFolder?.name ?? (shelf == .all ? "All books" : "Library"))
+            .sheet(item: $customizing) { f in
+                FolderCustomizeView(folder: f) { name, color, symbol in
+                    library.customize(f, name: name, colorHex: color, symbol: symbol)
+                }
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
@@ -179,7 +195,7 @@ struct LibraryView: View {
                     if let f = pendingFolderDelete {
                         // Inside it (or a folder in it)? Go up to where it was.
                         if case .folder(let id) = shelf, library.folderAndDescendants(f.id).contains(id) {
-                            shelf = f.parentID.map { .folder($0) } ?? .all
+                            shelf = f.parentID.map { .folder($0) } ?? .home
                         }
                         library.delete(f)
                     }
@@ -196,10 +212,27 @@ struct LibraryView: View {
         return library.pathName(of: id)
     }
 
-    /// The folders grouped inside the folder you're in.
-    private var innerFolders: [LibraryFolder] {
-        guard let current = currentFolder else { return [] }
-        return library.subfolders(of: current.id)
+    /// The folders shown as tiles: the top-level ones on the start page, the groups
+    /// inside the folder you're in.
+    private var foldersHere: [LibraryFolder] { library.subfolders(of: currentFolder?.id) }
+
+    private let folderColumns = [GridItem(.adaptive(minimum: 230, maximum: 340), spacing: 14, alignment: .top)]
+
+    private var booksTitle: String {
+        switch shelf {
+        case .home: "Not in a folder"
+        case .all: "All books"
+        case .unfiled: "Not in a folder"
+        case .folder: "Books"
+        }
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+            .padding(.top, 6)
     }
 
     /// The top-level folder you're somewhere inside (its chip is the selected one).
@@ -231,12 +264,20 @@ struct LibraryView: View {
         let path = library.path(to: current.id)
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
+                // Back to the start page (drop a book or folder here to take it out).
+                Button {
+                    shelf = .home
+                } label: {
+                    Label("Library", systemImage: "chevron.left")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .dropDestination(for: String.self) { items, _ in drop(items, into: nil) }
                 ForEach(Array(path.enumerated()), id: \.element.id) { i, f in
-                    if i > 0 {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
                     Button {
                         shelf = .folder(f.id)
                     } label: {
@@ -258,16 +299,15 @@ struct LibraryView: View {
     @ViewBuilder
     private func folderMenu(_ f: LibraryFolder) -> some View {
         Button {
-            nameDraft = f.name
-            naming = .rename(f)
+            customizing = f
         } label: {
-            Label("Rename", systemImage: "pencil")
+            Label("Name, color & icon…", systemImage: "paintpalette")
         }
         Button {
             nameDraft = ""
             naming = .new(moving: nil, parent: f.id)
         } label: {
-            Label("New folder inside", systemImage: "folder.badge.plus")
+            Label("New group inside", systemImage: "folder.badge.plus")
         }
         Menu {
             if f.parentID != nil {
@@ -293,45 +333,20 @@ struct LibraryView: View {
 
     // MARK: Folder bar
 
-    /// All · your folders · Not in a folder · New folder. Drop a book on a folder to move it.
+    /// Folders (the start page) · All books.
     private var folderBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip("All", systemImage: "books.vertical", count: library.documents.count, selected: shelf == .all) {
-                    shelf = .all
-                }
-                ForEach(library.subfolders(of: nil)) { f in
-                    let groups = !library.subfolders(of: f.id).isEmpty
-                    chip(f.name, systemImage: groups ? "folder.badge.gearshape" : "folder", count: library.count(in: f),
-                         selected: currentRoot == f.id) {
-                        shelf = .folder(f.id)
-                    }
-                    .draggable("folder:\(f.id.uuidString)")
-                    .dropDestination(for: String.self) { items, _ in drop(items, into: f) }
-                    .contextMenu { folderMenu(f) }
-                }
-                if !library.folders.isEmpty {
-                    chip("Not in a folder", systemImage: "tray", count: library.documents.filter { $0.folderID == nil }.count,
-                         selected: shelf == .unfiled) {
-                        shelf = .unfiled
-                    }
-                    .dropDestination(for: String.self) { items, _ in drop(items, into: nil) }
-                }
-                Button {
-                    nameDraft = ""
-                    naming = .new(moving: nil, parent: currentFolder?.id)
-                } label: {
-                    Label("New folder", systemImage: "plus")
-                        .font(.subheadline.weight(.medium))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-                }
-                .buttonStyle(.plain)
+        HStack(spacing: 8) {
+            chip("Folders", systemImage: "folder", count: library.folders.count,
+                 selected: shelf != .all) {
+                shelf = .home
             }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 10)
+            chip("All books", systemImage: "books.vertical", count: library.documents.count, selected: shelf == .all) {
+                shelf = .all
+            }
+            Spacer()
         }
+        .padding(.horizontal, 32)
+        .padding(.vertical, 10)
     }
 
     private func chip(_ title: String, systemImage: String, count: Int, selected: Bool,
@@ -542,42 +557,185 @@ private struct ReadingRing: View {
     }
 }
 
-/// A folder grouped inside the one you're in.
-private struct FolderCard: View {
+/// A folder (or a group inside one): its icon in its color, its name, what's in it,
+/// and a ⋯ menu.
+private struct FolderTile<MenuItems: View>: View {
     let folder: LibraryFolder
     let books: Int
     let folders: Int
+    let open: () -> Void
+    @ViewBuilder let menu: () -> MenuItems
+
+    private var tint: Color { FolderLook.color(folder.colorHex) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.accentColor.opacity(0.10))
-                .aspectRatio(3 / 4, contentMode: .fit)
-                .overlay {
-                    Image(systemName: folders > 0 ? "folder.fill.badge.gearshape" : "folder.fill")
-                        .font(.system(size: 54, weight: .regular))
-                        .foregroundStyle(Color.accentColor.opacity(0.85))
+        HStack(spacing: 12) {
+            Button(action: open) {
+                HStack(spacing: 12) {
+                    Image(systemName: folder.symbol ?? "folder.fill")
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(tint)
+                        .frame(width: 46, height: 46)
+                        .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(folder.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.accentColor.opacity(0.25)))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(folder.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Folder \(folder.name), \(summary)")
+            Menu {
+                menu()
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Options for \(folder.name)")
         }
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Folder \(folder.name), \(summary)")
+        .padding(.leading, 12)
+        .padding(.trailing, 4)
+        .padding(.vertical, 10)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tint.opacity(0.25)))
     }
 
     private var summary: String {
         var parts = ["\(books) book\(books == 1 ? "" : "s")"]
-        if folders > 0 { parts.append("\(folders) folder\(folders == 1 ? "" : "s")") }
+        if folders > 0 { parts.append("\(folders) group\(folders == 1 ? "" : "s")") }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// The dashed "+" tile at the end of the folders.
+private struct NewFolderTile: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 46, height: 46)
+                Text(title).font(.subheadline.weight(.medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.leading, 12)
+            .padding(.vertical, 10)
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The colors and icons a folder can have.
+enum FolderLook {
+    static let colors: [(name: String, hex: String)] = [
+        ("Blue", "#3478F6FF"), ("Purple", "#8E5CF6FF"), ("Pink", "#E8508BFF"), ("Red", "#E5484DFF"),
+        ("Orange", "#F0883EFF"), ("Yellow", "#D9A400FF"), ("Green", "#34A853FF"), ("Teal", "#1AA5A5FF"),
+        ("Brown", "#9C6B45FF"), ("Gray", "#7A7F87FF"),
+    ]
+    static let symbols = [
+        "folder.fill", "book.closed.fill", "books.vertical.fill", "graduationcap.fill", "pencil.and.outline",
+        "doc.text.fill", "newspaper.fill", "building.columns.fill", "globe.europe.africa.fill", "flask.fill",
+        "function", "heart.fill", "star.fill", "flag.fill", "briefcase.fill", "tray.full.fill",
+    ]
+
+    static func color(_ hex: String?) -> Color {
+        hex.flatMap { UIColor(hex: $0) }.map { Color(uiColor: $0) } ?? .accentColor
+    }
+}
+
+/// Name, color and icon of a folder.
+private struct FolderCustomizeView: View {
+    let folder: LibraryFolder
+    let save: (String, String?, String?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var colorHex: String?
+    @State private var symbol: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("Folder name", text: $name)
+                }
+                Section("Color") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 14) {
+                        swatch(nil, name: "Standard")
+                        ForEach(FolderLook.colors, id: \.hex) { c in swatch(c.hex, name: c.name) }
+                    }
+                    .padding(.vertical, 6)
+                }
+                Section("Icon") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 14) {
+                        ForEach(FolderLook.symbols, id: \.self) { s in
+                            let on = (symbol ?? "folder.fill") == s
+                            Button {
+                                symbol = s == "folder.fill" ? nil : s
+                            } label: {
+                                Image(systemName: s)
+                                    .font(.system(size: 20, weight: .medium))
+                                    .foregroundStyle(on ? FolderLook.color(colorHex) : Color.secondary)
+                                    .frame(width: 44, height: 44)
+                                    .background(on ? FolderLook.color(colorHex).opacity(0.16) : Color.clear,
+                                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(s)
+                            .accessibilityAddTraits(on ? .isSelected : [])
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+            .navigationTitle("Customize folder")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        save(name, colorHex, symbol)
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                name = folder.name
+                colorHex = folder.colorHex
+                symbol = folder.symbol
+            }
+        }
+    }
+
+    private func swatch(_ hex: String?, name: String) -> some View {
+        let on = colorHex == hex
+        return Button {
+            colorHex = hex
+        } label: {
+            Circle()
+                .fill(FolderLook.color(hex))
+                .frame(width: 32, height: 32)
+                .overlay(Circle().strokeBorder(Color.primary.opacity(on ? 0.8 : 0), lineWidth: 2.5).padding(-4))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(name)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
