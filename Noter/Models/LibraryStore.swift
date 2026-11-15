@@ -126,6 +126,14 @@ final class LibraryStore: ObservableObject {
         move(doc, to: folder)
     }
 
+    /// Marks a reading finished (or not).
+    func setFinished(_ on: Bool, for doc: DocumentInfo) {
+        guard var info = Storage.load(DocumentInfo.self, from: Storage.infoURL(doc.id)) else { return }
+        info.finished = on ? true : nil
+        Storage.save(info, to: Storage.infoURL(doc.id))
+        reload()
+    }
+
     private func setFolder(_ id: UUID?, for doc: DocumentInfo, reloading: Bool) {
         // Re-read the info from disk so nothing saved by the reader is lost.
         guard var info = Storage.load(DocumentInfo.self, from: Storage.infoURL(doc.id)) else { return }

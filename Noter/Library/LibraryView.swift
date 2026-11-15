@@ -82,6 +82,7 @@ struct LibraryView: View {
                                     ProgressDashboard(library: library, scope: currentFolder,
                                                       open: { openBook($0, at: nil) },
                                                       viewNotes: { path.append(NotesRoute(id: $0.id)) },
+                                                      finish: { library.setFinished(!$0.isFinished, for: $0) },
                                                       remove: { pendingDelete = $0 })
                                 }
                                 // Folders first (on the start page), or the groups inside
@@ -435,6 +436,15 @@ struct LibraryView: View {
         } label: {
             Label("View Notes", systemImage: "point.3.connected.trianglepath.dotted")
         }
+        Button {
+            library.setFinished(!doc.isFinished, for: doc)
+        } label: {
+            if doc.isFinished {
+                Label("Mark as not finished", systemImage: "arrow.uturn.backward.circle")
+            } else {
+                Label("Mark as finished", systemImage: "checkmark.circle")
+            }
+        }
         Button(role: .destructive) {
             pendingDelete = doc
         } label: {
@@ -498,6 +508,16 @@ private struct BookCard: View {
             .overlay(alignment: .topTrailing) {
                 if pagesRead < doc.pageCount {
                     ReadingRing(done: pagesRead, total: doc.pageCount, active: reading)
+                        .padding(8)
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                if doc.isFinished {
+                    Label("Finished", systemImage: "checkmark")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.regularMaterial, in: Capsule())
                         .padding(8)
                 }
             }
@@ -790,6 +810,7 @@ private struct ProgressDashboard: View {
     var scope: LibraryFolder?
     let open: (DocumentInfo) -> Void
     let viewNotes: (DocumentInfo) -> Void
+    let finish: (DocumentInfo) -> Void
     let remove: (DocumentInfo) -> Void
 
     private let columns = [GridItem(.adaptive(minimum: 320, maximum: 520), spacing: 14, alignment: .top)]
@@ -802,7 +823,7 @@ private struct ProgressDashboard: View {
         let docs: [DocumentInfo]
 
         var pages: Int { docs.reduce(0) { $0 + $1.pageCount } }
-        var read: Int { docs.reduce(0) { $0 + min($1.lastPage + 1, $1.pageCount) } }
+        var read: Int { docs.reduce(0) { $0 + ProgressDashboard.pagesRead($1) } }
         var fraction: Double { pages > 0 ? Double(read) / Double(pages) : 0 }
     }
 
@@ -851,8 +872,14 @@ private struct ProgressDashboard: View {
     }
 
     static func progress(_ doc: DocumentInfo) -> Double {
+        if doc.isFinished { return 1 }
         guard doc.pageCount > 0 else { return 0 }
         return min(Double(doc.lastPage + 1) / Double(doc.pageCount), 1)
+    }
+
+    /// Pages read: all of them once you've marked it finished.
+    static func pagesRead(_ doc: DocumentInfo) -> Int {
+        doc.isFinished ? doc.pageCount : min(doc.lastPage + 1, doc.pageCount)
     }
 
     var body: some View {
@@ -870,7 +897,7 @@ private struct ProgressDashboard: View {
     private func overall(_ groups: [ClassGroup]) -> some View {
         let all = docs
         let pages = all.reduce(0) { $0 + $1.pageCount }
-        let read = all.reduce(0) { $0 + min($1.lastPage + 1, $1.pageCount) }
+        let read = all.reduce(0) { $0 + Self.pagesRead($1) }
         let fraction = pages > 0 ? Double(read) / Double(pages) : 0
         let finished = all.filter { Self.progress($0) >= 0.999 }.count
         let highlights = all.reduce(0) { $0 + $1.highlightCount }
@@ -1012,7 +1039,7 @@ private struct ProgressDashboard: View {
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                         Spacer(minLength: 6)
-                        Text(p >= 0.999 ? "Done" : "p. \(doc.lastPage + 1) of \(doc.pageCount)")
+                        Text(p >= 0.999 ? "Finished" : "p. \(doc.lastPage + 1) of \(doc.pageCount)")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -1028,11 +1055,7 @@ private struct ProgressDashboard: View {
             }
             .buttonStyle(.plain)
             Menu {
-                Button { open(doc) } label: { Label("Open", systemImage: "book") }
-                Button { viewNotes(doc) } label: {
-                    Label("View Notes", systemImage: "point.3.connected.trianglepath.dotted")
-                }
-                Button(role: .destructive) { remove(doc) } label: { Label("Remove reading", systemImage: "trash") }
+                actions(doc)
             } label: {
                 Image(systemName: "ellipsis")
                     .foregroundStyle(.secondary)
@@ -1041,7 +1064,25 @@ private struct ProgressDashboard: View {
             }
             .accessibilityLabel("Options for \(LibraryTitles.title(of: doc))")
         }
+        .contentShape(Rectangle())
+        .contextMenu { actions(doc) }
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private func actions(_ doc: DocumentInfo) -> some View {
+        Button { open(doc) } label: { Label("Open", systemImage: "book") }
+        Button { viewNotes(doc) } label: {
+            Label("View Notes", systemImage: "point.3.connected.trianglepath.dotted")
+        }
+        Button { finish(doc) } label: {
+            if doc.isFinished {
+                Label("Mark as not finished", systemImage: "arrow.uturn.backward.circle")
+            } else {
+                Label("Mark as finished", systemImage: "checkmark.circle")
+            }
+        }
+        Button(role: .destructive) { remove(doc) } label: { Label("Remove reading", systemImage: "trash") }
     }
 }
 

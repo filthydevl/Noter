@@ -61,6 +61,10 @@ struct DocumentInfo: Codable, Identifiable, Hashable {
     var ocrPagesDone: Int
     /// The library folder it's in (nil: not in a folder).
     var folderID: UUID? = nil
+    /// Marked as finished by you (optional so older books load).
+    var finished: Bool? = nil
+
+    var isFinished: Bool { finished ?? false }
 }
 
 /// A folder in the library, named by you.
