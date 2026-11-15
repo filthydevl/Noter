@@ -93,10 +93,11 @@ struct ReaderView: View {
         // Time read / total time, floating at the bottom of the page.
         .overlay(alignment: .bottom) {
             ReadingTimeLabel(session: session, speech: session.speech, outline: session.outline)
-                .padding(.bottom, scribbleBar ? 78 : 14)
+                .padding(.bottom, (scribbleBar ? 78 : 14) + sheetRoom)
                 .padding(.trailing, docked ? Self.besidePanelInset : 0)
                 .padding(.leading, 40) // clear of the page slider
                 .animation(Self.panelSpring, value: docked)
+                .animation(Self.panelSpring, value: sheetRoom)
                 .animation(.snappy(duration: 0.25), value: scribbleBar)
         }
         .overlay(alignment: .trailing) {
@@ -253,7 +254,7 @@ struct ReaderView: View {
                                 .overlay(alignment: .top) {
                                     Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
                                 }
-                                .shadow(color: .black.opacity(0.15), radius: 12, y: -2)
+                                // The same flat material and hairline as the side panel.
                                 .ignoresSafeArea(edges: .bottom)
                         }
                         .padding(.bottom, keyboardLift)
@@ -498,8 +499,8 @@ struct ReaderView: View {
     /// Room the panel and the strip beside it take on the right.
     static let besidePanelInset: CGFloat = panelWidth + railWidth
 
-    /// The tools are a flat strip beside an open panel (both orientations).
-    private var docked: Bool { panel != nil }
+    /// The tools are a flat strip beside an open side panel.
+    private var docked: Bool { panel != nil && !bottomSheet }
 
     /// Portrait with a list open: the page area left of the panel is narrow, so the
     /// top bar lines up its buttons instead of centering PDF / Text.
@@ -560,11 +561,13 @@ struct ReaderView: View {
         session.pdfController?.coveredRight = covered
     }
 
-    /// One design in both orientations: the list is always the panel on the right with
-    /// the tool strip beside it (portrait used to have a card along the bottom). In
-    /// portrait it lies over the page, which keeps its full width.
-    private var bottomSheet: Bool { false }
-    private var sheetHeight: CGFloat { min(max(viewHeight * 0.42, 320), 560) }
+    /// Portrait: the lists open along the bottom, a quarter of the screen tall —
+    /// except Bracket Notes, which keeps the panel on the right with the tool strip
+    /// (lying over the page, which keeps its full width). Landscape: every list is the
+    /// panel on the right.
+    private var bottomSheet: Bool { viewWidth > 0 && viewWidth < 1140 && panel != .bracket }
+    /// A quarter of the screen (never too short to use).
+    private var sheetHeight: CGFloat { max(viewHeight * 0.25, 200) }
     /// Room the bottom card takes (portrait, a list open), for what sits above it.
     private var sheetRoom: CGFloat { panel != nil && bottomSheet ? sheetHeight + 8 : 0 }
 
