@@ -98,6 +98,23 @@ struct LogicalPage {
         return a...b
     }
 
+    /// The stretches of words a highlight covers on this page, in order. Usually one;
+    /// several when words were added to it with gaps between (only the words you
+    /// highlighted, not the ones in between).
+    func runs(of h: Highlight) -> [ClosedRange<Int>] {
+        guard h.page == pdfIndex else { return [] }
+        let idx = Set(h.tokenKeys.compactMap { indexByKey[$0] }).sorted()
+        var out: [ClosedRange<Int>] = []
+        for i in idx {
+            if let last = out.last, last.upperBound + 1 == i {
+                out[out.count - 1] = last.lowerBound...i
+            } else {
+                out.append(i...i)
+            }
+        }
+        return out
+    }
+
     // MARK: Building highlights
 
     func textRange(for r: ClosedRange<Int>) -> NSRange {

@@ -563,8 +563,9 @@ final class DocumentSession: ObservableObject {
         }
     }
 
-    /// Adds a stroke to the highlight you tapped: it grows to take the new words in
-    /// (and the lines between). Not when the stroke is inside it, or on another page.
+    /// Adds a stroke to the highlight you tapped: just the words you highlighted join
+    /// it — the words between stay unhighlighted (it's still one highlight). Not when
+    /// the stroke is inside it, or on another page.
     private func addToPicked(on lp: LogicalPage, range: ClosedRange<Int>) -> Bool {
         guard let id = addingTo else { return false }
         // One tap, one line: tap the highlight again to add another.
@@ -573,11 +574,22 @@ final class DocumentSession: ObservableObject {
         guard let index = highlights.firstIndex(where: { $0.id == id }), highlights[index].role == nil,
               let r = lp.range(of: highlights[index]) else { return false }
         guard !(range.lowerBound >= r.lowerBound && range.upperBound <= r.upperBound) else { return false }
-        let union = min(r.lowerBound, range.lowerBound)...max(r.upperBound, range.upperBound)
+        _ = r
+        var words = Set(lp.runs(of: highlights[index]).flatMap { Array($0) })
+        words.formUnion(range)
+        // Back into stretches of consecutive words.
+        var runs: [ClosedRange<Int>] = []
+        for i in words.sorted() {
+            if let last = runs.last, last.upperBound + 1 == i {
+                runs[runs.count - 1] = last.lowerBound...i
+            } else {
+                runs.append(i...i)
+            }
+        }
         pushUndo()
-        highlights[index].spans = lp.spans(for: union)
-        highlights[index].rects = lp.lineRects(for: union)
-        highlights[index].text = lp.string(for: union)
+        highlights[index].spans = runs.flatMap { lp.spans(for: $0) }
+        highlights[index].rects = runs.flatMap { lp.lineRects(for: $0) }
+        highlights[index].text = runs.map { lp.string(for: $0) }.joined(separator: " … ")
         highlightsChanged()
         return true
     }
@@ -698,9 +710,9 @@ final class DocumentSession: ObservableObject {
     }
 
     func transcriptHighlightRanges(_ lp: LogicalPage) -> [TextHighlight] {
-        highlights(onPage: lp.pdfIndex).compactMap { h in
-            guard let r = lp.range(of: h) else { return nil }
-            return TextHighlight(range: lp.textRange(for: r), color: h.uiColor, style: h.style)
+        // One piece per stretch of words: a highlight with gaps leaves them unmarked.
+        highlights(onPage: lp.pdfIndex).flatMap { h in
+            lp.runs(of: h).map { r in TextHighlight(range: lp.textRange(for: r), color: h.uiColor, style: h.style) }
         }
     }
 
