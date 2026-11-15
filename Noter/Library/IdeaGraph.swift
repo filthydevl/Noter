@@ -378,11 +378,20 @@ final class GraphModel {
     private var center = SIMD3<Double>.zero
     /// Where each node was drawn last frame (for taps).
     private var drawn: [(index: Int, point: CGPoint, r: CGFloat, z: Double)] = []
-    private let stars: [(SIMD3<Double>, Double)] = (0..<140).map { i in
-        // Spread evenly over a far sphere, twinkle strength varied.
-        let y = 1 - 2 * (Double(i) + 0.5) / 140
-        let r = sqrt(1 - y * y), a = Double(i) * 2.399963
-        return (SIMD3(r * cos(a), y, r * sin(a)), 0.15 + 0.5 * Double((i * 37) % 11) / 10)
+    private let stars: [(SIMD3<Double>, Double)] = GraphModel.makeStars()
+
+    /// Spread evenly over a far sphere, brightness varied.
+    private static func makeStars() -> [(SIMD3<Double>, Double)] {
+        var out: [(SIMD3<Double>, Double)] = []
+        for i in 0..<140 {
+            let fi = Double(i)
+            let y: Double = 1 - 2 * (fi + 0.5) / 140
+            let r: Double = (1 - y * y).squareRoot()
+            let a: Double = fi * 2.399963
+            let glow: Double = 0.15 + 0.5 * Double((i * 37) % 11) / 10
+            out.append((SIMD3<Double>(r * cos(a), y, r * sin(a)), glow))
+        }
+        return out
     }
 
     private(set) var highlightCount = 0
@@ -402,7 +411,9 @@ final class GraphModel {
         let old = Dictionary(nodes.map { ($0.key, $0.p) }, uniquingKeysWith: { a, _ in a })
         let first = nodes.isEmpty
         var palettes: [String: Palette] = [:]
-        nodes = bp.nodes.enumerated().map { i, n in
+        var made: [Node] = []
+        let total = Double(max(bp.nodes.count, 1))
+        for (i, n) in bp.nodes.enumerated() {
             let palette: Palette
             if let h = n.highlight {
                 palette = Palette(hs[h].uiColor)
@@ -415,9 +426,12 @@ final class GraphModel {
                 palette = .book
             }
             // New ones start on a ball round the middle (spread evenly).
-            let y = 1 - 2 * (Double(i) + 0.5) / Double(max(bp.nodes.count, 1))
-            let r = sqrt(max(1 - y * y, 0)), a = Double(i) * 2.399963
-            let start = SIMD3(r * cos(a), y, r * sin(a)) * (60 + Double(i % 7) * 12)
+            let fi = Double(i)
+            let y: Double = 1 - 2 * (fi + 0.5) / total
+            let r: Double = (max(1 - y * y, 0)).squareRoot()
+            let a: Double = fi * 2.399963
+            let spread: Double = 60 + Double(i % 7) * 12
+            let start = SIMD3<Double>(r * cos(a), y, r * sin(a)) * spread
             let charge: Double
             switch n.kind {
             case .book: charge = -260
@@ -425,9 +439,11 @@ final class GraphModel {
             case .tag: charge = -70
             case .highlight: charge = -45
             }
-            return Node(key: n.key, kind: n.kind, label: n.label, size: n.size, noted: n.noted,
-                        palette: palette, p: old[n.key] ?? start, charge: charge)
+            let p: SIMD3<Double> = old[n.key] ?? start
+            made.append(Node(key: n.key, kind: n.kind, label: n.label, size: n.size, noted: n.noted,
+                             palette: palette, p: p, charge: charge))
         }
+        nodes = made
         links = bp.links
         neighbors = Array(repeating: [], count: nodes.count)
         linkCountOf = Array(repeating: 0, count: nodes.count)
@@ -460,7 +476,9 @@ final class GraphModel {
                 var l2 = simd_length_squared(d)
                 if l2 > 160_000 { continue }
                 if l2 < 0.01 {
-                    d = SIMD3(Double((i * 7) % 5) - 2, 1, Double((j * 3) % 5) - 2) * 0.1
+                    let jx: Double = Double((i * 7) % 5) - 2
+                    let jz: Double = Double((j * 3) % 5) - 2
+                    d = SIMD3<Double>(jx * 0.1, 0.1, jz * 0.1)
                     l2 = simd_length_squared(d)
                 }
                 l2 = max(l2, 25)
@@ -503,9 +521,11 @@ final class GraphModel {
 
         let cy = cos(yaw), sy = sin(yaw), cp = cos(pitch), sp = sin(pitch)
         func rotate(_ c: SIMD3<Double>) -> SIMD3<Double> {
-            let x1 = c.x * cy + c.z * sy
-            let z1 = -c.x * sy + c.z * cy
-            return SIMD3(x1, c.y * cp - z1 * sp, c.y * sp + z1 * cp)
+            let x1: Double = c.x * cy + c.z * sy
+            let z1: Double = -c.x * sy + c.z * cy
+            let y2: Double = c.y * cp - z1 * sp
+            let z2: Double = c.y * sp + z1 * cp
+            return SIMD3<Double>(x1, y2, z2)
         }
 
         // Stars, turning slower than the graph (they're far away).
@@ -513,8 +533,8 @@ final class GraphModel {
         for (dir, glow) in stars {
             let r = rotate(dir)
             guard r.z < 0.2 else { continue }
-            let pt = CGPoint(x: mid.x + r.x * reach, y: mid.y + r.y * reach)
-            let s = 0.6 + glow * 1.2
+            let pt = CGPoint(x: mid.x + CGFloat(r.x * reach), y: mid.y + CGFloat(r.y * reach))
+            let s = CGFloat(0.6 + glow * 1.2)
             ctx.fill(Path(ellipseIn: CGRect(x: pt.x - s / 2, y: pt.y - s / 2, width: s, height: s)),
                      with: .color(.white.opacity(glow * 0.7)))
         }
@@ -532,14 +552,20 @@ final class GraphModel {
         var persp = [Double](repeating: 1, count: nodes.count)
         for (i, n) in nodes.enumerated() {
             let r = rotate(n.p - center)
-            let s = fov / max(fov + r.z, fov * 0.15)
-            screen[i] = CGPoint(x: mid.x + r.x * s * scale, y: mid.y + r.y * s * scale)
+            let s: Double = fov / max(fov + r.z, fov * 0.15)
+            let k: Double = s * scale
+            screen[i] = CGPoint(x: mid.x + CGFloat(r.x * k), y: mid.y + CGFloat(r.y * k))
             depth[i] = r.z
             persp[i] = s
         }
         func fog(_ z: Double) -> Double { 1 - 0.62 * min(max((z + R) / (2 * R), 0), 1) }
-        let lit: Set<Int>? = focus.map { neighbors.indices.contains($0) ? neighbors[$0].union([$0]) : [$0] }
-        let sizeScale = min(max(sqrt(zoom), 0.7), 2.2)
+        var lit: Set<Int>?
+        if let f = focus {
+            var set: Set<Int> = [f]
+            if neighbors.indices.contains(f) { set.formUnion(neighbors[f]) }
+            lit = set
+        }
+        let sizeScale: Double = min(max(zoom.squareRoot(), 0.7), 2.2)
 
         // Links, far ones fainter.
         for l in links {
@@ -555,11 +581,13 @@ final class GraphModel {
             var path = Path()
             path.move(to: screen[l.a])
             path.addLine(to: screen[l.b])
-            let width = (l.style == .idea ? 1.8 : 1.0) * min(persp[l.a], 2) * (touches ? 1.5 : 1)
-            ctx.stroke(path, with: .linearGradient(
-                Gradient(colors: [nodes[l.a].palette.glow.opacity(min(a, 1)), nodes[l.b].palette.glow.opacity(min(a, 1))]),
-                startPoint: screen[l.a], endPoint: screen[l.b]),
-                style: StrokeStyle(lineWidth: width, lineCap: .round, dash: l.style == .related ? [3, 4] : []))
+            let base: Double = l.style == .idea ? 1.8 : 1.0
+            let width = CGFloat(base * min(persp[l.a], 2) * (touches ? 1.5 : 1))
+            let shown: Double = min(a, 1)
+            let fade = Gradient(colors: [nodes[l.a].palette.glow.opacity(shown), nodes[l.b].palette.glow.opacity(shown)])
+            let dash: [CGFloat] = l.style == .related ? [3, 4] : []
+            let stroke = StrokeStyle(lineWidth: width, lineCap: .round, dash: dash)
+            ctx.stroke(path, with: .linearGradient(fade, startPoint: screen[l.a], endPoint: screen[l.b]), style: stroke)
         }
 
         // Spheres, back to front.
@@ -571,22 +599,27 @@ final class GraphModel {
             let n = nodes[i]
             let p = screen[i]
             let r = CGFloat(n.size * persp[i] * sizeScale)
-            guard p.x > -r * 3, p.y > -r * 3, p.x < size.width + r * 3, p.y < size.height + r * 3 else { continue }
+            let pad: CGFloat = r * 3
+            guard p.x > -pad, p.y > -pad, p.x < size.width + pad, p.y < size.height + pad else { continue }
             var dim = fog(depth[i])
             if let lit, !lit.contains(i) { dim *= 0.18 }
             var c = ctx
             c.opacity = dim
             // Glow.
             let g = r * (focus == i ? 4.2 : 3)
-            c.fill(Path(ellipseIn: CGRect(x: p.x - g, y: p.y - g, width: g * 2, height: g * 2)), with: .radialGradient(
-                Gradient(colors: [n.palette.glow.opacity(isHub(n) ? 0.5 : 0.38), n.palette.glow.opacity(0)]),
-                center: p, startRadius: r * 0.6, endRadius: g))
+            let glowStrength: Double = isHub(n) ? 0.5 : 0.38
+            let halo = Gradient(colors: [n.palette.glow.opacity(glowStrength), n.palette.glow.opacity(0)])
+            let haloRect = CGRect(x: p.x - g, y: p.y - g, width: g * 2, height: g * 2)
+            c.fill(Path(ellipseIn: haloRect), with: .radialGradient(halo, center: p, startRadius: r * 0.6, endRadius: g))
             // The sphere: lit from the upper left.
             let ball = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
-            c.fill(ball, with: .radialGradient(
-                Gradient(stops: [.init(color: n.palette.light, location: 0), .init(color: n.palette.base, location: 0.45),
-                                 .init(color: n.palette.dark, location: 1)]),
-                center: CGPoint(x: p.x - r * 0.38, y: p.y - r * 0.42), startRadius: 0, endRadius: r * 1.55))
+            let shading = Gradient(stops: [
+                Gradient.Stop(color: n.palette.light, location: 0),
+                Gradient.Stop(color: n.palette.base, location: 0.45),
+                Gradient.Stop(color: n.palette.dark, location: 1),
+            ])
+            let lightAt = CGPoint(x: p.x - r * 0.38, y: p.y - r * 0.42)
+            c.fill(ball, with: .radialGradient(shading, center: lightAt, startRadius: 0, endRadius: r * 1.55))
             if isHub(n) {
                 let o = r * 1.45
                 c.stroke(Path(ellipseIn: CGRect(x: p.x - o, y: p.y - o, width: o * 2, height: o * 2)),
@@ -608,12 +641,13 @@ final class GraphModel {
         for (i, p, r, dim) in labels.prefix(60) {
             let n = nodes[i]
             let hub = isHub(n)
-            let text = Text(n.label)
-                .font(hub ? .caption.weight(.bold) : .caption2.weight(.medium))
-                .foregroundStyle(.white.opacity((hub ? 0.92 : 0.78) * max(dim, 0.35)))
+            let strength: Double = (hub ? 0.92 : 0.78) * max(dim, 0.35)
+            let font: Font = hub ? .caption.weight(.bold) : .caption2.weight(.medium)
+            let text = Text(n.label).font(font).foregroundStyle(Color.white.opacity(strength))
             var c = ctx
             c.addFilter(.shadow(color: .black.opacity(0.9), radius: 3))
-            c.draw(text, at: CGPoint(x: p.x, y: p.y + r + (hub ? 11 : 9)), anchor: .center)
+            let below: CGFloat = hub ? 11 : 9
+            c.draw(text, at: CGPoint(x: p.x, y: p.y + r + below), anchor: .center)
         }
         drawn = hits
     }
