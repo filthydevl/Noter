@@ -31,7 +31,9 @@ enum Storage {
         libraryRoot.appendingPathComponent(id.uuidString, isDirectory: true)
     }
 
-    static func pdfURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("document.pdf") }
+    /// The book's PDF: in your cloud folder if it lives there, else on the iPad.
+    static func pdfURL(_ id: UUID) -> URL { CloudStore.shared.url(for: id) ?? localPDFURL(id) }
+    static func localPDFURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("document.pdf") }
     static func infoURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("info.json") }
     static func highlightsURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("highlights.json") }
     static func thumbnailURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("cover.jpg") }

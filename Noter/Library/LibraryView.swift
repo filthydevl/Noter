@@ -16,7 +16,8 @@ struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @ObservedObject private var reading = BackgroundOCR.shared
     @State private var showImporter = false
-    @State private var path: [UUID] = []
+    @State private var path = NavigationPath()
+    @State private var showStorage = false
     @State private var pendingDelete: DocumentInfo?
     @State private var shelf: Shelf = .home
     /// The folder whose name, color and icon you're changing.
@@ -73,10 +74,17 @@ struct LibraryView: View {
                         if let current = currentFolder { breadcrumbs(current) }
                         ScrollView {
                             VStack(alignment: .leading, spacing: 14) {
+                                // Progress by class, on the start page.
+                                if shelf == .home {
+                                    sectionTitle("Progress")
+                                    ProgressDashboard(library: library, open: { openBook($0, at: nil) },
+                                                      viewNotes: { path.append(NotesRoute(id: $0.id)) },
+                                                      remove: { pendingDelete = $0 })
+                                }
                                 // Folders first (on the start page), or the groups inside
                                 // the folder you're in; then the books.
                                 if shelf != .all, shelf != .unfiled {
-                                    sectionTitle(currentFolder == nil ? "Folders" : "Groups")
+                                    sectionTitle(currentFolder == nil ? "Classes" : "Groups")
                                     LazyVGrid(columns: folderColumns, spacing: 14) {
                                         ForEach(foldersHere) { f in
                                             FolderTile(folder: f, books: library.count(in: f),
@@ -86,7 +94,7 @@ struct LibraryView: View {
                                                 .dropDestination(for: String.self) { items, _ in drop(items, into: f) }
                                                 .contextMenu { folderMenu(f) }
                                         }
-                                        NewFolderTile(title: currentFolder == nil ? "New folder" : "New group") {
+                                        NewFolderTile(title: currentFolder == nil ? "New class" : "New group") {
                                             nameDraft = ""
                                             naming = .new(moving: nil, parent: currentFolder?.id)
                                         }
@@ -132,6 +140,11 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
+                        showStorage = true
+                    } label: {
+                        Label("Storage & iCloud", systemImage: CloudStore.shared.isOn ? "icloud" : "externaldrive")
+                    }
+                    Button {
                         nameDraft = ""
                         naming = .new(moving: nil, parent: currentFolder?.id)
                     } label: {
@@ -148,12 +161,18 @@ struct LibraryView: View {
             .navigationDestination(for: UUID.self) { id in
                 ReaderScreen(docID: id)
             }
+            .navigationDestination(for: NotesRoute.self) { route in
+                if let doc = library.documents.first(where: { $0.id == route.id }) {
+                    NotesExplorerView(doc: doc) { page in openBook(doc, at: page) }
+                }
+            }
+            .sheet(isPresented: $showStorage) { StorageView(library: library) }
             .fileImporter(isPresented: $showImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
                 guard case .success(let urls) = result else { return }
                 let folder = currentFolder
                 Task { @MainActor in
                     let ids = await library.importPDFs(urls, into: folder)
-                    if ids.count == 1 { path = ids }
+                    if ids.count == 1 { path.append(ids[0]) }
                 }
             }
             .overlay {
@@ -177,11 +196,11 @@ struct LibraryView: View {
                 Button(namingIsRename ? "Rename" : "Create") { finishNaming() }
             }
             .confirmationDialog(
-                "Delete “\(pendingDelete?.title ?? "")” and its highlights?",
+                "Remove “\(pendingDelete.map(LibraryTitles.title(of:)) ?? "")” and its highlights and notes?",
                 isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
                 titleVisibility: .visible
             ) {
-                Button("Delete", role: .destructive) {
+                Button("Remove reading", role: .destructive) {
                     if let doc = pendingDelete { library.delete(doc) }
                     pendingDelete = nil
                 }
@@ -204,6 +223,15 @@ struct LibraryView: View {
             }
             .onAppear { library.reload() }
         }
+    }
+
+    /// Opens a reading (at a page: from View Notes).
+    private func openBook(_ doc: DocumentInfo, at page: Int?) {
+        if let page, var info = Storage.load(DocumentInfo.self, from: Storage.infoURL(doc.id)) {
+            info.lastPage = page
+            Storage.save(info, to: Storage.infoURL(doc.id))
+        }
+        path.append(doc.id)
     }
 
     /// The book's folder ("Group › Folder"), shown on its card in "All".
@@ -399,10 +427,15 @@ struct LibraryView: View {
         } label: {
             Label("Move to Folder", systemImage: "folder")
         }
+        Button {
+            path.append(NotesRoute(id: doc.id))
+        } label: {
+            Label("View Notes", systemImage: "point.3.connected.trianglepath.dotted")
+        }
         Button(role: .destructive) {
             pendingDelete = doc
         } label: {
-            Label("Delete", systemImage: "trash")
+            Label("Remove reading", systemImage: "trash")
         }
     }
 
@@ -468,7 +501,7 @@ private struct BookCard: View {
             .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(doc.title)
+                Text(LibraryTitles.title(of: doc))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
@@ -737,5 +770,257 @@ private struct FolderCustomizeView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(name)
         .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// "View Notes" for a reading.
+struct NotesRoute: Hashable {
+    let id: UUID
+}
+
+/// The start page's progress board: a card per class (top-level folder) with how far
+/// you are in each of its readings, then the readings not in a class.
+private struct ProgressDashboard: View {
+    @ObservedObject var library: LibraryStore
+    let open: (DocumentInfo) -> Void
+    let viewNotes: (DocumentInfo) -> Void
+    let remove: (DocumentInfo) -> Void
+
+    private let columns = [GridItem(.adaptive(minimum: 320, maximum: 520), spacing: 14, alignment: .top)]
+
+    private struct ClassGroup: Identifiable {
+        let id: String
+        let name: String
+        let tint: Color
+        let symbol: String
+        let docs: [DocumentInfo]
+    }
+
+    private var groups: [ClassGroup] {
+        var byClass: [UUID: [DocumentInfo]] = [:]
+        var none: [DocumentInfo] = []
+        for doc in library.documents {
+            if let f = doc.folderID, let root = library.path(to: f).first {
+                byClass[root.id, default: []].append(doc)
+            } else {
+                none.append(doc)
+            }
+        }
+        func sorted(_ docs: [DocumentInfo]) -> [DocumentInfo] {
+            docs.sorted { ($0.lastOpened ?? $0.added) > ($1.lastOpened ?? $1.added) }
+        }
+        var out = library.subfolders(of: nil).compactMap { f -> ClassGroup? in
+            guard let docs = byClass[f.id], !docs.isEmpty else { return nil }
+            return ClassGroup(id: f.id.uuidString, name: f.name, tint: FolderLook.color(f.colorHex),
+                         symbol: f.symbol ?? "folder.fill", docs: sorted(docs))
+        }
+        if !none.isEmpty {
+            out.append(ClassGroup(id: "none", name: "No class", tint: .secondary, symbol: "tray", docs: sorted(none)))
+        }
+        return out
+    }
+
+    static func progress(_ doc: DocumentInfo) -> Double {
+        guard doc.pageCount > 0 else { return 0 }
+        return min(Double(doc.lastPage + 1) / Double(doc.pageCount), 1)
+    }
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 14) {
+            ForEach(groups) { g in card(g) }
+        }
+    }
+
+    private func card(_ g: ClassGroup) -> some View {
+        let pages = g.docs.reduce(0) { $0 + $1.pageCount }
+        let read = g.docs.reduce(0) { $0 + min($1.lastPage + 1, $1.pageCount) }
+        let highlights = g.docs.reduce(0) { $0 + $1.highlightCount }
+        let fraction = pages > 0 ? Double(read) / Double(pages) : 0
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: g.symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(g.tint)
+                    .frame(width: 36, height: 36)
+                    .background(g.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(g.name).font(.headline)
+                    Text("\(g.docs.count) reading\(g.docs.count == 1 ? "" : "s") · \(highlights) highlight\(highlights == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(Int((fraction * 100).rounded()))%")
+                    .font(.title3.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(g.tint)
+            }
+            ForEach(g.docs.prefix(6)) { doc in row(doc, tint: g.tint) }
+            if g.docs.count > 6 {
+                Text("+ \(g.docs.count - 6) more in this class")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(g.tint.opacity(0.2)))
+    }
+
+    private func row(_ doc: DocumentInfo, tint: Color) -> some View {
+        let p = Self.progress(doc)
+        return HStack(spacing: 10) {
+            Button {
+                open(doc)
+            } label: {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(LibraryTitles.title(of: doc))
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        Text(p >= 0.999 ? "Done" : "p. \(doc.lastPage + 1) of \(doc.pageCount)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.primary.opacity(0.08))
+                            Capsule().fill(tint).frame(width: max(g.size.width * p, p > 0 ? 6 : 0))
+                        }
+                    }
+                    .frame(height: 6)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Menu {
+                Button { open(doc) } label: { Label("Open", systemImage: "book") }
+                Button { viewNotes(doc) } label: {
+                    Label("View Notes", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                Button(role: .destructive) { remove(doc) } label: { Label("Remove reading", systemImage: "trash") }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Options for \(LibraryTitles.title(of: doc))")
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// What Noter keeps on the iPad, and keeping the books in iCloud Drive instead.
+private struct StorageView: View {
+    @ObservedObject var library: LibraryStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var usage: StorageReport.Usage?
+    @State private var picking = false
+    @State private var working: String?
+    @State private var message: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if let u = usage {
+                        row("Books (PDFs)", u.books)
+                        row("Recognized text", u.text)
+                        row("Read-aloud audio (cache)", u.audio)
+                        row("Notes, covers & exports", u.other)
+                        row("Total", u.total).bold()
+                    } else {
+                        ProgressView()
+                    }
+                } header: {
+                    Text("On this iPad")
+                }
+
+                Section {
+                    if CloudStore.shared.isOn {
+                        Label("Books are in “\(CloudStore.shared.folderName ?? "")”", systemImage: "icloud.fill")
+                            .foregroundStyle(.blue)
+                        Button("Bring the books back onto the iPad") { stopCloud() }
+                            .disabled(working != nil)
+                    } else {
+                        Button {
+                            picking = true
+                        } label: {
+                            Label("Keep books in iCloud Drive…", systemImage: "icloud.and.arrow.up")
+                        }
+                        .disabled(working != nil)
+                    }
+                    if let working {
+                        HStack { ProgressView(); Text(working).foregroundStyle(.secondary) }
+                    }
+                    if let message { Text(message).font(.footnote).foregroundStyle(.secondary) }
+                } header: {
+                    Text("iCloud Drive")
+                } footer: {
+                    Text("Pick (or make) a folder in iCloud Drive. Your PDFs move there; highlights, notes and recognized text stay on the iPad. iPadOS keeps the books you read here and frees the others when it needs room — they download again when you open them (you need to be online for that). Removing a reading also removes its file from the folder.")
+                }
+
+                Section {
+                    Button("Clear read-aloud audio", role: .destructive) {
+                        StorageReport.clearAudio()
+                        measure()
+                    }
+                } footer: {
+                    Text("Speechify audio is kept so pages you've heard replay instantly and aren't billed again. Clearing it frees the space; pages are fetched again when read aloud. It never grows past 150 MB.")
+                }
+            }
+            .navigationTitle("Storage & iCloud")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
+                guard case .success(let url) = result else { return }
+                startCloud(url)
+            }
+            .task { measure() }
+        }
+    }
+
+    private func row(_ title: String, _ bytes: Int64) -> some View {
+        LabeledContent(title, value: ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+    }
+
+    private func measure() {
+        Task.detached(priority: .utility) {
+            let u = StorageReport.measure()
+            await MainActor.run { usage = u }
+        }
+    }
+
+    private func startCloud(_ folder: URL) {
+        working = "Moving books to iCloud Drive…"
+        message = nil
+        let docs = library.documents
+        Task.detached(priority: .userInitiated) {
+            var problem: String?
+            do { try CloudStore.shared.use(folder: folder, documents: docs) } catch {
+                problem = "Couldn't use that folder: \(error.localizedDescription)"
+            }
+            await MainActor.run {
+                working = nil
+                message = problem ?? "Done. New books you import go there too."
+                measure()
+            }
+        }
+    }
+
+    private func stopCloud() {
+        working = "Bringing books back…"
+        Task.detached(priority: .userInitiated) {
+            await CloudStore.shared.stop()
+            await MainActor.run {
+                working = nil
+                message = CloudStore.shared.isOn
+                    ? "Some books couldn't be downloaded (are you online?). Try again."
+                    : "All books are on the iPad again. The copies in iCloud Drive were left there."
+                measure()
+            }
+        }
     }
 }

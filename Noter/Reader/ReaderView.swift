@@ -12,7 +12,12 @@ struct ReaderScreen: View {
             if let session = holder.session {
                 ReaderView(session: session)
             } else if holder.failed {
-                ContentUnavailableView("Couldn't open this PDF", systemImage: "exclamationmark.triangle")
+                ContentUnavailableView("Couldn't open this PDF", systemImage: "exclamationmark.triangle",
+                                       description: Text(CloudStore.shared.isOn
+                                                         ? "If it's in iCloud Drive, check the iPad is online and try again."
+                                                         : ""))
+            } else if holder.downloading {
+                ProgressView("Downloading from \(CloudStore.shared.folderName ?? "iCloud")…")
             } else {
                 ProgressView()
             }
@@ -33,11 +38,27 @@ final class SessionHolder: ObservableObject {
     @Published private(set) var session: DocumentSession?
     @Published private(set) var failed = false
 
+    /// The book's PDF is in your cloud folder and iPadOS has freed it: fetching it.
+    @Published private(set) var downloading = false
+
     func open(_ id: UUID) {
         guard session == nil else {
             session?.reopen()
             return
         }
+        if CloudStore.shared.needsDownload(id) {
+            downloading = true
+            Task { @MainActor in
+                let ok = await CloudStore.shared.download(id)
+                downloading = false
+                if ok { openNow(id) } else { failed = true }
+            }
+            return
+        }
+        openNow(id)
+    }
+
+    private func openNow(_ id: UUID) {
         if let info = Storage.load(DocumentInfo.self, from: Storage.infoURL(id)),
            let s = DocumentSession(info: info) {
             session = s

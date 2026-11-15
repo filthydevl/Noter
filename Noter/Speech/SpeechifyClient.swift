@@ -167,7 +167,7 @@ actor SpeechifyClient {
 
     init() {
         let dir = cacheDir
-        Task.detached(priority: .background) { Self.prune(dir, maxBytes: 400 * 1024 * 1024) }
+        Task.detached(priority: .background) { Self.prune(dir, maxBytes: 150 * 1024 * 1024) }
     }
 
     // MARK: Voices

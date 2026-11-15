@@ -89,6 +89,9 @@ final class BackgroundOCR: ObservableObject {
         // Next unfinished book: the one you opened most recently first.
         let next = library.first { doc in
             !failed.contains(doc.id) && (progress[doc.id] ?? doc.ocrPagesDone) < doc.pageCount && doc.pageCount > 0
+                // A book iPadOS has freed from the iPad (it's in iCloud Drive) isn't
+                // fetched just to read its text: that waits until you open it.
+                && !CloudStore.shared.needsDownload(doc.id)
         }
         for (id, store) in stores where id != next?.id { store.stop() }
         guard let doc = next else {

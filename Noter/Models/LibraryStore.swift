@@ -167,6 +167,11 @@ final class LibraryStore: ObservableObject {
                     info.folderID = folder.id
                     Storage.save(info, to: Storage.infoURL(info.id))
                 }
+                // Books kept in your cloud folder: this one goes there too.
+                let book = info
+                if CloudStore.shared.isOn {
+                    await Task.detached(priority: .utility) { try? CloudStore.shared.moveIn(book) }.value
+                }
                 ids.append(info.id)
             } catch {
                 lastError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)"
@@ -177,6 +182,7 @@ final class LibraryStore: ObservableObject {
     }
 
     func delete(_ doc: DocumentInfo) {
+        CloudStore.shared.remove(doc.id)
         try? FileManager.default.removeItem(at: Storage.folder(doc.id))
         for url in Storage.exportURLs(for: doc) { try? FileManager.default.removeItem(at: url) }
         reload()
@@ -192,7 +198,7 @@ final class LibraryStore: ObservableObject {
             let folder = Storage.folder(id)
             let fm = FileManager.default
             try fm.createDirectory(at: Storage.ocrFolder(id), withIntermediateDirectories: true)
-            let dest = Storage.pdfURL(id)
+            let dest = Storage.localPDFURL(id)
 
             do {
                 // Coordinated read so iCloud Drive files are downloaded first.
