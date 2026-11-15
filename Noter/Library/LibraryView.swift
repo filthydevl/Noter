@@ -998,8 +998,8 @@ private struct StorageView: View {
         message = nil
         let docs = library.documents
         Task.detached(priority: .userInitiated) {
-            var problem: String?
-            do { try CloudStore.shared.use(folder: folder, documents: docs) } catch {
+            let problem: String?
+            do { try CloudStore.shared.use(folder: folder, documents: docs); problem = nil } catch {
                 problem = "Couldn't use that folder: \(error.localizedDescription)"
             }
             await MainActor.run {

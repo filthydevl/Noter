@@ -11,7 +11,8 @@ final class NoterSmokeTests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let row = app.staticTexts["Sample Book"]
+        // The title shows twice (Progress dashboard and the shelf); either opens it.
+        let row = app.staticTexts["Sample Book"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 30), "Library row for the seeded PDF is missing")
         snapshot(app, "1-library")
         row.tap()
