@@ -74,12 +74,20 @@ enum BracketApple {
                 if n > 0 { try await Task.sleep(nanoseconds: 300_000_000) } // let the chip breathe
                 // A fresh, small session per piece: nothing piles up in its memory.
                 let session = LanguageModelSession(instructions: BracketStyle.compact)
-                let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: 1100)
+                // Room for the notes and little more: a short highlight gets a short
+                // reply (with lots of room the model kept going, inventing more).
+                let words = piece.split(whereSeparator: { $0 == " " || $0 == "\n" }).count
+                let options = GenerationOptions(sampling: .greedy,
+                                                maximumResponseTokens: min(1100, 60 + words * 4))
                 do {
                     let reply = try await session.respond(to: piece, generating: BracketAppleNotes.self,
                                                           options: options)
-                    let notes = stepped(reply.content.lines.map { (depth: $0.depth, text: $0.text) })
-                    blocks.append(notes.isEmpty ? BracketRules.transpose(piece) : notes)
+                    // Only lines made of the text's own words: the small model sometimes
+                    // carries on past the passage, writing things that aren't there.
+                    let kept = reply.content.lines.filter { faithful($0.text, to: piece) }
+                    let notes = stepped(kept.map { (depth: $0.depth, text: $0.text) })
+                    let covered = coverage(of: piece, by: kept.map(\.text))
+                    blocks.append(notes.isEmpty || covered < 0.5 ? BracketRules.transpose(piece) : notes)
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
@@ -125,6 +133,32 @@ enum BracketApple {
         }
         flush()
         return out
+    }
+
+    private static func words(_ s: String) -> [String] {
+        s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+    }
+
+    /// A word of the source, allowing for OCR repairs ("con ict" → "conflict").
+    private static func inSource(_ w: String, _ source: Set<String>, _ joined: String) -> Bool {
+        source.contains(w) || (w.count >= 5 && joined.contains(String(w.prefix(4))))
+    }
+
+    /// Most of the line's words (all but small ones) come from the text.
+    static func faithful(_ line: String, to piece: String) -> Bool {
+        let source = Set(words(piece)), joined = words(piece).joined(separator: " ")
+        let mine = words(line).filter { $0.count > 3 }
+        guard !mine.isEmpty else { return !words(line).isEmpty && words(line).allSatisfy { source.contains($0) } }
+        let found = mine.filter { inSource($0, source, joined) }.count
+        return Double(found) / Double(mine.count) >= 0.8
+    }
+
+    /// How much of the text's (longer) words the notes kept.
+    private static func coverage(of piece: String, by lines: [String]) -> Double {
+        let wanted = Set(words(piece).filter { $0.count > 3 })
+        guard !wanted.isEmpty else { return 1 }
+        let got = Set(lines.flatMap { words($0) })
+        return Double(wanted.filter { got.contains($0) }.count) / Double(wanted.count)
     }
 
     /// The model's lines as tab-indented text. Depths can't jump more than one step
