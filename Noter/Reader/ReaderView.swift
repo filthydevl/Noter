@@ -90,6 +90,15 @@ struct ReaderView: View {
         // Our own top bar (no system navigation bar): it covers only the page, so an
         // open list and the tool strip go right up to the top of the screen.
         .overlay(alignment: .top) { topBar }
+        // Time read / total time, floating at the bottom of the page.
+        .overlay(alignment: .bottom) {
+            ReadingTimeLabel(session: session, speech: session.speech, outline: session.outline)
+                .padding(.bottom, scribbleBar ? 78 : 14)
+                .padding(.trailing, docked ? Self.besidePanelInset : 0)
+                .padding(.leading, 40) // clear of the page slider
+                .animation(Self.panelSpring, value: docked)
+                .animation(.snappy(duration: 0.25), value: scribbleBar)
+        }
         .overlay(alignment: .trailing) {
             if docked {
                 // Beside an open panel: one flat strip from the top of the screen to the
@@ -298,9 +307,47 @@ struct ReaderView: View {
     /// Back on the left; PDF / Text with the time left under it in the middle of the
     /// page; reading progress, Save PDF and More on the right of the page.
     private var topBar: some View {
-        ZStack(alignment: .top) {
-            VStack(spacing: 4) {
-                // PDF / Text: a capsule as tall as the round buttons beside it.
+        Group {
+            if compactTopBar {
+                HStack(spacing: 8) {
+                    backButton
+                    viewSwitch(segment: 70)
+                    Spacer(minLength: 0)
+                    topBarTrailing
+                }
+            } else {
+                ZStack(alignment: .top) {
+                    viewSwitch(segment: 92)
+                    HStack(spacing: 10) {
+                        backButton
+                        Spacer(minLength: 0)
+                        topBarTrailing
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 2)
+        .padding(.trailing, docked ? Self.besidePanelInset : 0)
+        .animation(Self.panelSpring, value: compactTopBar)
+    }
+
+    private var backButton: some View {
+        Button {
+            dismiss()
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 40, height: 40)
+                .background(.regularMaterial, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back")
+    }
+
+    /// PDF / Text: a capsule as tall as the round buttons beside it.
+    private func viewSwitch(segment: CGFloat) -> some View {
                 HStack(spacing: 0) {
                     ForEach([ViewMode.pdf, ViewMode.transcript], id: \.self) { mode in
                         let on = session.viewMode == mode
@@ -310,7 +357,7 @@ struct ReaderView: View {
                             Text(mode.title)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(on ? Color.primary : Color.secondary)
-                                .frame(width: 92, height: Self.barButton - 8)
+                                .frame(width: segment, height: Self.barButton - 8)
                                 .background(on ? Color.primary.opacity(0.16) : Color.clear, in: Capsule())
                                 .contentShape(Capsule())
                         }
@@ -321,33 +368,14 @@ struct ReaderView: View {
                 .padding(4)
                 .frame(height: Self.barButton)
                 .background(.regularMaterial, in: Capsule())
-                ReadingTimeLabel(session: session, speech: session.speech, outline: session.outline)
-            }
-            HStack(spacing: 10) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 40, height: 40)
-                        .background(.regularMaterial, in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back")
-                Spacer(minLength: 0)
-                topBarTrailing
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 2)
-        .padding(.trailing, docked ? Self.besidePanelInset : 0)
     }
 
     @ViewBuilder
     private var topBarTrailing: some View {
         HStack(spacing: 10) {
-            if session.ocrDone < session.pageCount {
+            if compactTopBar {
+                EmptyView() // no room: the progress is on the book's card in the library
+            } else if session.ocrDone < session.pageCount {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
                     Text("Reading \(session.ocrDone)/\(session.pageCount)")
@@ -470,8 +498,12 @@ struct ReaderView: View {
     /// Room the panel and the strip beside it take on the right.
     static let besidePanelInset: CGFloat = panelWidth + railWidth
 
-    /// The tools are a flat strip beside an open panel (landscape).
-    private var docked: Bool { pushesPageLeft }
+    /// The tools are a flat strip beside an open panel (both orientations).
+    private var docked: Bool { panel != nil }
+
+    /// Portrait with a list open: the page area left of the panel is narrow, so the
+    /// top bar lines up its buttons instead of centering PDF / Text.
+    private var compactTopBar: Bool { docked && !pushesPageLeft }
 
     /// The thin line between the page, the strip and the panel.
     private var hairline: some View {
@@ -523,13 +555,15 @@ struct ReaderView: View {
         } else if pushesPageLeft {
             covered = 0 // the panel and strip are beside the page, not over it
         } else {
-            covered = Self.panelWidth + Self.railWidth + 16
+            covered = Self.besidePanelInset // the panel and strip lie over the page
         }
         session.pdfController?.coveredRight = covered
     }
 
-    /// Portrait (narrow): the list is a floating card along the bottom.
-    private var bottomSheet: Bool { viewWidth > 0 && viewWidth < 1140 }
+    /// One design in both orientations: the list is always the panel on the right with
+    /// the tool strip beside it (portrait used to have a card along the bottom). In
+    /// portrait it lies over the page, which keeps its full width.
+    private var bottomSheet: Bool { false }
     private var sheetHeight: CGFloat { min(max(viewHeight * 0.42, 320), 560) }
     /// Room the bottom card takes (portrait, a list open), for what sits above it.
     private var sheetRoom: CGFloat { panel != nil && bottomSheet ? sheetHeight + 8 : 0 }

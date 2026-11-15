@@ -40,11 +40,21 @@ extension DocumentSession {
         }
         return (Int(book.rounded()), part.map { Int($0.rounded()) })
     }
+
+    /// Words in the whole book (pages not recognized yet count as the average page).
+    func totalWords() -> Int? {
+        let words = ocr.words
+        guard !words.isEmpty, pageCount > 0 else { return nil }
+        let average = Double(words.values.reduce(0, +)) / Double(words.count)
+        var total = 0.0
+        for i in 0..<pageCount { total += words[i].map(Double.init) ?? average }
+        return Int(total.rounded())
+    }
 }
 
-/// Under PDF / Text: about how long the rest of the chapter and of the book take at
+/// Floating at the bottom of the page: time read so far / the whole book's time, at
 /// the read-aloud speed (the voice's real pace, learned as it reads). Follows the
-/// reading position, or the page you scroll to.
+/// reading position, or the page you scroll to (PDF or Text view).
 struct ReadingTimeLabel: View {
     @ObservedObject var session: DocumentSession
     @ObservedObject var speech: SpeechController
@@ -52,15 +62,27 @@ struct ReadingTimeLabel: View {
 
     var body: some View {
         Group {
-            if let text {
-                Text(text)
-                    .font(.caption2.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(.regularMaterial, in: Rectangle())
-                    .accessibilityLabel("Time left: \(text)")
+            if let times {
+                HStack(spacing: 5) {
+                    Text(times.done)
+                        .foregroundStyle(.primary)
+                    Text("/")
+                        .foregroundStyle(.tertiary)
+                    Text(times.total)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .frame(height: 30)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+                .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+                .contentTransition(.numericText())
+                .animation(.snappy(duration: 0.25), value: times.done)
+                .allowsHitTesting(false)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(times.done) read of \(times.total)")
             }
         }
         .onAppear {
@@ -70,22 +92,21 @@ struct ReadingTimeLabel: View {
         }
     }
 
-    private var text: String? {
-        guard let left = session.wordsLeft() else { return nil }
-        let perMinute = speech.wordsPerMinuteAt1x * max(speech.speed, 0.1)
-        let book = Self.format(Double(left.book) / perMinute)
-        if let part = left.part, part < left.book {
-            return "\(Self.format(Double(part) / perMinute)) left in chapter · \(book) in book"
-        }
-        return "\(book) left"
+    private var times: (done: String, total: String)? {
+        guard let left = session.wordsLeft(), let total = session.totalWords(), total > 0 else { return nil }
+        let perSecond = speech.wordsPerMinuteAt1x * max(speech.speed, 0.1) / 60
+        guard perSecond > 0 else { return nil }
+        let all = Double(total) / perSecond
+        let done = max(Double(total - left.book), 0) / perSecond
+        let long = all >= 3600
+        return (Self.clock(done, hours: long), Self.clock(all, hours: long))
     }
 
-    /// "<1 min", "12 min", "2 h 05 min"
-    static func format(_ minutes: Double) -> String {
-        guard minutes.isFinite, minutes >= 0 else { return "–" }
-        let m = Int(minutes.rounded())
-        if m < 1 { return "<1 min" }
-        if m < 60 { return "\(m) min" }
-        return String(format: "%d h %02d min", m / 60, m % 60)
+    /// "12:34", or "1:05:20" (and "0:12:34" beside an hour-long total).
+    static func clock(_ seconds: Double, hours: Bool) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "–" }
+        let s = Int(seconds.rounded())
+        return hours ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+                     : String(format: "%02d:%02d", s / 60, s % 60)
     }
 }

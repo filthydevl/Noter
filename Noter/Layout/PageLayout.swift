@@ -614,6 +614,28 @@ enum PageLayout {
                 k = j
             }
         }
+        // A subtitle right under a heading ("AHR Forum" / "The Emancipation of
+        // America"): a short line in title case, not a sentence, set apart below or
+        // followed by the author's name in capitals.
+        func titleCase(_ t: String) -> Bool {
+            let small: Set<String> = ["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "of",
+                                      "on", "or", "the", "to", "with", "vs", "de", "la", "le", "du", "des"]
+            let words = t.split(separator: " ").map { $0.trimmingCharacters(in: .punctuationCharacters) }
+                .filter { !$0.isEmpty }
+            guard words.count >= 2, words.first?.first?.isUppercase == true else { return false }
+            let big = words.filter { !small.contains($0.lowercased()) }
+            return !big.isEmpty && big.allSatisfy { $0.first?.isUppercase == true || $0.first?.isNumber == true }
+        }
+        for i in out.sorted() where i + 1 < rows.count && !out.contains(i + 1) {
+            let j = i + 1
+            let t = text(j)
+            guard rows[j].tokens.count <= 12, titleCase(t), let last = t.last, !".,;:".contains(last),
+                  gapBelow(i) < typicalGap * 3 + bodyH else { continue }
+            let byline = j + 1 < rows.count && isCaps(text(j + 1)) && rows[j + 1].tokens.count <= 8
+            guard gapBelow(j) > typicalGap * 1.3 || byline || j + 1 == rows.count else { continue }
+            out.insert(j)
+            style[j] = "sub"
+        }
         // Headings are rare: if a lot of lines qualify, the page is just unusual.
         return out.count > max(2, rows.count / 4) ? [] : out
     }
