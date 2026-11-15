@@ -74,10 +74,13 @@ struct LibraryView: View {
                         if let current = currentFolder { breadcrumbs(current) }
                         ScrollView {
                             VStack(alignment: .leading, spacing: 14) {
-                                // Progress by class, on the start page.
-                                if shelf == .home {
+                                // Progress: across all classes on the start page, across
+                                // the folder (and its groups) inside one.
+                                if shelf == .home || currentFolder != nil,
+                                   ProgressDashboard.hasReadings(library, in: currentFolder?.id) {
                                     sectionTitle("Progress")
-                                    ProgressDashboard(library: library, open: { openBook($0, at: nil) },
+                                    ProgressDashboard(library: library, scope: currentFolder,
+                                                      open: { openBook($0, at: nil) },
                                                       viewNotes: { path.append(NotesRoute(id: $0.id)) },
                                                       remove: { pendingDelete = $0 })
                                 }
@@ -778,10 +781,13 @@ struct NotesRoute: Hashable {
     let id: UUID
 }
 
-/// The start page's progress board: a card per class (top-level folder) with how far
-/// you are in each of its readings, then the readings not in a class.
+/// The progress board. On the start page: everything you're reading, across all
+/// classes, then a card per class (top-level folder). Inside a folder: that folder
+/// overall, then a card per group in it (and its readings not in a group).
 private struct ProgressDashboard: View {
     @ObservedObject var library: LibraryStore
+    /// The folder you're in (nil: the start page).
+    var scope: LibraryFolder?
     let open: (DocumentInfo) -> Void
     let viewNotes: (DocumentInfo) -> Void
     let remove: (DocumentInfo) -> Void
@@ -794,28 +800,52 @@ private struct ProgressDashboard: View {
         let tint: Color
         let symbol: String
         let docs: [DocumentInfo]
+
+        var pages: Int { docs.reduce(0) { $0 + $1.pageCount } }
+        var read: Int { docs.reduce(0) { $0 + min($1.lastPage + 1, $1.pageCount) } }
+        var fraction: Double { pages > 0 ? Double(read) / Double(pages) : 0 }
+    }
+
+    static func hasReadings(_ library: LibraryStore, in scope: UUID?) -> Bool {
+        guard let scope else { return !library.documents.isEmpty }
+        let ids = library.folderAndDescendants(scope)
+        return library.documents.contains { $0.folderID.map(ids.contains) ?? false }
+    }
+
+    /// The readings counted here.
+    private var docs: [DocumentInfo] {
+        guard let scope else { return library.documents }
+        let ids = library.folderAndDescendants(scope.id)
+        return library.documents.filter { $0.folderID.map(ids.contains) ?? false }
     }
 
     private var groups: [ClassGroup] {
-        var byClass: [UUID: [DocumentInfo]] = [:]
-        var none: [DocumentInfo] = []
-        for doc in library.documents {
-            if let f = doc.folderID, let root = library.path(to: f).first {
-                byClass[root.id, default: []].append(doc)
+        var byChild: [UUID: [DocumentInfo]] = [:]
+        var loose: [DocumentInfo] = []
+        for doc in docs {
+            guard let f = doc.folderID else { loose.append(doc); continue }
+            let path = library.path(to: f)
+            // The folder one level below where you are.
+            let child: LibraryFolder?
+            if let scope {
+                child = path.firstIndex(where: { $0.id == scope.id }).flatMap { i in i + 1 < path.count ? path[i + 1] : nil }
             } else {
-                none.append(doc)
+                child = path.first
             }
+            if let child { byChild[child.id, default: []].append(doc) } else { loose.append(doc) }
         }
         func sorted(_ docs: [DocumentInfo]) -> [DocumentInfo] {
             docs.sorted { ($0.lastOpened ?? $0.added) > ($1.lastOpened ?? $1.added) }
         }
-        var out = library.subfolders(of: nil).compactMap { f -> ClassGroup? in
-            guard let docs = byClass[f.id], !docs.isEmpty else { return nil }
+        var out = library.subfolders(of: scope?.id).compactMap { f -> ClassGroup? in
+            guard let docs = byChild[f.id], !docs.isEmpty else { return nil }
             return ClassGroup(id: f.id.uuidString, name: f.name, tint: FolderLook.color(f.colorHex),
-                         symbol: f.symbol ?? "folder.fill", docs: sorted(docs))
+                              symbol: f.symbol ?? "folder.fill", docs: sorted(docs))
         }
-        if !none.isEmpty {
-            out.append(ClassGroup(id: "none", name: "No class", tint: .secondary, symbol: "tray", docs: sorted(none)))
+        if !loose.isEmpty {
+            let tint = scope.map { FolderLook.color($0.colorHex) } ?? .secondary
+            out.append(ClassGroup(id: "loose", name: scope == nil ? "No class" : "Not in a group",
+                                  tint: tint, symbol: "tray", docs: sorted(loose)))
         }
         return out
     }
@@ -826,16 +856,119 @@ private struct ProgressDashboard: View {
     }
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 14) {
-            ForEach(groups) { g in card(g) }
+        let gs = self.groups
+        VStack(alignment: .leading, spacing: 14) {
+            overall(gs)
+            LazyVGrid(columns: columns, spacing: 14) {
+                ForEach(gs) { g in card(g) }
+            }
         }
     }
 
-    private func card(_ g: ClassGroup) -> some View {
-        let pages = g.docs.reduce(0) { $0 + $1.pageCount }
-        let read = g.docs.reduce(0) { $0 + min($1.lastPage + 1, $1.pageCount) }
-        let highlights = g.docs.reduce(0) { $0 + $1.highlightCount }
+    // MARK: Overall
+
+    private func overall(_ groups: [ClassGroup]) -> some View {
+        let all = docs
+        let pages = all.reduce(0) { $0 + $1.pageCount }
+        let read = all.reduce(0) { $0 + min($1.lastPage + 1, $1.pageCount) }
         let fraction = pages > 0 ? Double(read) / Double(pages) : 0
+        let finished = all.filter { Self.progress($0) >= 0.999 }.count
+        let highlights = all.reduce(0) { $0 + $1.highlightCount }
+        let tint = scope.map { FolderLook.color($0.colorHex) } ?? Color.accentColor
+        let recent = all.filter { $0.lastOpened != nil && Self.progress($0) < 0.999 }
+            .max { ($0.lastOpened ?? .distantPast) < ($1.lastOpened ?? .distantPast) }
+
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 22) {
+                ProgressRing(fraction: fraction, tint: tint)
+                    .frame(width: 104, height: 104)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(scope?.name ?? "All classes")
+                        .font(.title3.weight(.semibold))
+                    HStack(spacing: 22) {
+                        stat("\(all.count)", all.count == 1 ? "reading" : "readings")
+                        stat("\(finished)", "finished")
+                        stat("\(read.formatted())", "of \(pages.formatted()) pages")
+                        stat("\(highlights)", highlights == 1 ? "highlight" : "highlights")
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            // Each class's (group's) share, filled as far as you've read it.
+            if groups.count > 1 {
+                VStack(alignment: .leading, spacing: 8) {
+                    GeometryReader { geo in
+                        let total = max(groups.reduce(0) { $0 + $1.pages }, 1)
+                        let gaps = CGFloat(groups.count - 1) * 3
+                        HStack(spacing: 3) {
+                            ForEach(groups) { g in
+                                let w = max((geo.size.width - gaps) * CGFloat(g.pages) / CGFloat(total), 4)
+                                ZStack(alignment: .leading) {
+                                    Rectangle().fill(g.tint.opacity(0.18))
+                                    Rectangle().fill(g.tint).frame(width: w * g.fraction)
+                                }
+                                .frame(width: w)
+                            }
+                        }
+                        .clipShape(Capsule())
+                    }
+                    .frame(height: 10)
+                    FlowLegend(items: groups.map { ($0.name, $0.tint, $0.fraction) })
+                }
+            }
+            if let recent {
+                Button {
+                    open(recent)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "book.fill")
+                            .foregroundStyle(tint)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Pick up where you left off")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("\(LibraryTitles.title(of: recent)) · p. \(recent.lastPage + 1)")
+                                .font(.subheadline.weight(.medium))
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 6)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Continue reading")
+            }
+        }
+        .padding(18)
+        .background(
+            LinearGradient(colors: [tint.opacity(0.16), Color(.secondarySystemGroupedBackground)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(tint.opacity(0.22)))
+    }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value)
+                .font(.title3.weight(.semibold).monospacedDigit())
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    // MARK: A class (group)
+
+    private func card(_ g: ClassGroup) -> some View {
+        let highlights = g.docs.reduce(0) { $0 + $1.highlightCount }
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: g.symbol)
@@ -850,13 +983,13 @@ private struct ProgressDashboard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("\(Int((fraction * 100).rounded()))%")
+                Text("\(Int((g.fraction * 100).rounded()))%")
                     .font(.title3.weight(.semibold).monospacedDigit())
                     .foregroundStyle(g.tint)
             }
             ForEach(g.docs.prefix(6)) { doc in row(doc, tint: g.tint) }
             if g.docs.count > 6 {
-                Text("+ \(g.docs.count - 6) more in this class")
+                Text("+ \(g.docs.count - 6) more")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1021,6 +1154,59 @@ private struct StorageView: View {
                     : "All books are on the iPad again. The copies in iCloud Drive were left there."
                 measure()
             }
+        }
+    }
+}
+
+/// A ring filled as far as you've read, the percent in the middle.
+private struct ProgressRing: View {
+    let fraction: Double
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(tint.opacity(0.15), lineWidth: 11)
+            Circle()
+                .trim(from: 0, to: max(fraction, 0.005))
+                .stroke(AngularGradient(colors: [tint.opacity(0.55), tint], center: .center,
+                                        startAngle: .degrees(0), endAngle: .degrees(360 * max(fraction, 0.01))),
+                        style: StrokeStyle(lineWidth: 11, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            VStack(spacing: 0) {
+                Text("\(Int((fraction * 100).rounded()))%")
+                    .font(.title2.weight(.bold).monospacedDigit())
+                Text("read")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(Int((fraction * 100).rounded())) percent read")
+    }
+}
+
+/// Name · percent for each part of the bar, wrapping onto more lines.
+private struct FlowLegend: View {
+    let items: [(String, Color, Double)]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) { entries }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10, alignment: .leading)],
+                      alignment: .leading, spacing: 6) { entries }
+        }
+    }
+
+    private var entries: some View {
+        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+            HStack(spacing: 5) {
+                Circle().fill(item.1).frame(width: 8, height: 8)
+                Text(item.0).lineLimit(1)
+                Text("\(Int((item.2 * 100).rounded()))%")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
         }
     }
 }

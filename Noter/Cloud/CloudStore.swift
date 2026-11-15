@@ -159,11 +159,20 @@ enum LibraryTitles {
     }
 
     static func title(of doc: DocumentInfo) -> String {
-        if let s = Storage.load(SourceInfo.self, from: SourceInfo.url(doc.id)),
-           !s.title.trimmingCharacters(in: .whitespaces).isEmpty, !SourceInfo.looksLikeFileName(s.title) {
-            return s.title
+        if let s = Storage.load(SourceInfo.self, from: SourceInfo.url(doc.id)) {
+            let t = s.title.trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty, !SourceInfo.looksLikeFileName(t), !isPerson(t, in: s) { return t }
         }
         return clean(doc.title)
+    }
+
+    /// A "title" that's really one of the authors (or editors), as read off a first
+    /// page where the byline stood out more than the title.
+    private static func isPerson(_ title: String, in s: SourceInfo) -> Bool {
+        let key = { (x: String) in x.lowercased().filter(\.isLetter) }
+        let t = key(title)
+        let people = (s.authors + ";" + s.editors).split(separator: ";").map { key(String($0)) }
+        return people.contains { !$0.isEmpty && ($0 == t || $0.hasSuffix(t) || t.hasSuffix($0)) }
     }
 }
 
