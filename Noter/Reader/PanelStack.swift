@@ -32,7 +32,9 @@ struct PanelStack<Content: View>: View {
 
     var body: some View {
         if horizontal {
-            LazyHStack(alignment: .top, spacing: 12) {
+            // Not lazy: a lazy row starting scrolled to its end (the newest) can pile
+            // its columns on top of each other before it has measured them.
+            HStack(alignment: .top, spacing: 12) {
                 Group { content() }.modifier(PanelColumn())
             }
             .padding(.vertical, 2)
@@ -45,8 +47,11 @@ struct PanelStack<Content: View>: View {
 private struct PanelColumn: ViewModifier {
     func body(content: Content) -> some View {
         ScrollView(.vertical, showsIndicators: false) {
-            content.padding(.bottom, 8)
+            content
+                .frame(width: 320, alignment: .topLeading)
+                .padding(.bottom, 8)
         }
-        .frame(width: 320, alignment: .top)
+        .frame(width: 320)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 }
