@@ -4,6 +4,7 @@ import SwiftUI
 /// with its book page. "Mark on pages" highlights them in the PDF and text views; tap
 /// one to jump there (it blinks).
 struct QuestionsListView: View {
+    @Environment(\.panelHorizontal) private var horizontalPanel
     @ObservedObject var session: DocumentSession
     @ObservedObject var index: QuestionIndex
     var onClose: () -> Void
@@ -84,8 +85,8 @@ struct QuestionsListView: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
+                PanelScroll {
+                    PanelStack {
                         ForEach(shown) { q in
                             HStack(alignment: .top, spacing: 6) {
                                 Button {
@@ -108,7 +109,7 @@ struct QuestionsListView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 20)
                 }
-                .defaultScrollAnchor(.bottom)
+                .defaultScrollAnchor(horizontalPanel ? .trailing : .bottom)
             }
         }
         .frame(maxHeight: .infinity)

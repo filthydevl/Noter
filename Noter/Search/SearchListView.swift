@@ -3,6 +3,7 @@ import SwiftUI
 /// Search panel: type a word or a sentence; every place it appears in the recognized
 /// book, with its page. Tap one to jump there (it blinks).
 struct SearchListView: View {
+    @Environment(\.panelHorizontal) private var horizontalPanel
     @ObservedObject var session: DocumentSession
     @ObservedObject var search: BookSearch
     var onClose: () -> Void
@@ -67,8 +68,8 @@ struct SearchListView: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
+                PanelScroll {
+                    PanelStack {
                         ForEach(search.hits) { hit in
                             Button {
                                 session.open(hit.location)

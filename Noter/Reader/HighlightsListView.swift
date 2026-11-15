@@ -5,6 +5,7 @@ import UIKit
 /// printed in the book. Tap one to jump to it. The column on the right of each
 /// highlight holds its key word tags.
 struct HighlightsListView: View {
+    @Environment(\.panelHorizontal) private var horizontalPanel
     @ObservedObject var session: DocumentSession
     var onClose: () -> Void
     @State private var share: ShareItem?
@@ -61,8 +62,8 @@ struct HighlightsListView: View {
                     description: Text("Draw over a line with your Apple Pencil, in the PDF or the text view."))
                     .frame(maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
+                PanelScroll {
+                    PanelStack {
                         ForEach(HighlightBlock.blocks(items)) { block in
                             switch block {
                             case .single(let h):
@@ -87,7 +88,7 @@ struct HighlightsListView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 20)
                 }
-                .defaultScrollAnchor(.bottom)
+                .defaultScrollAnchor(horizontalPanel ? .trailing : .bottom)
             }
         }
         .frame(maxHeight: .infinity)

@@ -4,6 +4,7 @@ import UIKit
 /// The Notes panel: every highlight card (color, page, text, key word tags) with a note
 /// field under it for your own notes and comments. Tap the highlight to jump to it.
 struct NotesListView: View {
+    @Environment(\.panelHorizontal) private var horizontalPanel
     @ObservedObject var session: DocumentSession
     var onClose: () -> Void
     /// The card whose note you just started typing in.
@@ -68,8 +69,8 @@ struct NotesListView: View {
                     .frame(maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 10) {
+                    PanelScroll {
+                        PanelStack {
                             ForEach(items) { h in
                                 VStack(spacing: 6) {
                                     if let word = session.term(of: h) {
@@ -99,7 +100,7 @@ struct NotesListView: View {
                         .padding(.horizontal, 14)
                         .padding(.bottom, 20)
                     }
-                    .defaultScrollAnchor(.bottom)
+                    .defaultScrollAnchor(horizontalPanel ? .trailing : .bottom)
                     // You tapped a note: once the keyboard is up, bring that card into view.
                     .onChange(of: editing) { _, id in
                         guard let id else { return }

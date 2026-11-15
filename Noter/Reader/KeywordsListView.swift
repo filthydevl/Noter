@@ -4,6 +4,7 @@ import SwiftUI
 /// highlighted — in their highlight color, with the book pages you highlighted them on
 /// and the highlights you've tagged with them. Tap a page or a highlight to jump there.
 struct KeywordsListView: View {
+    @Environment(\.panelHorizontal) private var horizontalPanel
     @ObservedObject var session: DocumentSession
     var onClose: () -> Void
     @State private var share: ShareItem?
@@ -63,8 +64,8 @@ struct KeywordsListView: View {
                     description: Text("Highlight a single word or a short phrase — a name, an event, a term — or circle it with the highlighter, and it becomes a key word. Then tag your other highlights with it."))
                     .frame(maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
+                PanelScroll {
+                    PanelStack {
                         // Cause, effect, premise… you've tagged highlights with.
                         if !analysis.isEmpty {
                             sectionTitle("Analysis")
@@ -85,7 +86,7 @@ struct KeywordsListView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 20)
                 }
-                .defaultScrollAnchor(.bottom)
+                .defaultScrollAnchor(horizontalPanel ? .trailing : .bottom)
             }
         }
         .frame(maxHeight: .infinity)

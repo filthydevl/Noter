@@ -467,8 +467,13 @@ struct ReaderView: View {
         .foregroundStyle(Color.primary)
     }
 
-    @ViewBuilder
     private func sidePanel(_ panel: SidePanel) -> some View {
+        // Along the bottom (portrait): the cards run side by side.
+        panelContent(panel).environment(\.panelHorizontal, bottomSheet)
+    }
+
+    @ViewBuilder
+    private func panelContent(_ panel: SidePanel) -> some View {
         switch panel {
         case .highlights:
             HighlightsListView(session: session) { self.panel = nil }
