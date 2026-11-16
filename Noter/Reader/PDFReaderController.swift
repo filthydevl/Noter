@@ -536,8 +536,16 @@ final class PDFReaderController: UIView, UIGestureRecognizerDelegate, PDFPageOve
         // The pencil either highlights (our recognizer) or draws (PencilKit), never both.
         pencil.isEnabled = !scribbling
         if scribbling { cancelStroke() }
-        pdfView.isInMarkupMode = scribbling
         for overlay in overlays.values { applyScribble(to: overlay) }
+        // PDFKit redoes its page views when markup mode changes: a moment later, so
+        // it isn't in the same frame as the toolbar sliding in.
+        if pdfView.isInMarkupMode != scribbling {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let s = self.session else { return }
+                let now = s.penMode == .scribble
+                if self.pdfView.isInMarkupMode != now { self.pdfView.isInMarkupMode = now }
+            }
+        }
     }
 
     private func applyScribble(to overlay: PDFPageOverlay) {

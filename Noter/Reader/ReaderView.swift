@@ -165,14 +165,20 @@ struct ReaderView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if scribbleBar {
-                ScribbleToolbar(session: session, settings: session.scribble)
-                    // Between the page slider and an open panel, never under it.
-                    .padding(.leading, 44)
-                    .padding(.trailing, docked ? Self.besidePanelInset + 12 : 16)
-                    .padding(.bottom, 18 + sheetRoom)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            ZStack {
+                if scribbleBar {
+                    ScribbleToolbar(session: session, settings: session.scribble)
+                        // Between the page slider and an open panel, never under it.
+                        .padding(.leading, 44)
+                        .padding(.trailing, docked ? Self.besidePanelInset + 12 : 16)
+                        .padding(.bottom, 18 + sheetRoom)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            // Only the toolbar (and what makes room for it) animates when the pen
+            // switches: a reader-wide animation re-measured every view, the tool rail
+            // twice over, on every frame of the switch.
+            .animation(.snappy(duration: 0.25), value: scribbleBar)
         }
         .overlay(alignment: .leading) {
             if session.pageCount > 1 {
@@ -180,6 +186,7 @@ struct ReaderView: View {
                 PageScrubber(session: session, outline: session.outline)
                     .padding(.top, Self.topBarHeight)
                     .padding(.bottom, (scribbleBar ? 76 : 16) + sheetRoom)
+                    .animation(.snappy(duration: 0.25), value: scribbleBar)
                     .transition(.opacity)
             }
         }
@@ -262,7 +269,6 @@ struct ReaderView: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: session.pendingTerm)
-        .animation(.snappy(duration: 0.25), value: session.penMode)
         .overlay(alignment: bottomSheet ? .bottom : .trailing) {
             if let panel {
                 if bottomSheet {
