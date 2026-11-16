@@ -258,11 +258,14 @@ final class NoterSmokeTests: XCTestCase {
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         guard element.exists, !element.isHittable else { return }
         let list = app.scrollViews.containing(NSPredicate(format: "label == %@", element.label)).firstMatch
-        for i in 0..<8 where !element.isHittable {
-            if list.exists {
-                if i < 4 { list.swipeDown() } else { list.swipeUp() }
-            } else {
-                if i < 4 { app.swipeDown() } else { app.swipeUp() }
+        // The side panel scrolls up and down; the portrait strip, sideways.
+        for i in 0..<12 where !element.isHittable {
+            let target = list.exists ? list : app
+            switch i {
+            case 0..<3: target.swipeDown()
+            case 3..<6: target.swipeRight()
+            case 6..<9: target.swipeLeft()
+            default: target.swipeUp()
             }
             sleep(1)
         }

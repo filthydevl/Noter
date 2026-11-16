@@ -80,7 +80,7 @@ struct KeywordsListView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, horizontalPanel ? 0 : 20)
                 }
-                .defaultScrollAnchor(horizontalPanel ? .trailing : .bottom)
+                .defaultScrollAnchor(horizontalPanel ? .leading : .bottom)
             }
         }
         .frame(maxHeight: .infinity)
