@@ -15,7 +15,7 @@ extension EnvironmentValues {
         set { self[PanelHorizontalKey.self] = newValue }
     }
 
-    /// Room at the top of each card's column for the title and buttons floating there.
+    /// Room at the top of each card's column.
     var panelTopInset: CGFloat {
         get { self[PanelTopInsetKey.self] }
         set { self[PanelTopInsetKey.self] = newValue }
@@ -33,7 +33,7 @@ struct PanelScroll<Content: View>: View {
         ScrollView(horizontal ? .horizontal : .vertical, showsIndicators: !horizontal) {
             content()
         }
-        .environment(\.panelTopInset, horizontal && floatingHeader ? 46 : 0)
+        .environment(\.panelTopInset, horizontal ? 10 : 0)
     }
 }
 
@@ -75,10 +75,11 @@ private struct PanelHeader: ViewModifier {
 
     func body(content: Content) -> some View {
         if horizontal && floating {
+            // Hovers just above the strip, over the page; takes no room in it.
             content
                 .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .frame(height: 0, alignment: .top)
+                .padding(.bottom, 8)
+                .frame(height: 0, alignment: .bottom)
                 .zIndex(1)
         } else if horizontal {
             content
@@ -145,7 +146,7 @@ private struct PanelCard: ViewModifier {
                     .frame(width: panelColumnWidth, alignment: .topLeading)
                     .padding(.bottom, 8)
             }
-            // Starts under the floating title; scrolls up beneath it.
+            // A little room at the top of the strip.
             .contentMargins(.top, topInset, for: .scrollContent)
             .frame(width: panelColumnWidth)
             .frame(maxHeight: .infinity, alignment: .top)

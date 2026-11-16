@@ -272,7 +272,8 @@ struct ReaderView: View {
                         .frame(maxWidth: .infinity)
                         // Above the keyboard when typing: shorter if needed, never off the top.
                         .frame(height: max(min(sheetHeight, viewHeight - keyboardLift - 90), 160) + below)
-                        .clipped()
+                        // Not clipped: the list's title and buttons float just above it,
+                        // over the page (the cards scroll inside their own views).
                         .background {
                             Rectangle().fill(.regularMaterial)
                                 .overlay(alignment: .top) {
