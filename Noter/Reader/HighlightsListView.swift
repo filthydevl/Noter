@@ -51,9 +51,7 @@ struct HighlightsListView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close highlights")
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 12)
+            .panelHeader(bottom: 12)
 
             if items.isEmpty {
                 ContentUnavailableView(

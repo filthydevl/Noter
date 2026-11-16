@@ -27,9 +27,7 @@ struct ColorsListView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close colors")
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 10)
+            .panelHeader(bottom: 10)
 
             Picker("Color mode", selection: $palette.autoSwitch) {
                 Text("Auto switch").tag(true)

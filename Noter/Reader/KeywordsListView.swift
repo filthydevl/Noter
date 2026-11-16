@@ -53,9 +53,7 @@ struct KeywordsListView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close key words")
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 12)
+            .panelHeader(bottom: 12)
 
             if entries.isEmpty && analysis.isEmpty {
                 ContentUnavailableView(

@@ -55,9 +55,7 @@ struct NotesListView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close notes")
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 10)
+            .panelHeader(bottom: 10)
 
             if items.isEmpty {
                 ContentUnavailableView(

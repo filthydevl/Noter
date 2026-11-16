@@ -49,9 +49,7 @@ struct QuestionsListView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close questions")
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 10)
+            .panelHeader(bottom: 10)
 
             Toggle(isOn: $index.markOnPages) {
                 Label("Mark on pages", systemImage: "highlighter")

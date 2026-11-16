@@ -44,7 +44,26 @@ struct PanelStack<Content: View>: View {
 extension View {
     /// One card of a list panel (see `PanelStack`).
     func panelCard() -> some View { modifier(PanelCard()) }
+
+    /// A list panel's title row: slimmer in the strip along the bottom, so the cards
+    /// get the room.
+    func panelHeader(bottom: CGFloat) -> some View { modifier(PanelHeader(bottom: bottom)) }
 }
+
+private struct PanelHeader: ViewModifier {
+    @Environment(\.panelHorizontal) private var horizontal
+    let bottom: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 20)
+            .padding(.top, horizontal ? 10 : 18)
+            .padding(.bottom, horizontal ? 6 : bottom)
+    }
+}
+
+/// How wide a card's column is in the strip along the bottom.
+private let panelColumnWidth: CGFloat = 400
 
 private struct PanelCard: ViewModifier {
     @Environment(\.panelHorizontal) private var horizontal
@@ -56,10 +75,10 @@ private struct PanelCard: ViewModifier {
             ScrollView(.vertical, showsIndicators: false) {
                 content
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: 320, alignment: .topLeading)
+                    .frame(width: panelColumnWidth, alignment: .topLeading)
                     .padding(.bottom, 8)
             }
-            .frame(width: 320)
+            .frame(width: panelColumnWidth)
             .frame(maxHeight: .infinity, alignment: .top)
         } else {
             content

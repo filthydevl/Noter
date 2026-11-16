@@ -587,13 +587,13 @@ struct ReaderView: View {
         session.pdfController?.coveredRight = covered
     }
 
-    /// Portrait: the lists open along the bottom, a quarter of the screen tall —
+    /// Portrait: the lists open along the bottom, about a third of the screen tall —
     /// except Bracket Notes, which keeps the panel on the right with the tool strip
     /// (lying over the page, which keeps its full width). Landscape: every list is the
     /// panel on the right.
     private var bottomSheet: Bool { viewWidth > 0 && viewWidth < 1140 && panel != .bracket }
-    /// A quarter of the screen (never too short to use).
-    private var sheetHeight: CGFloat { max(viewHeight * 0.25, 200) }
+    /// About a third of the screen (never too short to use).
+    private var sheetHeight: CGFloat { max(viewHeight * 0.35, 240) }
     /// Room the bottom card takes (portrait, a list open), for what sits above it.
     private var sheetRoom: CGFloat { panel != nil && bottomSheet ? sheetHeight + 8 : 0 }
 
