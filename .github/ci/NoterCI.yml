@@ -1,0 +1,30 @@
+# CI-only XcodeGen spec: the app target from project.yml plus a UI smoke-test target.
+# The workflow copies this to the repo root and generates NoterCI.xcodeproj there,
+# so the app's build settings (e.g. INFOPLIST_FILE) resolve exactly as in Noter.xcodeproj.
+include:
+  - project.yml
+name: NoterCI
+targets:
+  NoterUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - .github/ci/NoterUITests
+    dependencies:
+      - target: Noter
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.filthydevl.noter.uitests
+        TARGETED_DEVICE_FAMILY: "2"
+        SWIFT_VERSION: "5.0"
+schemes:
+  NoterCI:
+    build:
+      targets:
+        Noter: all
+        NoterUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - NoterUITests
