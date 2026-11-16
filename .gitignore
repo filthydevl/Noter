@@ -3,3 +3,5 @@ xcuserdata/
 DerivedData/
 *.xcuserstate
 build/
+# Xcode makes this locally; nothing in it is needed in the repo.
+Noter.xcodeproj/project.xcworkspace/
