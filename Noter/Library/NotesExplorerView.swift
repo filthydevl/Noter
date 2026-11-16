@@ -420,7 +420,7 @@ private struct BracketLines: View {
     var look = BracketLook()
 
     var body: some View {
-        let lines = VStack(alignment: .leading, spacing: 3 * size / 15 * look.spacing) {
+        let lines = VStack(alignment: .leading, spacing: 3 * size / 15 * CGFloat(look.spacing)) {
             if look.quote {
                 // The passage the notes were made from.
                 Text(entry.highlight.text)
@@ -440,7 +440,7 @@ private struct BracketLines: View {
                         .font(look.font(size: size, bold: line.depth == 0))
                         .padding(.horizontal, color == nil ? 0 : 4)
                         .background(color?.opacity(0.28) ?? .clear)
-                        .padding(.leading, CGFloat(line.depth) * size * look.indent)
+                        .padding(.leading, CGFloat(line.depth) * size * CGFloat(look.indent))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
