@@ -46,7 +46,10 @@ struct PanelStack<Content: View>: View {
 
     var body: some View {
         if horizontal {
-            HStack(alignment: .top, spacing: 12) { content() }
+            // Lazy: only the columns on screen are built, so the strip slides in smoothly
+            // however many cards there are (each column is a fixed width, so the row
+            // knows where everything goes without building it).
+            LazyHStack(alignment: .top, spacing: 12) { content() }
                 .padding(.vertical, 2)
         } else {
             LazyVStack(spacing: 10) { content() }

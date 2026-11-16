@@ -249,13 +249,16 @@ struct ReaderView: View {
             GeometryReader { g in
                 Color.clear
                     .onAppear {
-                        viewHeight = g.size.height
+                        resizing { viewHeight = g.size.height }
                         bottomSafeInset = g.safeAreaInsets.bottom
                         widthChanged(g.size.width)
                     }
                     .onChange(of: g.safeAreaInsets.bottom) { _, b in bottomSafeInset = b }
                     .onChange(of: g.size.width) { _, w in widthChanged(w) }
-                    .onChange(of: g.size.height) { _, h in viewHeight = h; updateCoveredRight() }
+                    .onChange(of: g.size.height) { _, h in
+                        resizing { viewHeight = h }
+                        updateCoveredRight()
+                    }
             }
         }
         .animation(.snappy(duration: 0.25), value: session.pendingTerm)
@@ -534,7 +537,11 @@ struct ReaderView: View {
 
     /// Portrait with a list open: the page area left of the panel is narrow, so the
     /// top bar lines up its buttons instead of centering PDF / Text.
-    private var compactTopBar: Bool { docked && !pushesPageLeft }
+    private var compactTopBar: Bool { (docked && !pushesPageLeft) || narrowWindow }
+
+    /// A small app window (windowed apps / Stage Manager, Slide Over): too narrow to
+    /// center PDF / Text between the buttons.
+    private var narrowWindow: Bool { viewWidth > 0 && viewWidth < 760 }
 
     /// The thin line between the page, the strip and the panel.
     private var hairline: some View {
@@ -561,10 +568,19 @@ struct ReaderView: View {
         }
     }
 
+    /// A change of the window's size (rotating, or resizing the app's window): the
+    /// layout follows it at once, with none of the panel springs, which would otherwise
+    /// replay on every step of a window being dragged bigger or smaller.
+    private func resizing(_ change: () -> Void) {
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still, change)
+    }
+
     private func widthChanged(_ w: CGFloat) {
         // The page area's own width doesn't count (it shrinks beside a panel).
         guard w > 0 else { return }
-        viewWidth = w
+        resizing { viewWidth = w }
         // The portrait card leaves the page above it visible: jumping keeps it open.
         session.narrowLayout = false
         updateCoveredRight()
@@ -595,7 +611,12 @@ struct ReaderView: View {
     /// except Bracket Notes, which keeps the panel on the right with the tool strip
     /// (lying over the page, which keeps its full width). Landscape: every list is the
     /// panel on the right.
-    private var bottomSheet: Bool { viewWidth > 0 && viewWidth < 1140 && panel != .bracket }
+    private var bottomSheet: Bool {
+        // By the window's shape, so an app window works like the iPad turned the same
+        // way: taller than wide (or narrow) → along the bottom; wide → on the right.
+        viewWidth > 0 && viewWidth < 1140 && panel != .bracket
+            && (viewWidth < viewHeight || viewWidth < 760)
+    }
     /// About a third of the screen (never too short to use).
     private var sheetHeight: CGFloat { max(viewHeight * 0.35, 240) }
     /// Room the bottom card takes (portrait, a list open), for what sits above it.

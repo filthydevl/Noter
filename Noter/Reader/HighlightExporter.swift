@@ -9,7 +9,7 @@ enum HighlightExporter {
         let items = session.groupedHighlights()
         let url = Storage.exportURL(for: session.info)
         if items.isEmpty {
-            try? FileManager.default.removeItem(at: url)
+            DispatchQueue.global(qos: .utility).async { try? FileManager.default.removeItem(at: url) }
             return
         }
         let formatter = DateFormatter()
@@ -45,7 +45,9 @@ enum HighlightExporter {
             }
             md += "\n"
         }
-        try? Data(md.utf8).write(to: url, options: [.atomic])
+        // Written off the main thread, so it never holds up what's on screen.
+        let data = Data(md.utf8)
+        DispatchQueue.global(qos: .utility).async { try? data.write(to: url, options: [.atomic]) }
     }
 
     @MainActor

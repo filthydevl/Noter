@@ -87,7 +87,12 @@ struct HighlightsListView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .onAppear { HighlightExporter.export(session) }
+        // The Markdown copy in Files, refreshed once the list has slid in (not during).
+        .task {
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !Task.isCancelled else { return }
+            HighlightExporter.export(session)
+        }
         .sheet(item: $share) { ShareSheet(url: $0.url) }
     }
 }
