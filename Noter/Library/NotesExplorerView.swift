@@ -25,6 +25,9 @@ struct NotesExplorerView: View {
     @AppStorage("noter.explorerMode") private var modeRaw = Mode.graph.rawValue
     @AppStorage("noter.explorerNotedOnly") private var notedOnly = false
     @AppStorage("noter.explorerTags") private var linkTags = true
+    /// The Bracket Notes panel's text size, shared.
+    @AppStorage("noter.bracketZoom") private var bracketZoom = 1.0
+    @GestureState private var bracketPinch = 1.0
     @State private var hiddenColors = Set<String>()
     @State private var highlights: [Highlight] = []
     @State private var brackets: [String: BracketNotes.Entry] = [:]
@@ -155,8 +158,18 @@ struct NotesExplorerView: View {
         let entries = shown.compactMap { h -> BracketEntry? in
             guard let t = brackets["h-\(h.id.uuidString)"]?.text,
                   !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            return BracketEntry(id: h.id, page: h.page, text: t)
+            return BracketEntry(id: h.id, page: h.page, text: t, highlight: h)
         }
+        // By page, like the Bracket Notes panel in the reader.
+        var pages: [BracketPage] = []
+        for e in entries {
+            if pages.last?.page == e.page {
+                pages[pages.count - 1].entries.append(e)
+            } else {
+                pages.append(BracketPage(page: e.page, entries: [e]))
+            }
+        }
+        let size = CGFloat(15 * BracketNotesView.clampZoom(bracketZoom * bracketPinch))
         return Group {
             if entries.isEmpty {
                 ContentUnavailableView("No bracket notes yet", systemImage: "text.alignleft",
@@ -164,24 +177,41 @@ struct NotesExplorerView: View {
                     .frame(maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(entries) { e in
-                            BracketText(text: e.text, prominent: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                                .contextMenu {
-                                    Button { openBook(e.page) } label: {
-                                        Label("Go to PDF page \(e.page + 1)", systemImage: "arrow.up.right")
-                                    }
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        ForEach(pages) { group in
+                            VStack(alignment: .leading, spacing: 3 * size / 15) {
+                                // The page, with a hairline to the edge.
+                                HStack(spacing: 6) {
+                                    Text("PDF page \(group.page + 1)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
                                 }
+                                .padding(.bottom, 4)
+                                ForEach(group.entries) { e in
+                                    BracketLines(entry: e, size: size)
+                                        .contentShape(Rectangle())
+                                        .contextMenu {
+                                            Button { openBook(e.page) } label: {
+                                                Label("Go to PDF page \(e.page + 1)", systemImage: "arrow.up.right")
+                                            }
+                                        }
+                                        .padding(.bottom, size * 0.5)
+                                }
+                            }
                         }
                     }
                     .textSelection(.enabled)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 24)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 22)
                     .frame(maxWidth: 760, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 }
+                // Pinch to make the notes bigger or smaller (the same size as the panel's).
+                .simultaneousGesture(
+                    MagnifyGesture()
+                        .updating($bracketPinch) { v, s, _ in s = Double(v.magnification) }
+                        .onEnded { v in bracketZoom = BracketNotesView.clampZoom(bracketZoom * Double(v.magnification)) })
             }
         }
     }
@@ -228,10 +258,43 @@ struct NotesExplorerView: View {
     }
 }
 
+private struct BracketPage: Identifiable {
+    let page: Int
+    var entries: [BracketEntry]
+    var id: Int { page }
+}
+
 private struct BracketEntry: Identifiable {
     let id: UUID
     let page: Int
     let text: String
+    let highlight: Highlight
+}
+
+/// One highlight's bracket notes drawn the way the reader's Bracket Notes panel draws
+/// them: the first line of each idea in semibold, deeper lines indented, and the lines
+/// made from the highlight tinted in its color.
+private struct BracketLines: View {
+    let entry: BracketEntry
+    let size: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3 * size / 15) {
+            ForEach(Array(BracketNotesView.lines(entry.text).enumerated()), id: \.offset) { _, line in
+                if line.text.isEmpty {
+                    Color.clear.frame(height: size * 0.6)
+                } else {
+                    let color = BracketNotesView.focusColor(line.text, [entry.highlight])
+                    Text(line.text)
+                        .font(.system(size: size, weight: line.depth == 0 ? .semibold : .regular))
+                        .padding(.horizontal, color == nil ? 0 : 4)
+                        .background(color?.opacity(0.28) ?? .clear)
+                        .padding(.leading, CGFloat(line.depth) * size * 1.2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
 }
 
 /// Bracket notes with their tabs as indents.
