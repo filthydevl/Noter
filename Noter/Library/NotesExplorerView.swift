@@ -28,6 +28,14 @@ struct NotesExplorerView: View {
     /// The Bracket Notes panel's text size, shared.
     @AppStorage("noter.bracketZoom") private var bracketZoom = 1.0
     @GestureState private var bracketPinch = 1.0
+    // How the bracket notes look (the customize menu).
+    @AppStorage("noter.explorerBracketFont") private var bracketFont = "system"
+    @AppStorage("noter.explorerBracketColors") private var bracketColors = BracketLook.Colors.lines.rawValue
+    @AppStorage("noter.explorerBracketIndent") private var bracketIndent = 1.2
+    @AppStorage("noter.explorerBracketSpacing") private var bracketSpacing = 1.0
+    @AppStorage("noter.explorerBracketHeadings") private var bracketHeadings = true
+    @AppStorage("noter.explorerBracketQuote") private var bracketQuote = false
+    @State private var showBracketLook = false
     @State private var hiddenColors = Set<String>()
     @State private var highlights: [Highlight] = []
     @State private var brackets: [String: BracketNotes.Entry] = [:]
@@ -142,6 +150,19 @@ struct NotesExplorerView: View {
                 if mode == .graph {
                     Toggle("Link related ideas", isOn: $linkTags).toggleStyle(.button)
                 }
+                if mode == .brackets {
+                    Button {
+                        showBracketLook = true
+                    } label: {
+                        Label("Customize", systemImage: "textformat.size")
+                    }
+                    .buttonStyle(.bordered)
+                    .popover(isPresented: $showBracketLook, arrowEdge: .top) {
+                        bracketLookMenu
+                            .presentationCompactAdaptation(.popover)
+                    }
+                    .accessibilityLabel("Customize bracket notes")
+                }
             }
             .font(.subheadline)
             .padding(.horizontal, 20)
@@ -170,6 +191,7 @@ struct NotesExplorerView: View {
             }
         }
         let size = CGFloat(15 * BracketNotesView.clampZoom(bracketZoom * bracketPinch))
+        let look = self.look
         return Group {
             if entries.isEmpty {
                 ContentUnavailableView("No bracket notes yet", systemImage: "text.alignleft",
@@ -181,15 +203,17 @@ struct NotesExplorerView: View {
                         ForEach(pages) { group in
                             VStack(alignment: .leading, spacing: 3 * size / 15) {
                                 // The page, with a hairline to the edge.
-                                HStack(spacing: 6) {
-                                    Text("PDF page \(group.page + 1)")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                    Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
+                                if look.headings {
+                                    HStack(spacing: 6) {
+                                        Text("PDF page \(group.page + 1)")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                        Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
+                                    }
+                                    .padding(.bottom, 4)
                                 }
-                                .padding(.bottom, 4)
                                 ForEach(group.entries) { e in
-                                    BracketLines(entry: e, size: size)
+                                    BracketLines(entry: e, size: size, look: look)
                                         .contentShape(Rectangle())
                                         .contextMenu {
                                             Button { openBook(e.page) } label: {
@@ -214,6 +238,122 @@ struct NotesExplorerView: View {
                         .onEnded { v in bracketZoom = BracketNotesView.clampZoom(bracketZoom * Double(v.magnification)) })
             }
         }
+    }
+
+    private var look: BracketLook {
+        BracketLook(face: ReaderFont(rawValue: bracketFont),
+                    colors: BracketLook.Colors(rawValue: bracketColors) ?? .lines,
+                    indent: bracketIndent, spacing: bracketSpacing,
+                    headings: bracketHeadings, quote: bracketQuote)
+    }
+
+    /// Size, font, indent, line spacing, colors, page headings, the highlighted text.
+    private var bracketLookMenu: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Bracket notes")
+                .font(.headline)
+
+            lookRow("Size") {
+                HStack(spacing: 10) {
+                    Button {
+                        bracketZoom = BracketNotesView.clampZoom(bracketZoom / 1.12)
+                    } label: {
+                        Image(systemName: "textformat.size.smaller").frame(width: 36, height: 30)
+                    }
+                    .accessibilityLabel("Smaller")
+                    Text("\(Int((bracketZoom * 100).rounded()))%")
+                        .font(.subheadline.monospacedDigit())
+                        .frame(minWidth: 48)
+                    Button {
+                        bracketZoom = BracketNotesView.clampZoom(bracketZoom * 1.12)
+                    } label: {
+                        Image(systemName: "textformat.size.larger").frame(width: 36, height: 30)
+                    }
+                    .accessibilityLabel("Larger")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            lookRow("Font") {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                    fontChoice("system", title: "System", font: .system(size: 15))
+                    ForEach(ReaderFont.allCases) { f in
+                        fontChoice(f.rawValue, title: f.title, font: Font(f.font(size: 15)))
+                    }
+                }
+            }
+
+            lookRow("Indent") {
+                Picker("Indent", selection: $bracketIndent) {
+                    Text("Compact").tag(0.8)
+                    Text("Normal").tag(1.2)
+                    Text("Wide").tag(1.8)
+                }
+                .pickerStyle(.segmented)
+            }
+
+            lookRow("Line spacing") {
+                Picker("Line spacing", selection: $bracketSpacing) {
+                    Text("Tight").tag(0.5)
+                    Text("Normal").tag(1.0)
+                    Text("Relaxed").tag(2.0)
+                }
+                .pickerStyle(.segmented)
+            }
+
+            lookRow("Highlight colors") {
+                Picker("Highlight colors", selection: $bracketColors) {
+                    ForEach(BracketLook.Colors.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Toggle("Page headings", isOn: $bracketHeadings)
+            Toggle("Show the highlighted text", isOn: $bracketQuote)
+
+            Button("Reset") {
+                bracketZoom = 1
+                bracketFont = "system"
+                bracketColors = BracketLook.Colors.lines.rawValue
+                bracketIndent = 1.2
+                bracketSpacing = 1
+                bracketHeadings = true
+                bracketQuote = false
+            }
+            .font(.subheadline)
+        }
+        .padding(20)
+        .frame(width: 360)
+    }
+
+    private func lookRow<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    private func fontChoice(_ raw: String, title: String, font: Font) -> some View {
+        let on = bracketFont == raw
+        return Button {
+            bracketFont = raw
+        } label: {
+            Text(title)
+                .font(font)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, 6)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(on ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(on ? Color.accentColor : .clear, lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     // MARK: A highlight
@@ -277,23 +417,76 @@ private struct BracketEntry: Identifiable {
 private struct BracketLines: View {
     let entry: BracketEntry
     let size: CGFloat
+    var look = BracketLook()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3 * size / 15) {
+        let lines = VStack(alignment: .leading, spacing: 3 * size / 15 * look.spacing) {
+            if look.quote {
+                // The passage the notes were made from.
+                Text(entry.highlight.text)
+                    .font(.system(size: size * 0.85, design: .serif).italic())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(entry.highlight.displayColor.opacity(0.18))
+                    .padding(.bottom, size * 0.3)
+            }
             ForEach(Array(BracketNotesView.lines(entry.text).enumerated()), id: \.offset) { _, line in
                 if line.text.isEmpty {
                     Color.clear.frame(height: size * 0.6)
                 } else {
-                    let color = BracketNotesView.focusColor(line.text, [entry.highlight])
+                    let color = look.colors == .lines ? BracketNotesView.focusColor(line.text, [entry.highlight]) : nil
                     Text(line.text)
-                        .font(.system(size: size, weight: line.depth == 0 ? .semibold : .regular))
+                        .font(look.font(size: size, bold: line.depth == 0))
                         .padding(.horizontal, color == nil ? 0 : 4)
                         .background(color?.opacity(0.28) ?? .clear)
-                        .padding(.leading, CGFloat(line.depth) * size * 1.2)
+                        .padding(.leading, CGFloat(line.depth) * size * look.indent)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
+        if look.colors == .bar {
+            // A bar down the side in the highlight's color.
+            lines
+                .padding(.leading, 12)
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(entry.highlight.displayColor)
+                        .frame(width: 3)
+                }
+        } else {
+            lines
+        }
+    }
+}
+
+/// How the bracket notes on View Notes look (its customize menu).
+struct BracketLook {
+    enum Colors: String, CaseIterable, Identifiable {
+        case lines, bar, off
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .lines: "Lines"
+            case .bar: "Side bar"
+            case .off: "Off"
+            }
+        }
+    }
+
+    /// nil: the system font (as in the reader's panel).
+    var face: ReaderFont? = nil
+    var colors: Colors = .lines
+    /// Each step of depth, as a share of the text size.
+    var indent: Double = 1.2
+    /// Room between lines (1: as in the panel).
+    var spacing: Double = 1
+    var headings = true
+    var quote = false
+
+    func font(size: CGFloat, bold: Bool) -> Font {
+        if let face { return Font(face.font(size: size, bold: bold)) }
+        return .system(size: size, weight: bold ? .semibold : .regular)
     }
 }
 
