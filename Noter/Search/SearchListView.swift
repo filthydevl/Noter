@@ -77,6 +77,7 @@ struct SearchListView: View {
                                 SearchRow(hit: hit, label: session.label(for: hit.location.slot))
                             }
                             .buttonStyle(.plain)
+                            .panelCard()
                         }
                     }
                     .padding(.horizontal, 14)

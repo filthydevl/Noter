@@ -104,6 +104,7 @@ struct QuestionsListView: View {
                                     Label("Remove from Questions", systemImage: "minus.circle")
                                 }
                             }
+                            .panelCard()
                         }
                     }
                     .padding(.horizontal, 14)

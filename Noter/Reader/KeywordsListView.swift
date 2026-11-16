@@ -69,7 +69,7 @@ struct KeywordsListView: View {
                         // Cause, effect, premise… you've tagged highlights with.
                         if !analysis.isEmpty {
                             sectionTitle("Analysis")
-                            ForEach(analysis) { k in KeywordRow(keyword: k, session: session) }
+                            ForEach(analysis) { k in KeywordRow(keyword: k, session: session).panelCard() }
                             if !entries.isEmpty { sectionTitle("Key words") }
                         }
                         ForEach(entries) { k in
@@ -81,6 +81,7 @@ struct KeywordsListView: View {
                                         Label("Remove from Key words", systemImage: "minus.circle")
                                     }
                                 }
+                                .panelCard()
                         }
                     }
                     .padding(.horizontal, 14)

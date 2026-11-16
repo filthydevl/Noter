@@ -65,6 +65,7 @@ struct HighlightsListView: View {
                 PanelScroll {
                     PanelStack {
                         ForEach(HighlightBlock.blocks(items)) { block in
+                            Group {
                             switch block {
                             case .single(let h):
                                 VStack(spacing: 6) {
@@ -83,6 +84,8 @@ struct HighlightsListView: View {
                                     row(h, keywords: keywords, byKey: byKey)
                                 }
                             }
+                            }
+                            .panelCard()
                         }
                     }
                     .padding(.horizontal, 14)

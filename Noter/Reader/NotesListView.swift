@@ -95,6 +95,7 @@ struct NotesListView: View {
             editSource: { session.showSourceDetails = true })
                                 }
                                 .id(h.id)
+                                .panelCard()
                             }
                         }
                         .padding(.horizontal, 14)
