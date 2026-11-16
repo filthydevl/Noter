@@ -215,13 +215,15 @@ final class PageInkView: UIView, PKCanvasViewDelegate {
         guard !groups.isEmpty else { done?(.unreadable); return }
         let expected = strokes.count
         let style = settings?.tidyStyle ?? .handwriting
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let results = HandwritingTidier.recognize(groups, strict: !all)
-            await MainActor.run {
-                guard let self else { return }
-                let outcome = self.apply(results, expectedStrokes: expected, start: start, style: style)
-                done?(outcome)
-            }
+        // Recognized off the main thread; applied back here (only this closure holds
+        // `self`, weakly, so nothing shares it across threads).
+        Task { @MainActor [weak self] in
+            let results = await Task.detached(priority: .userInitiated) {
+                HandwritingTidier.recognize(groups, strict: !all)
+            }.value
+            guard let self else { return }
+            let outcome = self.apply(results, expectedStrokes: expected, start: start, style: style)
+            done?(outcome)
         }
     }
 

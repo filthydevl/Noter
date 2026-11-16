@@ -261,8 +261,10 @@ final class SpeechifyPlayer {
 
     private func enqueue(_ buffer: AVAudioPCMBuffer, for item: Item) {
         let gen = generation, ep = epoch
+        // The item by identity: it isn't sendable, so it isn't carried across threads.
+        let id = ObjectIdentifier(item)
         node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.played(item, gen: gen, epoch: ep) }
+            Task { @MainActor [weak self] in self?.played(id, gen: gen, epoch: ep) }
         }
     }
 
@@ -316,9 +318,9 @@ final class SpeechifyPlayer {
         return out
     }
 
-    private func played(_ item: Item, gen: Int, epoch ep: Int) {
+    private func played(_ id: ObjectIdentifier, gen: Int, epoch ep: Int) {
         guard gen == generation, ep == epoch else { return }
-        items.removeAll { $0 === item }
+        items.removeAll { ObjectIdentifier($0) == id }
         fill()
         updateLoading()
         checkFinished()

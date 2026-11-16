@@ -77,8 +77,14 @@ enum BracketApple {
                 // Room for the notes and little more: a short highlight gets a short
                 // reply (with lots of room the model kept going, inventing more).
                 let words = piece.split(whereSeparator: { $0 == " " || $0 == "\n" }).count
-                let options = GenerationOptions(sampling: .greedy,
-                                                maximumResponseTokens: min(1100, 60 + words * 4))
+                let limit = min(1100, 60 + words * 4)
+                // Xcode 27's SDK renamed `sampling:` to `samplingMode:` (back-deployed to
+                // iOS 26); older Xcodes only know the first.
+                #if compiler(>=6.4)
+                let options = GenerationOptions(samplingMode: .greedy, maximumResponseTokens: limit)
+                #else
+                let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: limit)
+                #endif
                 do {
                     let reply = try await session.respond(to: piece, generating: BracketAppleNotes.self,
                                                           options: options)
