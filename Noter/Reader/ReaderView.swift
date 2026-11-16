@@ -265,10 +265,13 @@ struct ReaderView: View {
                 if bottomSheet {
                     // Portrait: square, flush along the bottom, edge to edge; the page
                     // stays above it.
+                    // Down to the screen's bottom edge (under the home indicator), unless
+                    // the keyboard is up.
+                    let below = keyboardLift > 0 ? 0 : bottomSafeInset
                     sidePanel(panel)
                         .frame(maxWidth: .infinity)
                         // Above the keyboard when typing: shorter if needed, never off the top.
-                        .frame(height: max(min(sheetHeight, viewHeight - keyboardLift - 90), 160))
+                        .frame(height: max(min(sheetHeight, viewHeight - keyboardLift - 90), 160) + below)
                         .clipped()
                         .background {
                             Rectangle().fill(.regularMaterial)
@@ -278,7 +281,7 @@ struct ReaderView: View {
                                 // The same flat material and hairline as the side panel.
                                 .ignoresSafeArea(edges: .bottom)
                         }
-                        .padding(.bottom, keyboardLift)
+                        .padding(.bottom, keyboardLift > 0 ? keyboardLift : -below)
                         .transition(.move(edge: .bottom))
                 } else {
                     // Landscape: square, top to bottom, flush with the right edge, the tool

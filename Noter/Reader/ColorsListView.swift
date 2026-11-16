@@ -14,14 +14,9 @@ struct ColorsListView: View {
         let counts = Dictionary(grouping: session.highlights, by: \.color).mapValues(\.count)
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Colors")
-                        .font(.title3.weight(.semibold))
-                    Text(palette.autoSwitch ? "A new color after every highlight"
-                         : "You pick the color · a new shade for each highlight in it")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                PanelTitle(title: "Colors",
+                           subtitle: palette.autoSwitch ? "A new color after every highlight"
+                               : "You pick the color · a new shade for each highlight in it")
                 Spacer()
                 Button(action: onClose) { PanelIcon(symbol: "xmark") }
                     .buttonStyle(.plain)

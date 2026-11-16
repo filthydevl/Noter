@@ -18,13 +18,7 @@ struct HighlightsListView: View {
         let _ = session.labelsVersion // refresh when page numbers improve
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Highlights")
-                        .font(.title3.weight(.semibold))
-                    Text("\(items.count) highlight\(items.count == 1 ? "" : "s")")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                PanelTitle(title: "Highlights", subtitle: "\(items.count) highlight\(items.count == 1 ? "" : "s")")
                 Spacer()
                 if !items.isEmpty {
                     Menu {
@@ -51,7 +45,7 @@ struct HighlightsListView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close highlights")
             }
-            .panelHeader(bottom: 12)
+            .panelHeader(bottom: 12, floating: true)
 
             if items.isEmpty {
                 ContentUnavailableView(
@@ -60,7 +54,7 @@ struct HighlightsListView: View {
                     description: Text("Draw over a line with your Apple Pencil, in the PDF or the text view."))
                     .frame(maxHeight: .infinity)
             } else {
-                PanelScroll {
+                PanelScroll(floatingHeader: true) {
                     PanelStack {
                         ForEach(HighlightBlock.blocks(items)) { block in
                             Group {
@@ -87,7 +81,7 @@ struct HighlightsListView: View {
                         }
                     }
                     .padding(.horizontal, 14)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, horizontalPanel ? 0 : 20)
                 }
                 .defaultScrollAnchor(horizontalPanel ? .trailing : .bottom)
             }
@@ -257,14 +251,26 @@ struct RemoveCellButton: View {
 }
 
 struct PanelIcon: View {
+    @Environment(\.panelHorizontal) private var horizontal
     let symbol: String
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .frame(width: 32, height: 32)
-            .background(Color.primary.opacity(0.07), in: Circle())
+        if horizontal {
+            // Floating over the cards in the strip along the bottom.
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 30, height: 30)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+        } else {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+                .background(Color.primary.opacity(0.07), in: Circle())
+        }
     }
 }
 

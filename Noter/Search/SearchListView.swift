@@ -13,13 +13,7 @@ struct SearchListView: View {
         let _ = session.labelsVersion // refresh when page numbers improve
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Search")
-                        .font(.title3.weight(.semibold))
-                    Text(subtitle)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                PanelTitle(title: "Search", subtitle: subtitle)
                 Spacer()
                 Button(action: onClose) { PanelIcon(symbol: "xmark") }
                     .buttonStyle(.plain)
@@ -79,7 +73,7 @@ struct SearchListView: View {
                         }
                     }
                     .padding(.horizontal, 14)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, horizontalPanel ? 0 : 20)
                 }
             }
         }

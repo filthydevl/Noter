@@ -16,14 +16,9 @@ struct KeywordsListView: View {
         let analysis = session.analysisEntries(onlyUsed: true)
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Key words")
-                        .font(.title3.weight(.semibold))
-                    Text("\(entries.count) key word\(entries.count == 1 ? "" : "s")"
-                         + (analysis.isEmpty ? "" : " · \(analysis.count) analysis tag\(analysis.count == 1 ? "" : "s")"))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                PanelTitle(title: "Key words",
+                           subtitle: "\(entries.count) key word\(entries.count == 1 ? "" : "s")"
+                               + (analysis.isEmpty ? "" : " · \(analysis.count) analysis tag\(analysis.count == 1 ? "" : "s")"))
                 Spacer()
                 Group {
                     Menu {
@@ -53,7 +48,7 @@ struct KeywordsListView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close key words")
             }
-            .panelHeader(bottom: 12)
+            .panelHeader(bottom: 12, floating: true)
 
             if entries.isEmpty && analysis.isEmpty {
                 ContentUnavailableView(
@@ -62,7 +57,7 @@ struct KeywordsListView: View {
                     description: Text("Highlight a single word or a short phrase — a name, an event, a term — or circle it with the highlighter, and it becomes a key word. Then tag your other highlights with it."))
                     .frame(maxHeight: .infinity)
             } else {
-                PanelScroll {
+                PanelScroll(floatingHeader: true) {
                     PanelStack {
                         // Cause, effect, premise… you've tagged highlights with.
                         if !analysis.isEmpty {
@@ -83,7 +78,7 @@ struct KeywordsListView: View {
                         }
                     }
                     .padding(.horizontal, 14)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, horizontalPanel ? 0 : 20)
                 }
                 .defaultScrollAnchor(horizontalPanel ? .trailing : .bottom)
             }

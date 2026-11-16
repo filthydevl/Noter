@@ -16,13 +16,7 @@ struct QuestionsListView: View {
         let shown = index.questions.filter { filter == nil || $0.kind == filter }
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Questions")
-                        .font(.title3.weight(.semibold))
-                    Text(subtitle)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                PanelTitle(title: "Questions", subtitle: subtitle)
                 Spacer()
                 if !index.questions.isEmpty || !index.removed.isEmpty {
                     Menu {
@@ -106,7 +100,7 @@ struct QuestionsListView: View {
                         }
                     }
                     .padding(.horizontal, 14)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, horizontalPanel ? 0 : 20)
                 }
                 .defaultScrollAnchor(horizontalPanel ? .trailing : .bottom)
             }

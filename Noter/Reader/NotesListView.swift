@@ -23,13 +23,8 @@ struct NotesListView: View {
         let _ = session.labelsVersion // refresh when page numbers improve
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Notes")
-                        .font(.title3.weight(.semibold))
-                    Text("\(noted) note\(noted == 1 ? "" : "s") · \(all.count) highlight\(all.count == 1 ? "" : "s")")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                PanelTitle(title: "Notes",
+                           subtitle: "\(noted) note\(noted == 1 ? "" : "s") · \(all.count) highlight\(all.count == 1 ? "" : "s")")
                 Spacer()
                 if noted > 0 {
                     Menu {
@@ -55,7 +50,7 @@ struct NotesListView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close notes")
             }
-            .panelHeader(bottom: 10)
+            .panelHeader(bottom: 10, floating: true)
 
             if items.isEmpty {
                 ContentUnavailableView(
@@ -67,7 +62,7 @@ struct NotesListView: View {
                     .frame(maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
-                    PanelScroll {
+                    PanelScroll(floatingHeader: true) {
                         PanelStack {
                             ForEach(items) { h in
                                 VStack(spacing: 6) {
@@ -97,7 +92,7 @@ struct NotesListView: View {
                             }
                         }
                         .padding(.horizontal, 14)
-                        .padding(.bottom, 20)
+                        .padding(.bottom, horizontalPanel ? 0 : 20)
                     }
                     .defaultScrollAnchor(horizontalPanel ? .trailing : .bottom)
                     // You tapped a note: once the keyboard is up, bring that card into view.
