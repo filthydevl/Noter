@@ -350,8 +350,8 @@ struct HighlightRow: View {
             }
         }
         .padding(14)
-        .background(Color(.systemBackground).opacity(0.75),
-                    in: Rectangle())
+        .padding(.bottom, 4) // clear of the folded corner
+        .background { StickyNote(color: highlight.uiColor) }
     }
 
     private var card: some View {
@@ -489,6 +489,87 @@ struct HighlightRow: View {
             }
             .frame(maxWidth: 120, alignment: .trailing)
         }
+    }
+}
+
+/// A highlight's card as a sticky note in the highlight's own color: a pastel of it in
+/// light mode, a deep tint of it in dark mode (so it sits in with the rest of the app),
+/// a faint glue strip along the top, the bottom-right corner folded over, and a soft
+/// shadow under it.
+struct StickyNote: View {
+    let color: UIColor
+    @Environment(\.colorScheme) private var scheme
+
+    private static let fold: CGFloat = 16
+
+    var body: some View {
+        let dark = scheme == .dark
+        let paper = Self.paper(color, dark: dark)
+        ZStack(alignment: .bottomTrailing) {
+            FoldedPaper(fold: Self.fold)
+                .fill(LinearGradient(colors: [Color(uiColor: paper.top), Color(uiColor: paper.bottom)],
+                                     startPoint: .top, endPoint: .bottom))
+                .overlay(alignment: .top) {
+                    // Where the glue is: a touch deeper.
+                    Rectangle()
+                        .fill(Color.black.opacity(dark ? 0.12 : 0.04))
+                        .frame(height: 9)
+                }
+                .clipShape(FoldedPaper(fold: Self.fold))
+                .shadow(color: .black.opacity(dark ? 0.4 : 0.13), radius: 6, x: 0, y: 3)
+            // The corner, folded over onto the note.
+            FoldFlap()
+                .fill(Color(uiColor: paper.flap))
+                .frame(width: Self.fold, height: Self.fold)
+                .shadow(color: .black.opacity(dark ? 0.35 : 0.14), radius: 1.5, x: -1, y: -1)
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// The paper's colors, from the highlight's.
+    static func paper(_ c: UIColor, dark: Bool) -> (top: UIColor, bottom: UIColor, flap: UIColor) {
+        let base = c.resolvedColor(with: UITraitCollection(userInterfaceStyle: dark ? .dark : .light))
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        if !base.getRed(&r, green: &g, blue: &b, alpha: &a) { (r, g, b) = (1, 0.9, 0.4) }
+        func mix(_ t: CGFloat, with v: CGFloat) -> UIColor {
+            UIColor(red: r * t + v * (1 - t), green: g * t + v * (1 - t), blue: b * t + v * (1 - t), alpha: 1)
+        }
+        if dark {
+            // Over the dark panel: the color, deep and muted.
+            let paper = mix(0.34, with: 0.13)
+            return (mix(0.37, with: 0.14), paper, mix(0.5, with: 0.2))
+        } else {
+            // A pastel of the color, like a real note.
+            return (mix(0.42, with: 1), mix(0.5, with: 1), mix(0.62, with: 0.86))
+        }
+    }
+}
+
+/// A note with its bottom-right corner folded away.
+private struct FoldedPaper: Shape {
+    let fold: CGFloat
+
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY - fold))
+        p.addLine(to: CGPoint(x: r.maxX - fold, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// The folded-over corner itself (its back showing).
+private struct FoldFlap: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
+        p.closeSubpath()
+        return p
     }
 }
 
