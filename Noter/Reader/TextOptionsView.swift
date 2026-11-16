@@ -48,6 +48,9 @@ struct TextOptionsView: View {
                             } label: {
                                 Text(font.title)
                                     .font(Font(font.font(size: 16)))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                                    .padding(.horizontal, 6)
                                     .foregroundStyle(.primary)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 10)

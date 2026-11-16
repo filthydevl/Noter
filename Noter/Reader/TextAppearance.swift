@@ -1,4 +1,5 @@
 import UIKit
+import CoreText
 
 /// Page color of the Text view.
 enum ReaderTheme: String, Codable, CaseIterable, Identifiable {
@@ -77,7 +78,7 @@ enum ReaderTheme: String, Codable, CaseIterable, Identifiable {
 }
 
 enum ReaderFont: String, Codable, CaseIterable, Identifiable {
-    case newYork, charter, georgia, palatino, sanFrancisco, rounded
+    case newYork, charter, georgia, palatino, sanFrancisco, rounded, lexend, atkinson
 
     var id: String { rawValue }
 
@@ -89,10 +90,22 @@ enum ReaderFont: String, Codable, CaseIterable, Identifiable {
         case .palatino: "Palatino"
         case .sanFrancisco: "San Francisco"
         case .rounded: "Rounded"
+        case .lexend: "Lexend"
+        case .atkinson: "Atkinson Hyperlegible"
         }
     }
 
+    /// Lexend and Atkinson Hyperlegible ship with the app (Fonts/, SIL Open Font
+    /// License); they're registered for this process the first time a font is asked for.
+    private static let bundledFontsRegistered: Bool = {
+        for url in Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: nil) ?? [] {
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
+        return true
+    }()
+
     func font(size: CGFloat, bold: Bool = false, italic: Bool = false) -> UIFont {
+        _ = Self.bundledFontsRegistered
         let system = UIFont.systemFont(ofSize: size, weight: bold ? .bold : .regular)
         func design(_ d: UIFontDescriptor.SystemDesign) -> UIFont {
             system.fontDescriptor.withDesign(d).map { UIFont(descriptor: $0, size: size) } ?? system
@@ -105,6 +118,11 @@ enum ReaderFont: String, Codable, CaseIterable, Identifiable {
         case .charter: base = UIFont(name: bold ? "Charter-Bold" : "Charter-Roman", size: size) ?? design(.serif)
         case .georgia: base = UIFont(name: bold ? "Georgia-Bold" : "Georgia", size: size) ?? design(.serif)
         case .palatino: base = UIFont(name: bold ? "Palatino-Bold" : "Palatino-Roman", size: size) ?? design(.serif)
+        case .lexend: base = UIFont(name: bold ? "Lexend-Bold" : "Lexend-Regular", size: size) ?? system
+        case .atkinson:
+            let name = "AtkinsonHyperlegible-" + (bold ? (italic ? "BoldItalic" : "Bold") : (italic ? "Italic" : "Regular"))
+            if let f = UIFont(name: name, size: size) { return f }
+            base = system
         }
         guard italic, let d = base.fontDescriptor.withSymbolicTraits(
             base.fontDescriptor.symbolicTraits.union(.traitItalic)) else { return base }
